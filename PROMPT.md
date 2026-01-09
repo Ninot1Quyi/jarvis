@@ -53,8 +53,8 @@ Jarvis 是一个运行在 macOS 上的主动式 AI Agent 桌面应用，具备�
 
 | 组件 | 技术 | 配置 |
 |------|------|------|
-| 大脑 VLM | Qwen3-VL（主） | API Key: `f1181caebae94db6a1ff403625a7d612` |
-| 大脑 VLM | 豆包（备用） | API Key: `6b53f54e-11fc-4dee-a1ad-405098a4058d` |
+| 大脑 VLM | 豆包（主） | API Key: `6b53f54e-11fc-4dee-a1ad-405098a4058d` |
+| 大脑 VLM | Qwen3-VL（备用） | API Key: `f1181caebae94db6a1ff403625a7d612` |
 | 小脑 | MAI-UI-2b | Ollama `localhost:11434`, model: `ahmadwaqar/mai-ui` |
 | 语音识别 | 字节流式 ASR | APP ID: `9849623045` |
 | 语音合成 | 字节 TTS | 同上 |
@@ -62,9 +62,27 @@ Jarvis 是一个运行在 macOS 上的主动式 AI Agent 桌面应用，具备�
 | 桌面自动化 | nut.js + AppleScript + Swift | macOS 专用 |
 
 ### 字节语音服务认证
-- APP ID: `9849623045`
-- Access Token: `06xaC6DV7Wz7dN44DaG1cSw66mtw-1mr`
-- Secret Key: `_Sr76vFPwSsmLOQKzkX1NXmtkC39lHLI`
+```
+APP ID: 9849623045
+Access Token: 06xaC6DV7Wz7dN44DaG1cSw66mtw-1mr
+Secret Key: _Sr76vFPwSsmLOQKzkX1NXmtkC39lHLI
+```
+
+### 字节 ASR 服务（流式语音识别大模型-小时版）
+- **API 文档**: https://www.volcengine.com/docs/6561/1354869?lang=zh
+- **资源包 ID**: `Speech_Recognition_Seed_streaming2000000560502727618`
+- **配额**: 20.00 小时
+
+### 字节 TTS 服务（语音合成大模型-字符版）
+- **API 文档**: https://www.volcengine.com/docs/6561/1257584?lang=zh
+- **资源包 ID**: `BigTTS2000000560125871330`
+- **配额**: 20,000 字数
+
+### 小脑模型说明
+MAI-UI-2b 是基于 Qwen-VL 微调的模型，专门用于 UI 元素定位。直接使用 Ollama 标准方式调用：
+```bash
+ollama run ahmadwaqar/mai-ui
+```
 
 ## 架构设计
 
@@ -135,6 +153,11 @@ Jarvis 是一个运行在 macOS 上的主动式 AI Agent 桌面应用，具备�
 - Ollama 不可用时自动尝试启动
 
 ### 4. 语音交互 (Voice)
+- **无唤醒词设计**: 启动后持续后台监听，不需要唤醒词
+- **智能对话识别**: Agent 实时分析语音内容和音色，判断是否在和 Jarvis 说话
+  - 结合声纹识别区分主用户和旁人
+  - 分析语音内容语义判断是否是指令
+  - 区分人声和环境噪音
 - 长连接 ASR（减少延迟）
 - 多用户声纹注册
 - 软件回声消除 + 声纹排除
@@ -456,16 +479,22 @@ CREATE TABLE corrections (
 ## 环境变量 (.env.example)
 
 ```bash
-# AI 服务
-QWEN_API_KEY=your_qwen_api_key
-DOUBAO_API_KEY=your_doubao_api_key
+# AI 服务 - 大脑 VLM
+DOUBAO_API_KEY=6b53f54e-11fc-4dee-a1ad-405098a4058d
+QWEN_API_KEY=f1181caebae94db6a1ff403625a7d612
 
 # 字节语音服务
-BYTEDANCE_APP_ID=your_app_id
-BYTEDANCE_ACCESS_TOKEN=your_access_token
-BYTEDANCE_SECRET_KEY=your_secret_key
+BYTEDANCE_APP_ID=9849623045
+BYTEDANCE_ACCESS_TOKEN=06xaC6DV7Wz7dN44DaG1cSw66mtw-1mr
+BYTEDANCE_SECRET_KEY=_Sr76vFPwSsmLOQKzkX1NXmtkC39lHLI
 
-# Ollama
+# 字节 ASR 资源包
+BYTEDANCE_ASR_RESOURCE_ID=Speech_Recognition_Seed_streaming2000000560502727618
+
+# 字节 TTS 资源包
+BYTEDANCE_TTS_RESOURCE_ID=BigTTS2000000560125871330
+
+# Ollama 小脑
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=ahmadwaqar/mai-ui
 
@@ -505,7 +534,7 @@ LOG_LEVEL=debug
 }
 ```
 
-## MCP 配置
+## MCP 配置（开发调试用）
 
 ```json
 {
@@ -514,13 +543,34 @@ LOG_LEVEL=debug
       "command": "npx",
       "args": ["-y", "electron-mcp-server"],
       "env": {
-        "SECURITY_LEVEL": "development"
+        "SECURITY_LEVEL": "development",
+        "SCREENSHOT_ENCRYPTION_KEY": "fa869f6fbd40dc473a45ef972c500654d0fb8bc51d1e292d5cf89f4104aee6ec"
       }
     },
     "context7": {
       "type": "http",
-      "url": "https://mcp.context7.com/mcp"
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "YOUR_API_KEY"
+      }
+    },
+    "vibe_kanban": {
+      "command": "npx",
+      "args": ["-y", "vibe-kanban@latest", "--mcp"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
     }
   }
 }
 ```
+
+**注意**:
+- Electron 应用调试优先使用 `electron` MCP，因为 Playwright 无法调试 Electron
+- `context7` 用于查询最新的库文档
+- `vibe_kanban` 用于任务管理
+
+## 项目部署路径
+
+最终项目路径: `~/NinotQuyi/jarvis`

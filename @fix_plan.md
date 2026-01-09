@@ -10,10 +10,18 @@
 - [ ] MAI-UI 模型已下载 (`ollama pull ahmadwaqar/mai-ui`)
 - [ ] Xcode Command Line Tools 已安装 (`xcode-select --install`)
 
-### API 密钥准备
-- [ ] Qwen3-VL API Key 已获取
-- [ ] 豆包 API Key 已获取
-- [ ] 字节语音服务凭证已获取
+### API 密钥准备（已配置）
+- [x] 豆包 API Key: `6b53f54e-11fc-4dee-a1ad-405098a4058d`（主）
+- [x] Qwen3-VL API Key: `f1181caebae94db6a1ff403625a7d612`（备用）
+- [x] 字节语音服务凭证:
+  - APP ID: `9849623045`
+  - Access Token: `06xaC6DV7Wz7dN44DaG1cSw66mtw-1mr`
+  - Secret Key: `_Sr76vFPwSsmLOQKzkX1NXmtkC39lHLI`
+- [x] ASR 资源包: `Speech_Recognition_Seed_streaming2000000560502727618`（20小时）
+- [x] TTS 资源包: `BigTTS2000000560125871330`（20000字）
+
+### 项目路径
+最终部署路径: `~/NinotQuyi/jarvis`
 
 ---
 
@@ -143,11 +151,13 @@
 
 - [ ] 实现大脑服务
   - `src/main/services/brain/BrainService.ts` - 主服务
-  - `src/main/services/brain/QwenProvider.ts` - Qwen3-VL API（主）
-    - Base URL: `https://dashscope.aliyuncs.com/compatible-mode/v1`
-    - 流式响应处理
-  - `src/main/services/brain/DoubaoProvider.ts` - 豆包 API（备用）
+  - `src/main/services/brain/DoubaoProvider.ts` - 豆包 API（主）
     - Base URL: `https://ark.cn-beijing.volces.com/api/v3`
+    - API Key: `6b53f54e-11fc-4dee-a1ad-405098a4058d`
+    - 流式响应处理
+  - `src/main/services/brain/QwenProvider.ts` - Qwen3-VL API（备用）
+    - Base URL: `https://dashscope.aliyuncs.com/compatible-mode/v1`
+    - API Key: `f1181caebae94db6a1ff403625a7d612`
   - `src/main/services/brain/prompts/` - Prompt 模板目录
   - 流式 API 调用，实时返回 token
   - 20 轮对话历史（超过后自动摘要压缩）
@@ -156,6 +166,8 @@
 - [ ] 实现小脑服务
   - `src/main/services/cerebellum/CerebellumService.ts`
   - `src/main/services/cerebellum/OllamaClient.ts` - Ollama 客户端
+  - 模型: `ahmadwaqar/mai-ui`（基于 Qwen-VL 微调）
+  - 端点: `http://localhost:11434`
   - UI 元素定位，输出精准坐标 (x, y)
   - Ollama 健康检查和自动启动
   - 连接失败时提示用户
@@ -166,8 +178,8 @@
   - 关键节点汇报机制
 
 **验证标准**:
-1. Qwen3-VL API 调用成功，返回流式响应
-2. 豆包 API 作为备用能正常切换
+1. 豆包 API 调用成功，返回流式响应
+2. Qwen3-VL API 作为备用能正常切换
 3. Ollama 小脑能定位截图中的 UI 元素
 4. 大脑规划的步骤能被小脑正确执行
 5. 对话历史超过 20 轮时自动摘要
@@ -178,16 +190,30 @@
 
 - [ ] 集成字节流式 ASR
   - `src/main/services/voice/ByteDanceASR.ts`
+  - API 文档: https://www.volcengine.com/docs/6561/1354869?lang=zh
   - WebSocket 端点: `wss://openspeech.bytedance.com/api/v2/asr`
+  - 资源包 ID: `Speech_Recognition_Seed_streaming2000000560502727618`
   - 长连接流式识别，保持连接复用
   - 实时转写显示到灵动岛
   - 断线自动重连（最多 3 次）
 - [ ] 集成字节 TTS
   - `src/main/services/voice/ByteDanceTTS.ts`
+  - API 文档: https://www.volcengine.com/docs/6561/1257584?lang=zh
   - WebSocket 端点: `wss://openspeech.bytedance.com/api/v2/tts`
+  - 资源包 ID: `BigTTS2000000560125871330`
   - 流式语音合成，边生成边播放
   - 用户可选音色（3-5 种预设）
   - 可调节语速（0.8x-1.5x）
+- [ ] 实现无唤醒词智能监听
+  - `src/main/services/voice/SmartListenerAgent.ts`
+  - **无唤醒词设计**: 启动后持续后台监听
+  - **Agent 智能判断**: 实时分析语音内容和音色，判断是否在和 Jarvis 说话
+    - 结合声纹识别区分主用户和旁人
+    - 分析语音内容语义判断是否是指令（如包含"帮我"、"打开"、"搜索"等）
+    - 区分人声和环境噪音（使用 Silero VAD）
+    - 上下文感知：如果用户正在与 Jarvis 对话中，降低判断阈值
+  - 判断置信度阈值：70%（可配置）
+  - 不确定时可询问用户确认
 - [ ] 实现声纹注册和识别
   - `src/main/services/voice/VoiceprintManager.ts`
   - 多用户声纹注册（本地存储特征向量）
@@ -211,6 +237,8 @@
 3. 说话时能打断 TTS 播放
 4. 声纹注册后能识别用户
 5. 断网后自动切换离线模式
+6. Agent 能正确判断用户是否在和 Jarvis 说话
+7. 旁人说话不会误触发响应
 
 ---
 
