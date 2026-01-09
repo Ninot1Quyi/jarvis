@@ -543,3 +543,67 @@ ollama pull nomic-embed-text       # RAG Embedding 模型
 | Retina 屏幕坐标问题 | 点击位置偏移 | DPI 缩放转换，测试多种分辨率 |
 | 中文输入法兼容 | 输入异常 | 使用剪贴板粘贴方式 |
 | API 配额耗尽 | 服务不可用 | 显示配额警告，支持多 API Key |
+
+---
+
+## GitHub 仓库维护（贯穿整个开发周期）
+
+### Project 看板维护
+- GitHub Project URL: https://github.com/users/Ninot1Quyi/projects/2
+- 每完成一个 Phase 的任务，更新对应 Issue 的复选框
+- 完成整个 Phase 后关闭对应 Issue
+- 遇到阻塞问题时在 Issue 中添加评论说明
+
+### Wiki 建设
+- [ ] 创建 Wiki 首页（项目概述）
+- [ ] 创建安装指南页面
+- [ ] 创建 API 配置指南
+- [ ] 创建架构设计文档
+- [ ] 创建常见问题 FAQ
+- [ ] 创建开发者指南
+
+### Release 发布流程
+项目测试全部通过后，执行以下发布流程：
+1. 更新版本号（package.json）
+2. 生成 CHANGELOG.md
+3. 构建生产版本：`pnpm build`
+4. 打包 macOS 应用：`pnpm package`
+5. 创建 GitHub Release
+6. 上传构建产物（.dmg 文件）
+7. 编写 Release Notes
+
+### .claude 文档维护
+- 维护 `.claude/CLAUDE.md` 项目级 Claude 指南
+- 记录项目架构和设计决策
+- 记录开发过程中遇到的问题和解决方案
+- 定义代码风格和规范
+- 确保其他开发者的 Claude 能同步代码风格
+
+---
+
+## Ralph 工作流程
+
+### 启动开发
+```bash
+cd ~/NinotQuyi/jarvis
+ralph --monitor
+```
+
+### 核心文件
+| 文件 | 作用 |
+|------|------|
+| PROMPT.md | 主要开发指令，项目规格说明 |
+| @fix_plan.md | 优先级任务列表，Ralph 按顺序完成 |
+| .claude/CLAUDE.md | 项目级 Claude 配置和指南 |
+
+### 开发流程
+1. 编辑 @fix_plan.md 确认当前任务
+2. 运行 `ralph --monitor` 启动自动开发
+3. 完成任务后更新 GitHub Project 看板
+4. 定期提交代码并推送到 GitHub
+5. 每个 Phase 完成后合并到 main 分支
+
+### 自动退出条件
+- @fix_plan.md 中所有任务完成
+- 连续收到多次"完成"信号
+- 达到 API 调用限制
