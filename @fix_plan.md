@@ -8,7 +8,21 @@
 - [ ] pnpm 已安装 (`npm install -g pnpm`)
 - [ ] Ollama 已安装并运行 (`brew install ollama && ollama serve`)
 - [ ] MAI-UI 模型已下载 (`ollama pull ahmadwaqar/mai-ui`)
+- [ ] Embedding 模型已下载 (`ollama pull nomic-embed-text`)
 - [ ] Xcode Command Line Tools 已安装 (`xcode-select --install`)
+- [ ] Vosk 中文模型已下载（可选，用于离线语音识别）
+
+### 本地模型下载命令
+```bash
+# 必需模型
+ollama pull ahmadwaqar/mai-ui      # 小脑 UI 定位模型
+ollama pull nomic-embed-text       # RAG Embedding 模型
+
+# 可选模型（离线语音识别）
+# 下载 Vosk 中文模型: https://alphacephei.com/vosk/models
+# 推荐: vosk-model-cn-0.22 (~200MB)
+# 解压到: ~/.jarvis/models/vosk-model-cn/
+```
 
 ### API 密钥准备（已配置）
 - [x] 豆包 API Key: `6b53f54e-11fc-4dee-a1ad-405098a4058d`（主）

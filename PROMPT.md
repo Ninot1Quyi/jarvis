@@ -316,12 +316,47 @@ Model: qwen-vl-max
 ```
 Base URL: https://ark.cn-beijing.volces.com/api/v3
 Model: doubao-vision-pro-32k
+API Key: 6b53f54e-11fc-4dee-a1ad-405098a4058d
 ```
+
+**注意**: 豆包 API 需要在火山引擎控制台创建推理接入点（Endpoint），获取 Endpoint ID 后作为 model 参数使用。如果上述 API Key 对应的 Endpoint ID 不是 `doubao-vision-pro-32k`，需要在火山引擎控制台查看实际的 Endpoint ID。
 
 ### 字节语音服务
 ```
 ASR WebSocket: wss://openspeech.bytedance.com/api/v2/asr
 TTS WebSocket: wss://openspeech.bytedance.com/api/v2/tts
+```
+
+## 本地技术实现说明
+
+### 声纹识别实现
+使用本地声纹识别方案，无需额外 API：
+- **技术方案**: 使用 `resemblyzer` 或 `speechbrain` 的预训练模型提取声纹特征向量
+- **存储**: 声纹特征向量存储在本地 SQLite 数据库
+- **匹配算法**: 余弦相似度，阈值 80%
+- **Node.js 集成**: 通过 Python 子进程或 ONNX Runtime 调用
+
+### RAG 实现（习惯学习 + 拒绝记忆）
+使用本地向量数据库，无需云端服务：
+- **向量数据库**: `vectra`（纯 TypeScript 实现）或 `lancedb`
+- **Embedding 模型**: 使用 Ollama 运行本地 embedding 模型（如 `nomic-embed-text`）
+- **存储位置**: `~/.jarvis/data/vectors/`
+- **用途**:
+  1. 用户习惯模式存储和检索
+  2. 拒绝行为场景记忆
+  3. 修正历史记录检索
+
+### 需要额外下载的本地模型
+```bash
+# 小脑 UI 定位模型
+ollama pull ahmadwaqar/mai-ui
+
+# Embedding 模型（用于 RAG）
+ollama pull nomic-embed-text
+
+# 离线语音识别模型（Vosk）
+# 下载地址: https://alphacephei.com/vosk/models
+# 推荐: vosk-model-cn-0.22 (~200MB)
 ```
 
 ## 数据库 Schema
