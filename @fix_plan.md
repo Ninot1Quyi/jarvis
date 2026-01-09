@@ -1,21 +1,45 @@
 # Jarvis 实施计划
 
+## 前置准备
+
+### 环境检查清单
+- [ ] macOS 13.0+ (Ventura 或更高)
+- [ ] Node.js 20.x LTS 已安装
+- [ ] pnpm 已安装 (`npm install -g pnpm`)
+- [ ] Ollama 已安装并运行 (`brew install ollama && ollama serve`)
+- [ ] MAI-UI 模型已下载 (`ollama pull ahmadwaqar/mai-ui`)
+- [ ] Xcode Command Line Tools 已安装 (`xcode-select --install`)
+
+### API 密钥准备
+- [ ] Qwen3-VL API Key 已获取
+- [ ] 豆包 API Key 已获取
+- [ ] 字节语音服务凭证已获取
+
+---
+
 ## Phase 1: 基础设施 + UI 框架（并行）
 
 ### 1A: 基础设施
 - [ ] 初始化 Electron + electron-vite + TypeScript 项目
-  - 使用 electron-vite 模板创建项目
+  ```bash
+  pnpm create electron-vite jarvis --template react-ts
+  cd jarvis
+  pnpm install
+  ```
   - 配置 TypeScript strict mode，路径别名 @/ → src/
   - 配置 ESLint + Prettier + Husky + lint-staged
-  - 配置 pnpm 包管理器
 - [ ] 实现核心基础设施
   - `src/main/core/EventBus.ts` - mitt 事件总线
   - `src/main/core/StateManager.ts` - Zustand 状态管理
   - `src/main/core/IPCBridge.ts` - electron-trpc IPC 通信
 - [ ] 实现存储层
   - `src/main/store/Database.ts` - better-sqlite3 + drizzle-orm
+  - `src/main/store/schema.ts` - 数据库 Schema 定义
   - 数据库位置: `~/.jarvis/data/jarvis.db`
-  - `src/main/store/HabitDatabase.ts` - 习惯数据存储
+  - 自动创建数据目录和迁移
+- [ ] 创建环境配置
+  - `.env.example` - 环境变量模板
+  - `src/main/config/index.ts` - 配置加载器
 
 ### 1B: UI 框架
 - [ ] 搭建 React 框架
@@ -24,20 +48,25 @@
   - Framer Motion 动画库
 - [ ] 实现液态玻璃主题系统
   - `src/renderer/theme/LiquidGlassTheme.ts`
-  - macOS 液态玻璃风格
+  - `src/renderer/theme/colors.ts` - 颜色变量
   - 深色/浅色模式（跟随系统 + 手动选择）
-  - Electron vibrancy 优先，CSS 降级
+  - Electron vibrancy 优先，CSS backdrop-filter 降级
 - [ ] 实现灵动岛基础组件
   - `src/renderer/components/dynamic-island/DynamicIsland.tsx`
   - `src/renderer/components/dynamic-island/NotchIntegration.tsx`
-  - 8 种状态：idle/listening/thinking/speaking/working/paused/error/notification
+  - `src/renderer/components/dynamic-island/IslandStates.tsx` - 8 种状态
   - 单击展开详情，双击打开主界面
-  - 全屏应用时自动隐藏
+  - 全屏应用时自动隐藏 (NSWindow level 检测)
 - [ ] 实现系统托盘
   - `src/main/tray/TrayManager.ts`
-  - 简约线条 Template Image
+  - 简约线条 Template Image (16x16, 32x32)
 
-**验证**: 运行 `pnpm dev`，确认灵动岛显示在屏幕顶部，冷启动 < 3 秒
+**验证标准**:
+1. `pnpm dev` 启动成功，无报错
+2. 灵动岛显示在屏幕顶部中央
+3. 冷启动时间 < 3 秒 (使用 `console.time` 测量)
+4. 数据库文件创建在 `~/.jarvis/data/jarvis.db`
+5. 深色/浅色模式切换正常
 
 ---
 
@@ -46,25 +75,33 @@
 - [ ] 实现屏幕捕获服务
   - `src/main/services/perception/ScreenCapture.ts`
   - Electron desktopCapturer API
-  - 全屏截图后等比例压缩
+  - 全屏截图后等比例压缩 (最大 1920x1080)
   - pHash 相似度检测（95% 阈值去重）
   - 动态频率（空闲 5s，活跃 2s，任务执行时立即）
-  - 24 小时截图存储
+  - 24 小时截图存储，自动清理过期文件
 - [ ] 实现窗口监控
   - `src/main/services/perception/WindowMonitor.ts`
   - AppleScript 获取当前活动窗口
-  - 窗口切换事件
+  - 窗口切换事件监听
+  - 获取窗口标题、应用名称、bounds
 - [ ] 实现活动追踪
   - `src/main/services/perception/ActivityTracker.ts`
-  - 全量键盘监控（包括具体按键）
+  - 全量键盘监控（使用 iohook 或 node-global-key-listener）
   - 全量鼠标监控（位置 + 轨迹 + 点击）
-  - 全量文件监控
+  - 文件监控（使用 chokidar）
 - [ ] 实现权限引导
   - `src/renderer/components/onboarding/PermissionGuide.tsx`
+  - 检测各项权限状态
   - 启动时引导授权
   - 设置页面权限入口
+  - 提供"打开系统偏好设置"按钮
 
-**验证**: 运行测试，确认能正确捕获屏幕和监控所有输入
+**验证标准**:
+1. 截图功能正常，图片保存到 `~/.jarvis/data/screenshots/`
+2. pHash 去重生效，相似截图不重复保存
+3. 键盘/鼠标事件能正确捕获并记录
+4. 权限缺失时显示引导界面
+5. 24h 后旧截图自动清理
 
 ---
 
@@ -72,24 +109,33 @@
 
 - [ ] 实现 nut.js 适配器
   - `src/main/services/operator/NutJSAdapter.ts`
-  - 平滑鼠标移动（模拟人类）
+  - 平滑鼠标移动（贝塞尔曲线，模拟人类）
   - 键盘输入（可配置延迟，默认 50ms）
-  - 剪贴板粘贴中文
-  - 操作失败不重试（可配置）
+  - 剪贴板粘贴中文 (使用 clipboard API)
+  - 操作失败不重试（可配置重试次数）
+  - 屏幕坐标与 Retina 显示器 DPI 转换
 - [ ] 实现动作解析器
   - `src/main/services/operator/ActionParser.ts`
-  - 解析大脑输出的动作指令
-  - 坐标定位（小脑输出精准坐标）
+  - 解析大脑输出的 JSON 动作指令
+  - 支持类型: click, type, scroll, hotkey, wait
+  - 坐标验证（确保在屏幕范围内）
 - [ ] 实现 AppleScript 适配器
   - `src/main/services/operator/AppleScriptAdapter.ts`
   - osascript 命令行执行
-  - 应用控制、系统操作
+  - 应用启动/切换/关闭
+  - 获取应用列表
 - [ ] 实现 Swift Spaces 控制
   - `native/spaces-control/SpacesControl.swift`
-  - 创建/切换虚拟桌面
-  - 编译为命令行工具
+  - 创建/切换/删除虚拟桌面
+  - 编译为命令行工具: `swift build -c release`
+  - Node.js 通过 child_process 调用
 
-**验证**: 运行测试，确认能正确执行鼠标点击和键盘输入
+**验证标准**:
+1. 鼠标能移动到指定坐标并点击
+2. 键盘能输入英文和中文
+3. 热键组合能正确触发 (如 Cmd+Space)
+4. AppleScript 能启动/切换应用
+5. Swift 工具能创建新的虚拟桌面
 
 ---
 
@@ -98,22 +144,33 @@
 - [ ] 实现大脑服务
   - `src/main/services/brain/BrainService.ts` - 主服务
   - `src/main/services/brain/QwenProvider.ts` - Qwen3-VL API（主）
+    - Base URL: `https://dashscope.aliyuncs.com/compatible-mode/v1`
+    - 流式响应处理
   - `src/main/services/brain/DoubaoProvider.ts` - 豆包 API（备用）
-  - 流式 API 调用
-  - 20 轮对话历史（超过自动摘要）
-  - 10s 响应超时（可配置）
+    - Base URL: `https://ark.cn-beijing.volces.com/api/v3`
+  - `src/main/services/brain/prompts/` - Prompt 模板目录
+  - 流式 API 调用，实时返回 token
+  - 20 轮对话历史（超过后自动摘要压缩）
+  - 10s 响应超时，超时后切换备用
+  - 指数退避重试（最多 3 次）
 - [ ] 实现小脑服务
   - `src/main/services/cerebellum/CerebellumService.ts`
-  - `src/main/services/cerebellum/MAIUIClient.ts` - Ollama 客户端
-  - UI 元素定位，精准坐标输出
-  - Ollama 不可用时自动尝试启动
+  - `src/main/services/cerebellum/OllamaClient.ts` - Ollama 客户端
+  - UI 元素定位，输出精准坐标 (x, y)
+  - Ollama 健康检查和自动启动
+  - 连接失败时提示用户
 - [ ] 实现大脑-小脑协作
   - `src/main/services/brain/BrainCerebellumCoordinator.ts`
-  - 步骤标记协议 (TaskStep)
-  - 并行指令预生成
+  - 步骤标记协议 (TaskStep interface)
+  - 并行指令预生成（无依赖步骤提前处理）
   - 关键节点汇报机制
 
-**验证**: 运行测试，确认大脑能规划任务，小脑能执行操作
+**验证标准**:
+1. Qwen3-VL API 调用成功，返回流式响应
+2. 豆包 API 作为备用能正常切换
+3. Ollama 小脑能定位截图中的 UI 元素
+4. 大脑规划的步骤能被小脑正确执行
+5. 对话历史超过 20 轮时自动摘要
 
 ---
 
@@ -121,31 +178,39 @@
 
 - [ ] 集成字节流式 ASR
   - `src/main/services/voice/ByteDanceASR.ts`
-  - 长连接 WebSocket 流式识别
-  - 实时转写显示
+  - WebSocket 端点: `wss://openspeech.bytedance.com/api/v2/asr`
+  - 长连接流式识别，保持连接复用
+  - 实时转写显示到灵动岛
+  - 断线自动重连（最多 3 次）
 - [ ] 集成字节 TTS
   - `src/main/services/voice/ByteDanceTTS.ts`
-  - 流式语音合成
-  - 用户可选音色（3-5 种）
+  - WebSocket 端点: `wss://openspeech.bytedance.com/api/v2/tts`
+  - 流式语音合成，边生成边播放
+  - 用户可选音色（3-5 种预设）
   - 可调节语速（0.8x-1.5x）
 - [ ] 实现声纹注册和识别
   - `src/main/services/voice/VoiceprintManager.ts`
-  - 多用户声纹注册
-  - 首次使用引导（冷笑话朗读）
+  - 多用户声纹注册（本地存储特征向量）
+  - 首次使用引导（显示冷笑话让用户朗读）
   - 声纹识别阈值 80%（可配置）
-  - 注册失败强制重试
+  - 注册失败强制重试直到成功
 - [ ] 实现打断检测
   - `src/main/services/voice/InterruptionDetector.ts`
-  - Silero VAD 集成
-  - 150ms 阈值判断
-  - 软件回声消除 + 声纹排除
+  - Silero VAD 集成（ONNX Runtime）
+  - 150ms 持续人声才算打断
+  - 软件回声消除 + 声纹排除自己的声音
 - [ ] 实现离线备用
   - `src/main/services/voice/VoskOffline.ts`
-  - Vosk 中等模型（200MB）
-  - macOS say 命令 TTS
-  - 网络断开自动切换
+  - Vosk 中等模型（~200MB，中文）
+  - macOS `say` 命令作为离线 TTS
+  - 网络断开自动切换，恢复后切回
 
-**验证**: 运行应用，测试语音识别、合成、打断功能
+**验证标准**:
+1. 语音输入能实时转写并显示
+2. TTS 播放流畅，无明显延迟
+3. 说话时能打断 TTS 播放
+4. 声纹注册后能识别用户
+5. 断网后自动切换离线模式
 
 ---
 
@@ -177,7 +242,13 @@
   - 避免重复打扰
   - 无冷却时间（可配置）
 
-**验证**: 运行应用，测试主动提示功能
+**验证标准**:
+1. 观察循环 CPU 占用 < 5%（使用 Activity Monitor 验证）
+2. 重复操作 3 次后触发主动提示
+3. 用户犹豫 5 秒后显示建议
+4. 鼠标跟随提示正确显示在光标附近
+5. 拒绝后相同场景不再提示（RAG 记忆生效）
+6. 习惯学习能识别用户常用操作模式
 
 ---
 
@@ -203,7 +274,14 @@
   - RAG 记录修正历史
   - 用户可查看 + 训练数据
 
-**验证**: 模拟任务偏离，测试纠偏机制
+**验证标准**:
+1. 每 10 轮对话自动触发纠偏检查
+2. 检测到循环操作时触发异常检查
+3. minor 偏差显示提示但继续执行
+4. moderate 偏差弹出询问面板
+5. severe 偏差强制暂停任务
+6. 用户手动接管后 Agent 进入观察模式
+7. 修正历史正确记录到数据库
 
 ---
 
@@ -232,7 +310,15 @@
   - 基于步骤数计算进度
   - 显示预估剩余时间（标注"预估"）
 
-**验证**: 模拟崩溃，测试恢复功能
+**验证标准**:
+1. 任务状态正确流转（pending → running → completed）
+2. 每 30 秒自动创建检查点
+3. 步骤完成时创建关键检查点
+4. 检查点数量不超过 10 个（自动清理旧的）
+5. 模拟崩溃后重启，显示恢复选项
+6. 选择恢复后从最近检查点继续
+7. 进度百分比和预估时间正确显示
+8. 高优先级任务能插队执行
 
 ---
 
@@ -265,7 +351,16 @@
   - 贝塞尔曲线飞行轨迹
   - 液态融合效果
 
-**验证**: 视觉检查所有动画效果，确认液态玻璃风格
+**验证标准**:
+1. 灵动岛 8 种状态切换动画流畅（300ms）
+2. 单击灵动岛展开详情面板
+3. 双击灵动岛打开主界面
+4. 主界面三个标签页切换正常
+5. 对话页消息显示液态玻璃风格
+6. 任务页实时显示 Agent 操作预览
+7. 窗口位置和尺寸重启后保持
+8. 通知优先显示在灵动岛，不弹系统通知
+9. 飞入融合动画效果自然
 
 ---
 
@@ -312,6 +407,16 @@
 
 **验证**: 所有测试通过，性能指标达标
 
+**Phase 10 验证标准**:
+1. 单元测试覆盖率 > 80%（使用 `vitest --coverage` 验证）
+2. 所有 6 个 E2E 测试场景通过
+3. 冷启动时间 < 3 秒（测量 3 次取平均）
+4. 空闲内存 < 500MB（Activity Monitor 验证）
+5. GitHub Actions CI 自动运行测试
+6. 测试录制视频可回放
+7. 日志文件正确写入 `~/.jarvis/logs/`
+8. 敏感信息（API Key）在日志中脱敏显示
+
 ---
 
 ## 端到端测试场景
@@ -345,3 +450,54 @@
    - 模拟任务偏离
    - 偏差检测触发
    - 用户介入处理
+
+---
+
+## 最终交付检查清单
+
+在所有 Phase 完成后，必须通过以下检查才能视为交付完成：
+
+### 功能完整性检查
+- [ ] 灵动岛 8 种状态全部实现且可切换
+- [ ] 语音输入/输出完整工作
+- [ ] Computer Use 能执行基本操作（点击、输入、滚动）
+- [ ] 主动提示功能正常触发
+- [ ] 纠偏系统能检测并处理偏差
+- [ ] 长任务检查点和恢复功能正常
+- [ ] 主界面三个标签页功能完整
+
+### 稳定性检查
+- [ ] 连续运行 1 小时无崩溃
+- [ ] 内存无明显泄漏（1 小时后内存增长 < 100MB）
+- [ ] 所有 API 调用有错误处理和降级方案
+- [ ] 网络断开后能切换离线模式
+
+### 用户体验检查
+- [ ] 首次启动引导流程完整
+- [ ] 所有动画流畅（无卡顿）
+- [ ] 错误信息对用户友好
+- [ ] 设置项可正常保存和加载
+
+### 代码质量检查
+- [ ] TypeScript 无编译错误
+- [ ] ESLint 无错误（警告可接受）
+- [ ] 单元测试覆盖率 > 80%
+- [ ] 所有 E2E 测试通过
+
+### 文档检查
+- [ ] README.md 包含安装和使用说明
+- [ ] 环境变量配置说明完整
+- [ ] API 密钥获取指南
+
+---
+
+## 已知风险和缓解措施
+
+| 风险 | 影响 | 缓解措施 |
+|------|------|----------|
+| Ollama 模型下载慢 | 首次启动延迟 | 提供预下载脚本，显示下载进度 |
+| 字节语音服务不稳定 | 语音功能中断 | 自动切换 Vosk 离线模式 |
+| macOS 权限被拒绝 | 功能受限 | 清晰的权限引导，提供手动开启入口 |
+| Retina 屏幕坐标问题 | 点击位置偏移 | DPI 缩放转换，测试多种分辨率 |
+| 中文输入法兼容 | 输入异常 | 使用剪贴板粘贴方式 |
+| API 配额耗尽 | 服务不可用 | 显示配额警告，支持多 API Key |

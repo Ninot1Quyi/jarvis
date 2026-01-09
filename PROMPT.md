@@ -275,6 +275,236 @@ pnpm lint
 - 麦克风（Microphone）- 语音输入
 - 完全磁盘访问（Full Disk Access）- 文件监控（可选）
 
+## 系统要求
+
+- **macOS 版本**: 13.0 (Ventura) 或更高
+- **Node.js**: 20.x LTS
+- **Ollama**: 本地安装并运行
+
+## API 端点配置
+
+### Qwen3-VL (阿里云)
+```
+Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
+Model: qwen-vl-max
+```
+
+### 豆包 (字节跳动)
+```
+Base URL: https://ark.cn-beijing.volces.com/api/v3
+Model: doubao-vision-pro-32k
+```
+
+### 字节语音服务
+```
+ASR WebSocket: wss://openspeech.bytedance.com/api/v2/asr
+TTS WebSocket: wss://openspeech.bytedance.com/api/v2/tts
+```
+
+## 数据库 Schema
+
+```sql
+-- 任务表
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  state TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT DEFAULT 'medium',
+  current_step INTEGER DEFAULT 0,
+  total_steps INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+
+-- 检查点表
+CREATE TABLE checkpoints (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  step_number INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  context TEXT,
+  screenshot_path TEXT,
+  created_at INTEGER NOT NULL,
+  is_key_step INTEGER DEFAULT 0,
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+
+-- 对话历史表
+CREATE TABLE conversations (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+
+-- 用户习惯表
+CREATE TABLE habits (
+  id TEXT PRIMARY KEY,
+  pattern TEXT NOT NULL,
+  frequency INTEGER DEFAULT 1,
+  last_seen INTEGER NOT NULL,
+  weight REAL DEFAULT 1.0,
+  created_at INTEGER NOT NULL
+);
+
+-- 修正历史表
+CREATE TABLE corrections (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  drift_type TEXT NOT NULL,
+  original_action TEXT,
+  corrected_action TEXT,
+  user_feedback TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+```
+
+## 核心 Prompt 模板
+
+### 大脑任务规划 Prompt
+```
+你是 Jarvis，一个 macOS 桌面 AI 助手。根据用户请求和当前屏幕截图，规划执行步骤。
+
+输出格式（JSON）：
+{
+  "understanding": "对用户意图的理解",
+  "steps": [
+    {
+      "id": "step_1",
+      "description": "具体操作描述",
+      "type": "click|type|scroll|hotkey|wait",
+      "dependencies": [],
+      "canPregenerate": true
+    }
+  ],
+  "expectedOutcome": "预期结果"
+}
+
+注意：
+1. 步骤要细粒度，每步只做一个操作
+2. 标记步骤间的依赖关系
+3. 标记可以并行预生成的步骤
+```
+
+### 小脑 UI 定位 Prompt
+```
+分析截图，定位目标 UI 元素的精确坐标。
+
+目标：{target_description}
+
+输出格式（JSON）：
+{
+  "found": true,
+  "x": 123,
+  "y": 456,
+  "confidence": 0.95,
+  "element_type": "button|input|link|menu",
+  "element_text": "元素文本"
+}
+
+如果未找到目标，返回 found: false 并说明原因。
+```
+
+### 纠偏检查 Prompt
+```
+检查当前任务执行是否偏离目标。
+
+原始目标：{original_goal}
+已执行步骤：{completed_steps}
+当前屏幕状态：[截图]
+
+评估维度：
+1. 目标偏离：当前状态是否偏离原始目标
+2. 循环检测：是否在重复相同操作
+3. 进展停滞：是否长时间无进展
+
+输出格式（JSON）：
+{
+  "drift_level": "none|minor|moderate|severe",
+  "analysis": "分析说明",
+  "suggestion": "建议的修正方案"
+}
+```
+
+## 错误处理策略
+
+### API 调用失败
+1. **重试策略**: 指数退避，最多 3 次
+2. **超时处理**: 10s 超时后切换备用服务
+3. **降级方案**:
+   - Qwen3-VL 失败 → 切换豆包
+   - 豆包失败 → 提示用户网络问题
+   - ASR 失败 → 切换 Vosk 离线
+   - TTS 失败 → 切换 macOS say
+
+### Ollama 不可用
+1. 检测 Ollama 进程是否运行
+2. 尝试自动启动: `ollama serve`
+3. 等待 5s 后重试连接
+4. 失败后提示用户手动启动
+
+### 权限被拒绝
+1. 检测具体缺失的权限
+2. 显示权限引导界面
+3. 提供"打开系统偏好设置"按钮
+
+## 环境变量 (.env.example)
+
+```bash
+# AI 服务
+QWEN_API_KEY=your_qwen_api_key
+DOUBAO_API_KEY=your_doubao_api_key
+
+# 字节语音服务
+BYTEDANCE_APP_ID=your_app_id
+BYTEDANCE_ACCESS_TOKEN=your_access_token
+BYTEDANCE_SECRET_KEY=your_secret_key
+
+# Ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=ahmadwaqar/mai-ui
+
+# 开发配置
+NODE_ENV=development
+LOG_LEVEL=debug
+```
+
+## 依赖列表 (package.json 核心依赖)
+
+```json
+{
+  "dependencies": {
+    "zustand": "^4.5.0",
+    "mitt": "^3.0.1",
+    "@trpc/server": "^10.45.0",
+    "@trpc/client": "^10.45.0",
+    "electron-trpc": "^0.5.0",
+    "better-sqlite3": "^9.4.0",
+    "drizzle-orm": "^0.29.0",
+    "@nut-tree/nut-js": "^4.2.0",
+    "framer-motion": "^11.0.0",
+    "vosk": "^0.3.39",
+    "silero-vad": "^0.1.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-vite": "^2.0.0",
+    "typescript": "^5.3.0",
+    "tailwindcss": "^3.4.0",
+    "vitest": "^1.2.0",
+    "@playwright/test": "^1.41.0",
+    "electron-playwright-helpers": "^1.7.0",
+    "msw": "^2.1.0",
+    "drizzle-kit": "^0.20.0"
+  }
+}
+```
+
 ## MCP 配置
 
 ```json
