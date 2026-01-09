@@ -550,6 +550,7 @@ ollama pull nomic-embed-text       # RAG Embedding 模型
 
 ### Project 看板维护
 - GitHub Project URL: https://github.com/users/Ninot1Quyi/projects/2
+- 仓库 Projects 页面: https://github.com/Ninot1Quyi/jarvis/projects
 - 每完成一个 Phase 的任务，更新对应 Issue 的复选框
 - 完成整个 Phase 后关闭对应 Issue
 - 遇到阻塞问题时在 Issue 中添加评论说明
