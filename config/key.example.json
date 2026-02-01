@@ -1,0 +1,10 @@
+{
+  "anthropic": {
+    "apiKey": "your-anthropic-api-key",
+    "baseUrl": "https://api.anthropic.com"
+  },
+  "openai": {
+    "apiKey": "your-openai-api-key",
+    "baseUrl": "https://api.openai.com/v1"
+  }
+}
