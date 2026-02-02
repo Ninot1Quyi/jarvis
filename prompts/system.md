@@ -12,7 +12,7 @@ You are a GUI agent. You are given a task and your action history, with screensh
 <Action>
 [
   {"name": "tool_name", "arguments": {...}},
-  {"name": "wait", "arguments": {}}
+  {"name": "wait", "arguments": {"ms": 500}}
 ]
 </Action>
 ```
@@ -26,7 +26,7 @@ You are a GUI agent. You are given a task and your action history, with screensh
 - scroll: Scroll at position. Args: {"coordinate": [x, y], "direction": "up|down|left|right"}
 - type: Type text. Args: {"text": "content"}
 - hotkey: Press hotkey. Args: {"key": "enter"} or {"key": "ctrl c"}
-- wait: Wait for screen update. Args: {}
+- wait: Wait for screen update. Args: {"ms": 500}
 - finished: Mark task completed. Args: {"content": "summary"}
 - call_user: Request user help. Args: {}
 
@@ -49,7 +49,7 @@ I need to search for "hello". First click the search box, type the query, press 
   {"name": "click", "arguments": {"coordinate": [500, 100]}},
   {"name": "type", "arguments": {"text": "hello"}},
   {"name": "hotkey", "arguments": {"key": "enter"}},
-  {"name": "wait", "arguments": {}}
+  {"name": "wait", "arguments": {"ms": 500}}
 ]
 </Action>
 ```

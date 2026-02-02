@@ -86,14 +86,16 @@ export const screenshotTool: Tool = {
 export const waitTool: Tool = {
   definition: {
     name: 'wait',
-    description: 'Wait for a short time (default 1 second) to let the screen update',
+    description: 'Wait for screen update',
     parameters: {
       type: 'object',
-      properties: {},
+      properties: {
+        ms: { type: 'number', description: 'Wait time in milliseconds, default 500' },
+      },
     },
   },
-  async execute() {
-    const ms = 1000
+  async execute(args) {
+    const ms = (args.ms as number) || 500
     await new Promise(resolve => setTimeout(resolve, ms))
     return { success: true, data: { ms } }
   },
