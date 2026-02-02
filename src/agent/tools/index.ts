@@ -2,6 +2,8 @@ import type { Tool, ToolDefinition, ToolResult, ToolCall } from '../../types.js'
 import { mouseTools } from './mouse.js'
 import { keyboardTools } from './keyboard.js'
 import { systemTools } from './system.js'
+import { fileTools } from './file.js'
+import { todoTools } from './todo.js'
 import { logger } from '../../utils/logger.js'
 
 export class ToolRegistry {
@@ -12,6 +14,8 @@ export class ToolRegistry {
     this.registerTools(mouseTools)
     this.registerTools(keyboardTools)
     this.registerTools(systemTools)
+    this.registerTools(fileTools)
+    this.registerTools(todoTools)
   }
 
   registerTool(tool: Tool): void {
@@ -68,3 +72,5 @@ export const toolRegistry = new ToolRegistry()
 export { mouseTools } from './mouse.js'
 export { keyboardTools } from './keyboard.js'
 export { systemTools } from './system.js'
+export { fileTools } from './file.js'
+export { todoTools } from './todo.js'

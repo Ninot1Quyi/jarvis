@@ -12,6 +12,7 @@ logs/
 
 # Keys (sensitive)
 config/key.json
+config/config.json
 
 # OS files
 .DS_Store

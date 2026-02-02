@@ -107,18 +107,22 @@ export interface ProviderConfig {
   baseUrl?: string
   model?: string
   nativeToolCall?: boolean
+  apiType?: 'openai' | 'anthropic'
 }
 
 export interface KeyConfig {
-  defaultProvider?: 'anthropic' | 'openai' | 'doubao'
+  defaultProvider?: string
+  mouseSpeed?: number
   anthropic?: ProviderConfig
   openai?: ProviderConfig
   doubao?: ProviderConfig
+  [key: string]: ProviderConfig | string | number | undefined
 }
 
 export interface JarvisConfig {
   keys: KeyConfig
-  defaultProvider: 'anthropic' | 'openai' | 'doubao'
+  defaultProvider: string
+  mouseSpeed: number
   maxSteps: number
   screenshotDir: string
   dataDir: string

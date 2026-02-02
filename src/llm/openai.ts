@@ -278,7 +278,9 @@ export class OpenAIProvider implements LLMProvider {
     const { thought, toolCalls } = parseToolCallsFromText(content)
 
     return {
-      content: thought || content,
+      // If we parsed tool calls, only return thought (may be empty)
+      // If no tool calls parsed, return original content for debugging
+      content: toolCalls.length > 0 ? thought : content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
         inputTokens: response.usage?.prompt_tokens || 0,

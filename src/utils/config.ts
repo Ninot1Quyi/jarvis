@@ -21,7 +21,7 @@ export function loadConfig(): JarvisConfig {
   const keys = loadKeys()
 
   // Determine default provider from config or fallback
-  let defaultProvider: 'anthropic' | 'openai' | 'doubao' = 'anthropic'
+  let defaultProvider = 'anthropic'
   if (keys.defaultProvider) {
     defaultProvider = keys.defaultProvider
   } else if (keys.anthropic?.apiKey) {
@@ -35,6 +35,7 @@ export function loadConfig(): JarvisConfig {
   return {
     keys,
     defaultProvider,
+    mouseSpeed: keys.mouseSpeed ?? -1,
     maxSteps: 50,
     screenshotDir: path.join(ROOT_DIR, 'data', 'memory', 'screenshots'),
     dataDir: path.join(ROOT_DIR, 'data'),
