@@ -57,33 +57,5 @@ export function parseToolCallsFromText(text: string): { thought: string; toolCal
     }
   }
 
-  // 如果没有找到 XML 标签，回退到旧的解析方式
-  if (toolCalls.length === 0) {
-    // 尝试直接匹配 JSON 数组
-    const arrayMatch = text.match(/\[\s*\{[\s\S]*?"name"[\s\S]*?\}\s*\]/g)
-    if (arrayMatch) {
-      for (const jsonStr of arrayMatch) {
-        try {
-          const parsed = JSON.parse(jsonStr)
-          if (Array.isArray(parsed)) {
-            for (const item of parsed) {
-              if (item.name) {
-                const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-                toolCalls.push({
-                  id,
-                  name: item.name,
-                  arguments: item.arguments || {},
-                })
-              }
-            }
-          }
-          if (toolCalls.length > 0) break
-        } catch {
-          // 继续
-        }
-      }
-    }
-  }
-
   return { thought, toolCalls }
 }
