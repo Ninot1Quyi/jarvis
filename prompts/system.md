@@ -8,7 +8,10 @@ You are a GUI agent. You are given a task and your action history, with screensh
 Thought: [Your analysis and plan]
 
 Action:
-{"name": "tool_name", "arguments": {...}}
+[
+  {"name": "tool_name", "arguments": {...}},
+  {"name": "wait", "arguments": {}}
+]
 ```
 
 ## Available Tools
