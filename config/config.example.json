@@ -1,0 +1,21 @@
+{
+  "defaultProvider": "anthropic",
+  "anthropic": {
+    "apiKey": "your-anthropic-api-key",
+    "baseUrl": "https://api.anthropic.com",
+    "model": "claude-sonnet-4-5-20250514",
+    "nativeToolCall": true
+  },
+  "openai": {
+    "apiKey": "your-openai-api-key",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "nativeToolCall": true
+  },
+  "doubao": {
+    "apiKey": "your-doubao-api-key",
+    "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+    "model": "doubao-1-5-ui-tars-250428",
+    "nativeToolCall": false
+  }
+}

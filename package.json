@@ -1,0 +1,38 @@
+{
+  "name": "jarvis",
+  "version": "0.1.0",
+  "description": "Digital Employee Agent - GUI automation powered by LLM",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "jarvis": "dist/cli/main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli/main.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "agent",
+    "automation",
+    "gui",
+    "llm",
+    "claude"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@computer-use/nut-js": "^4.2.0",
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
