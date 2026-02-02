@@ -4,60 +4,68 @@ import type { ToolCall, ToolDefinition } from '../../../types.js'
 const COORDINATE_FACTOR = 1000
 
 /**
- * Build tools prompt for prompt engineering mode (Doubao UI-TARS format)
+ * Build tools prompt for prompt engineering mode (JSON format)
  */
 export function buildToolsPrompt(_tools: ToolDefinition[]): string {
-  // 使用 Doubao UI-TARS 原生格式，不需要动态生成工具描述
   return ''
 }
 
 /**
- * Parse point from <point>x y</point> format
- * Returns normalized coordinates (0-1)
+ * Parse coordinate array [x, y] and normalize to 0-1
  */
-function parsePoint(text: string): { x: number; y: number } | null {
-  const match = text.match(/<point>\s*(\d+)\s+(\d+)\s*<\/point>/)
-  if (match) {
-    const x = parseInt(match[1]) / COORDINATE_FACTOR
-    const y = parseInt(match[2]) / COORDINATE_FACTOR
+function parseCoordinate(coord: number[]): { x: number; y: number } | null {
+  if (Array.isArray(coord) && coord.length >= 2) {
+    const x = coord[0] / COORDINATE_FACTOR
+    const y = coord[1] / COORDINATE_FACTOR
     return { x, y }
   }
   return null
 }
 
 /**
- * Parse tool calls from Doubao UI-TARS format
- * Format: Thought: ... \n Action: action_name(params)
+ * Parse tool calls from JSON format
  */
 export function parseToolCallsFromText(text: string): { thought: string; toolCalls: ToolCall[] } {
   let thought = ''
   const toolCalls: ToolCall[] = []
 
   // 提取 Thought 部分
-  const thoughtMatch = text.match(/Thought:\s*([\s\S]*?)(?=Action:|$)/)
+  const thoughtMatch = text.match(/Thought:\s*([\s\S]*?)(?=Action:|```|$)/)
   if (thoughtMatch) {
     thought = thoughtMatch[1].trim()
   }
 
-  // 提取所有 Action 行
-  const actionMatches = text.matchAll(/Action:\s*(.+?)(?=\n|$)/g)
+  // 提取 JSON 代码块
+  const jsonMatches = text.matchAll(/```json\s*([\s\S]*?)\s*```/g)
 
-  for (const actionMatch of actionMatches) {
-    const actionStr = actionMatch[1].trim()
-    const toolCall = parseAction(actionStr)
-    if (toolCall) {
-      toolCalls.push(toolCall)
+  for (const match of jsonMatches) {
+    try {
+      const jsonStr = match[1].trim()
+      const parsed = JSON.parse(jsonStr)
+      const actions = Array.isArray(parsed) ? parsed : [parsed]
+
+      for (const action of actions) {
+        const toolCall = parseJsonAction(action)
+        if (toolCall) {
+          toolCalls.push(toolCall)
+        }
+      }
+    } catch {
+      // JSON 解析失败，继续
     }
   }
 
-  // 如果没有找到 Action: 格式，尝试直接解析函数调用
+  // fallback: 直接解析 JSON 对象
   if (toolCalls.length === 0) {
-    const directActions = text.matchAll(/(\w+)\s*\(([^)]*)\)/g)
-    for (const match of directActions) {
-      const toolCall = parseAction(match[0])
-      if (toolCall) {
-        toolCalls.push(toolCall)
-      }
+    const directJsonMatch = text.match(/\{[\s\S]*"action"[\s\S]*\}/)
+    if (directJsonMatch) {
+      try {
+        const parsed = JSON.parse(directJsonMatch[0])
+        const toolCall = parseJsonAction(parsed)
+        if (toolCall) {
+          toolCalls.push(toolCall)
+        }
+      } catch { /* ignore */ }
     }
   }
 
@@ -65,98 +73,96 @@ export function parseToolCallsFromText(text: string): { thought: string; toolCal
 }
 
 /**
- * Parse a single action string
+ * Parse a single JSON action object
  */
-function parseAction(actionStr: string): ToolCall | null {
+function parseJsonAction(action: Record<string, unknown>): ToolCall | null {
+  if (!action || typeof action !== 'object' || !action.action) {
+    return null
+  }
+
   const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const actionType = action.action as string
 
-  // click(point='<point>x y</point>')
-  const clickMatch = actionStr.match(/^click\s*\(\s*point\s*=\s*'([^']+)'\s*\)/)
-  if (clickMatch) {
-    const point = parsePoint(clickMatch[1])
-    if (point) {
-      return { id, name: 'click', arguments: point }
+  switch (actionType) {
+    case 'click': {
+      const coord = parseCoordinate(action.coordinate as number[])
+      if (coord) return { id, name: 'click', arguments: coord }
+      break
     }
-  }
 
-  // left_double(point='<point>x y</point>')
-  const doubleClickMatch = actionStr.match(/^left_double\s*\(\s*point\s*=\s*'([^']+)'\s*\)/)
-  if (doubleClickMatch) {
-    const point = parsePoint(doubleClickMatch[1])
-    if (point) {
-      return { id, name: 'double_click', arguments: point }
+    case 'left_double': {
+      const coord = parseCoordinate(action.coordinate as number[])
+      if (coord) return { id, name: 'double_click', arguments: coord }
+      break
     }
-  }
 
-  // right_single(point='<point>x y</point>')
-  const rightClickMatch = actionStr.match(/^right_single\s*\(\s*point\s*=\s*'([^']+)'\s*\)/)
-  if (rightClickMatch) {
-    const point = parsePoint(rightClickMatch[1])
-    if (point) {
-      return { id, name: 'right_click', arguments: point }
+    case 'right_single': {
+      const coord = parseCoordinate(action.coordinate as number[])
+      if (coord) return { id, name: 'right_click', arguments: coord }
+      break
     }
-  }
 
-  // drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
-  const dragMatch = actionStr.match(/^drag\s*\(\s*start_point\s*=\s*'([^']+)'\s*,\s*end_point\s*=\s*'([^']+)'\s*\)/)
-  if (dragMatch) {
-    const startPoint = parsePoint(dragMatch[1])
-    const endPoint = parsePoint(dragMatch[2])
-    if (startPoint && endPoint) {
+    case 'drag': {
+      const startCoord = parseCoordinate(action.startCoordinate as number[])
+      const endCoord = parseCoordinate(action.endCoordinate as number[])
+      if (startCoord && endCoord) {
+        return {
+          id,
+          name: 'drag',
+          arguments: {
+            startX: startCoord.x,
+            startY: startCoord.y,
+            endX: endCoord.x,
+            endY: endCoord.y,
+          },
+        }
+      }
+      break
+    }
+
+    case 'scroll': {
+      const coord = parseCoordinate(action.coordinate as number[])
+      if (coord && action.direction) {
+        return {
+          id,
+          name: 'scroll',
+          arguments: { ...coord, direction: action.direction as string },
+        }
+      }
+      break
+    }
+
+    case 'type': {
+      if (action.text !== undefined) {
+        return { id, name: 'type', arguments: { text: action.text as string } }
+      }
+      break
+    }
+
+    case 'hotkey': {
+      if (action.key) {
+        const keys = (action.key as string).trim().replace(/\s+/g, '+')
+        return { id, name: 'hotkey', arguments: { keys } }
+      }
+      break
+    }
+
+    case 'wait':
+      return { id, name: 'wait', arguments: { ms: 1000 } }
+
+    case 'finished':
       return {
         id,
-        name: 'drag',
-        arguments: {
-          startX: startPoint.x,
-          startY: startPoint.y,
-          endX: endPoint.x,
-          endY: endPoint.y,
-        },
+        name: 'finished',
+        arguments: { summary: (action.content as string) || 'Task completed' },
       }
-    }
-  }
 
-  // scroll(point='<point>x y</point>', direction='down')
-  const scrollMatch = actionStr.match(/^scroll\s*\(\s*point\s*=\s*'([^']+)'\s*,\s*direction\s*=\s*'(\w+)'\s*\)/)
-  if (scrollMatch) {
-    const point = parsePoint(scrollMatch[1])
-    if (point) {
+    case 'call_user':
       return {
         id,
-        name: 'scroll',
-        arguments: { ...point, direction: scrollMatch[2] },
+        name: 'call_user',
+        arguments: { message: 'User assistance needed' },
       }
-    }
-  }
-
-  // hotkey(key='ctrl c')
-  const hotkeyMatch = actionStr.match(/^hotkey\s*\(\s*key\s*=\s*'([^']+)'\s*\)/)
-  if (hotkeyMatch) {
-    // 将空格分隔转换为 + 分隔
-    const keys = hotkeyMatch[1].trim().replace(/\s+/g, '+')
-    return { id, name: 'hotkey', arguments: { keys } }
-  }
-
-  // type(content='xxx')
-  const typeMatch = actionStr.match(/^type\s*\(\s*content\s*=\s*'([^']*)'\s*\)/)
-  if (typeMatch) {
-    return { id, name: 'type', arguments: { text: typeMatch[1] } }
-  }
-
-  // wait()
-  if (actionStr.match(/^wait\s*\(\s*\)/)) {
-    return { id, name: 'wait', arguments: { ms: 1000 } }
-  }
-
-  // finished(content='xxx')
-  const finishedMatch = actionStr.match(/^finished\s*\(\s*content\s*=\s*'([^']*)'\s*\)/)
-  if (finishedMatch) {
-    return { id, name: 'finished', arguments: { summary: finishedMatch[1] } }
-  }
-
-  // call_user()
-  if (actionStr.match(/^call_user\s*\(\s*\)/)) {
-    return { id, name: 'call_user', arguments: { message: 'User assistance needed' } }
   }
 
   return null
