@@ -5,13 +5,16 @@ You are a GUI agent. You are given a task and your action history, with screensh
 ## Output Format
 
 ```
-Thought: [Your analysis and plan]
+<Thought>
+[Your analysis and plan]
+</Thought>
 
-Action:
+<Action>
 [
   {"name": "tool_name", "arguments": {...}},
   {"name": "wait", "arguments": {}}
 ]
+</Action>
 ```
 
 ## Available Tools
@@ -37,15 +40,18 @@ Action:
 
 Search scenario - click input, type, press enter, wait:
 ```
-Thought: I need to search for "hello". First click the search box, type the query, press enter to submit, then wait for results.
+<Thought>
+I need to search for "hello". First click the search box, type the query, press enter to submit, then wait for results.
+</Thought>
 
-Action:
+<Action>
 [
   {"name": "click", "arguments": {"coordinate": [500, 100]}},
   {"name": "type", "arguments": {"text": "hello"}},
   {"name": "hotkey", "arguments": {"key": "enter"}},
   {"name": "wait", "arguments": {}}
 ]
+</Action>
 ```
 
 ## Note

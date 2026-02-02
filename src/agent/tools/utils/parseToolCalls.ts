@@ -9,66 +9,75 @@ export function buildToolsPrompt(_tools: ToolDefinition[]): string {
 
 /**
  * Parse tool calls from text response (prompt engineering mode)
- * 支持 function call JSON 格式: {"name": "click", "arguments": {"coordinate": [500, 300]}}
+ * 支持 XML 格式: <Thought>...</Thought> <Action>[...]</Action>
  */
 export function parseToolCallsFromText(text: string): { thought: string; toolCalls: ToolCall[] } {
   let thought = ''
   const toolCalls: ToolCall[] = []
 
-  // 提取 Thought 部分 - 匹配到 Action: 或 JSON 开始之前的内容
-  const thoughtMatch = text.match(/Thought:\s*([\s\S]*?)(?=\nAction:|\n\[|\n\{|$)/i)
+  // 提取 <Thought>...</Thought> 内容
+  const thoughtMatch = text.match(/<Thought>([\s\S]*?)<\/Thought>/i)
   if (thoughtMatch) {
     thought = thoughtMatch[1].trim()
   }
 
-  // 如果没有 Thought: 标记，尝试提取 JSON 之前的所有文本作为 thought
-  if (!thought) {
-    const beforeJson = text.match(/^([\s\S]*?)(?=\[[\s\S]*"name"|{[\s\S]*"name")/i)
-    if (beforeJson) {
-      thought = beforeJson[1].replace(/Action:\s*/gi, '').trim()
-    }
-  }
+  // 提取 <Action>...</Action> 内容
+  const actionMatch = text.match(/<Action>([\s\S]*?)<\/Action>/i)
+  if (actionMatch) {
+    const actionContent = actionMatch[1].trim()
 
-  // 尝试提取 JSON 数组 [{"name": ...}]
-  const arrayMatch = text.match(/\[\s*\{[\s\S]*?"name"[\s\S]*?\}\s*\]/g)
-  if (arrayMatch) {
-    for (const jsonStr of arrayMatch) {
-      try {
-        const parsed = JSON.parse(jsonStr)
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            if (item.name) {
-              const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-              toolCalls.push({
-                id,
-                name: item.name,
-                arguments: item.arguments || {},
-              })
-            }
-          }
+    // 解析 JSON 数组
+    try {
+      const parsed = JSON.parse(actionContent)
+      const items = Array.isArray(parsed) ? parsed : [parsed]
+
+      for (const item of items) {
+        if (item.name) {
+          const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          toolCalls.push({
+            id,
+            name: item.name,
+            arguments: item.arguments || {},
+          })
         }
-        if (toolCalls.length > 0) break
-      } catch {
-        // 继续尝试
+      }
+    } catch {
+      // JSON 解析失败，尝试逐个匹配
+      const objectMatches = actionContent.matchAll(/\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^}]*\})\s*\}/g)
+      for (const match of objectMatches) {
+        try {
+          const name = match[1]
+          const args = JSON.parse(match[2])
+          const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          toolCalls.push({ id, name, arguments: args })
+        } catch {
+          // 继续
+        }
       }
     }
   }
 
-  // 尝试提取单个 JSON 对象 {"name": ...}
+  // 如果没有找到 XML 标签，回退到旧的解析方式
   if (toolCalls.length === 0) {
-    const objectMatch = text.match(/\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}/g)
-    if (objectMatch) {
-      for (const jsonStr of objectMatch) {
+    // 尝试直接匹配 JSON 数组
+    const arrayMatch = text.match(/\[\s*\{[\s\S]*?"name"[\s\S]*?\}\s*\]/g)
+    if (arrayMatch) {
+      for (const jsonStr of arrayMatch) {
         try {
           const parsed = JSON.parse(jsonStr)
-          if (parsed.name) {
-            const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-            toolCalls.push({
-              id,
-              name: parsed.name,
-              arguments: parsed.arguments || {},
-            })
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (item.name) {
+                const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+                toolCalls.push({
+                  id,
+                  name: item.name,
+                  arguments: item.arguments || {},
+                })
+              }
+            }
           }
+          if (toolCalls.length > 0) break
         } catch {
           // 继续
         }
