@@ -1,21 +1,32 @@
 import type { Tool } from '../../types.js'
 import { logger } from '../../utils/logger.js'
 
+// 坐标归一化因子
+const COORDINATE_FACTOR = 1000
+
+// 归一化坐标 [0, 1000] -> [0, 1]
+function normalizeCoord(value: number): number {
+  return value / COORDINATE_FACTOR
+}
+
 // ============ Mouse Tools ============
-// 坐标已在 parseToolCalls 中从 [0,1000] 归一化为 [0,1]
-// 执行时乘以 screenWidth/screenHeight 转换为像素坐标
+// 工具定义使用 [0, 1000] 坐标范围
+// 执行时自动归一化为 [0, 1]，再乘以屏幕尺寸
 
 export const clickTool: Tool = {
   definition: {
     name: 'click',
-    description: '在指定位置点击鼠标左键',
+    description: 'Click at the specified position. Coordinates are in range [0, 1000].',
     parameters: {
       type: 'object',
       properties: {
-        x: { type: 'number', description: 'X 坐标，归一化值 0-1' },
-        y: { type: 'number', description: 'Y 坐标，归一化值 0-1' },
+        coordinate: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '[x, y] coordinate, range [0, 1000]. (0,0)=top-left, (1000,1000)=bottom-right',
+        },
       },
-      required: ['x', 'y'],
+      required: ['coordinate'],
     },
   },
   async execute(args, context) {
@@ -23,33 +34,36 @@ export const clickTool: Tool = {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
-    const normalizedX = args.x as number
-    const normalizedY = args.y as number
+    const coord = args.coordinate as number[]
+    const normalizedX = normalizeCoord(coord[0])
+    const normalizedY = normalizeCoord(coord[1])
 
-    // 转换为屏幕像素坐标
     const x = Math.round(normalizedX * screenWidth)
     const y = Math.round(normalizedY * screenHeight)
 
-    logger.debug(`click: normalized(${normalizedX}, ${normalizedY}) -> screen(${x}, ${y}) [${screenWidth}x${screenHeight}]`)
+    logger.debug(`click: [${coord[0]}, ${coord[1]}] -> normalized(${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}) -> screen(${x}, ${y})`)
 
     await mouse.move(straightTo(new Point(x, y)))
     await mouse.leftClick()
 
-    return { success: true, data: { normalizedX, normalizedY, screenX: x, screenY: y } }
+    return { success: true, data: { coordinate: coord, screenX: x, screenY: y } }
   },
 }
 
 export const doubleClickTool: Tool = {
   definition: {
-    name: 'double_click',
-    description: '在指定位置双击鼠标左键',
+    name: 'left_double',
+    description: 'Double click at the specified position. Coordinates are in range [0, 1000].',
     parameters: {
       type: 'object',
       properties: {
-        x: { type: 'number', description: 'X 坐标，归一化值 0-1' },
-        y: { type: 'number', description: 'Y 坐标，归一化值 0-1' },
+        coordinate: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '[x, y] coordinate, range [0, 1000]',
+        },
       },
-      required: ['x', 'y'],
+      required: ['coordinate'],
     },
   },
   async execute(args, context) {
@@ -57,8 +71,9 @@ export const doubleClickTool: Tool = {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
-    const normalizedX = args.x as number
-    const normalizedY = args.y as number
+    const coord = args.coordinate as number[]
+    const normalizedX = normalizeCoord(coord[0])
+    const normalizedY = normalizeCoord(coord[1])
 
     const x = Math.round(normalizedX * screenWidth)
     const y = Math.round(normalizedY * screenHeight)
@@ -66,21 +81,24 @@ export const doubleClickTool: Tool = {
     await mouse.move(straightTo(new Point(x, y)))
     await mouse.doubleClick(0)
 
-    return { success: true, data: { normalizedX, normalizedY, screenX: x, screenY: y } }
+    return { success: true, data: { coordinate: coord, screenX: x, screenY: y } }
   },
 }
 
 export const rightClickTool: Tool = {
   definition: {
-    name: 'right_click',
-    description: '在指定位置点击鼠标右键',
+    name: 'right_single',
+    description: 'Right click at the specified position. Coordinates are in range [0, 1000].',
     parameters: {
       type: 'object',
       properties: {
-        x: { type: 'number', description: 'X 坐标，归一化值 0-1' },
-        y: { type: 'number', description: 'Y 坐标，归一化值 0-1' },
+        coordinate: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '[x, y] coordinate, range [0, 1000]',
+        },
       },
-      required: ['x', 'y'],
+      required: ['coordinate'],
     },
   },
   async execute(args, context) {
@@ -88,8 +106,9 @@ export const rightClickTool: Tool = {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
-    const normalizedX = args.x as number
-    const normalizedY = args.y as number
+    const coord = args.coordinate as number[]
+    const normalizedX = normalizeCoord(coord[0])
+    const normalizedY = normalizeCoord(coord[1])
 
     const x = Math.round(normalizedX * screenWidth)
     const y = Math.round(normalizedY * screenHeight)
@@ -97,53 +116,29 @@ export const rightClickTool: Tool = {
     await mouse.move(straightTo(new Point(x, y)))
     await mouse.rightClick()
 
-    return { success: true, data: { normalizedX, normalizedY, screenX: x, screenY: y } }
-  },
-}
-
-export const mouseMoveTool: Tool = {
-  definition: {
-    name: 'mouse_move',
-    description: '移动鼠标到指定位置',
-    parameters: {
-      type: 'object',
-      properties: {
-        x: { type: 'number', description: 'X 坐标，归一化值 0-1' },
-        y: { type: 'number', description: 'Y 坐标，归一化值 0-1' },
-      },
-      required: ['x', 'y'],
-    },
-  },
-  async execute(args, context) {
-    const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
-    const screenWidth = (context?.screenWidth as number) || 1920
-    const screenHeight = (context?.screenHeight as number) || 1080
-
-    const normalizedX = args.x as number
-    const normalizedY = args.y as number
-
-    const x = Math.round(normalizedX * screenWidth)
-    const y = Math.round(normalizedY * screenHeight)
-
-    await mouse.move(straightTo(new Point(x, y)))
-
-    return { success: true, data: { normalizedX, normalizedY, screenX: x, screenY: y } }
+    return { success: true, data: { coordinate: coord, screenX: x, screenY: y } }
   },
 }
 
 export const dragTool: Tool = {
   definition: {
     name: 'drag',
-    description: '从起点拖拽到终点',
+    description: 'Drag from start to end position. Coordinates are in range [0, 1000].',
     parameters: {
       type: 'object',
       properties: {
-        startX: { type: 'number', description: '起点 X 坐标，归一化值 0-1' },
-        startY: { type: 'number', description: '起点 Y 坐标，归一化值 0-1' },
-        endX: { type: 'number', description: '终点 X 坐标，归一化值 0-1' },
-        endY: { type: 'number', description: '终点 Y 坐标，归一化值 0-1' },
+        startCoordinate: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '[x, y] start coordinate, range [0, 1000]',
+        },
+        endCoordinate: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '[x, y] end coordinate, range [0, 1000]',
+        },
       },
-      required: ['startX', 'startY', 'endX', 'endY'],
+      required: ['startCoordinate', 'endCoordinate'],
     },
   },
   async execute(args, context) {
@@ -151,35 +146,40 @@ export const dragTool: Tool = {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
-    const startX = Math.round((args.startX as number) * screenWidth)
-    const startY = Math.round((args.startY as number) * screenHeight)
-    const endX = Math.round((args.endX as number) * screenWidth)
-    const endY = Math.round((args.endY as number) * screenHeight)
+    const startCoord = args.startCoordinate as number[]
+    const endCoord = args.endCoordinate as number[]
+
+    const startX = Math.round(normalizeCoord(startCoord[0]) * screenWidth)
+    const startY = Math.round(normalizeCoord(startCoord[1]) * screenHeight)
+    const endX = Math.round(normalizeCoord(endCoord[0]) * screenWidth)
+    const endY = Math.round(normalizeCoord(endCoord[1]) * screenHeight)
 
     await mouse.move(straightTo(new Point(startX, startY)))
     await mouse.drag(straightTo(new Point(endX, endY)))
 
-    return { success: true, data: { startX, startY, endX, endY } }
+    return { success: true, data: { startCoordinate: startCoord, endCoordinate: endCoord } }
   },
 }
 
 export const scrollTool: Tool = {
   definition: {
     name: 'scroll',
-    description: '在指定位置滚动',
+    description: 'Scroll at the specified position. Coordinates are in range [0, 1000].',
     parameters: {
       type: 'object',
       properties: {
-        x: { type: 'number', description: 'X 坐标，归一化值 0-1' },
-        y: { type: 'number', description: 'Y 坐标，归一化值 0-1' },
+        coordinate: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '[x, y] coordinate, range [0, 1000]',
+        },
         direction: {
           type: 'string',
           enum: ['up', 'down', 'left', 'right'],
-          description: '滚动方向',
+          description: 'Scroll direction',
         },
-        amount: { type: 'number', description: '滚动量 (像素)，默认 300' },
       },
-      required: ['x', 'y', 'direction'],
+      required: ['coordinate', 'direction'],
     },
   },
   async execute(args, context) {
@@ -187,13 +187,14 @@ export const scrollTool: Tool = {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
-    const x = Math.round((args.x as number) * screenWidth)
-    const y = Math.round((args.y as number) * screenHeight)
+    const coord = args.coordinate as number[]
+    const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
+    const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
     const direction = args.direction as string
-    const amount = (args.amount as number) || 300
 
     await mouse.move(straightTo(new Point(x, y)))
 
+    const amount = 300
     if (direction === 'up') {
       await mouse.scrollUp(amount)
     } else if (direction === 'down') {
@@ -204,7 +205,7 @@ export const scrollTool: Tool = {
       await mouse.scrollRight(amount)
     }
 
-    return { success: true, data: { x, y, direction, amount } }
+    return { success: true, data: { coordinate: coord, direction } }
   },
 }
 
@@ -213,7 +214,6 @@ export const mouseTools: Tool[] = [
   clickTool,
   doubleClickTool,
   rightClickTool,
-  mouseMoveTool,
   dragTool,
   scrollTool,
 ]

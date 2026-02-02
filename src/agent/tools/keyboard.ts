@@ -1,39 +1,13 @@
 import type { Tool } from '../../types.js'
 
-// Key mapping for macOS
-const KEY_MAP: Record<string, string> = {
-  // Modifiers
-  cmd: 'command',
-  ctrl: 'control',
-  alt: 'option',
-  shift: 'shift',
-  // Special keys
-  enter: 'return',
-  return: 'return',
-  esc: 'escape',
-  escape: 'escape',
-  tab: 'tab',
-  space: 'space',
-  backspace: 'delete',
-  delete: 'forwarddelete',
-  up: 'up',
-  down: 'down',
-  left: 'left',
-  right: 'right',
-  home: 'home',
-  end: 'end',
-  pageup: 'pageup',
-  pagedown: 'pagedown',
-}
-
 export const typeTool: Tool = {
   definition: {
     name: 'type',
-    description: '输入文本内容',
+    description: 'Type text content. Use \\n for newline/enter.',
     parameters: {
       type: 'object',
       properties: {
-        text: { type: 'string', description: '要输入的文本' },
+        text: { type: 'string', description: 'Text to type' },
       },
       required: ['text'],
     },
@@ -42,7 +16,22 @@ export const typeTool: Tool = {
     const { keyboard } = await import('@computer-use/nut-js')
     const text = args.text as string
 
-    await keyboard.type(text)
+    // 处理换行符，转换为回车键
+    if (text.includes('\n')) {
+      const parts = text.split('\n')
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i]) {
+          await keyboard.type(parts[i])
+        }
+        if (i < parts.length - 1) {
+          const { Key } = await import('@computer-use/nut-js')
+          await keyboard.pressKey(Key.Enter)
+          await keyboard.releaseKey(Key.Enter)
+        }
+      }
+    } else {
+      await keyboard.type(text)
+    }
 
     return { success: true, data: { text } }
   },
@@ -51,26 +40,25 @@ export const typeTool: Tool = {
 export const hotkeyTool: Tool = {
   definition: {
     name: 'hotkey',
-    description: '按下快捷键组合，如 cmd+c, ctrl+shift+s',
+    description: 'Press hotkey combination. Use space to separate keys, e.g. "ctrl c", "cmd shift s"',
     parameters: {
       type: 'object',
       properties: {
-        keys: {
+        key: {
           type: 'string',
-          description: '快捷键组合，用 + 连接，如 "cmd+c", "ctrl+shift+s"',
+          description: 'Hotkey combination, space separated, e.g. "ctrl c", "cmd shift s"',
         },
       },
-      required: ['keys'],
+      required: ['key'],
     },
   },
   async execute(args) {
     const { keyboard, Key } = await import('@computer-use/nut-js')
-    const keysStr = args.keys as string
+    const keysStr = args.key as string
 
-    // Parse keys like "cmd+c" or "ctrl+shift+s"
-    const keyParts = keysStr.split('+').map(k => k.trim().toLowerCase())
+    // Parse keys like "ctrl c" or "cmd shift s" (space separated)
+    const keyParts = keysStr.split(/[\s+]+/).map(k => k.trim().toLowerCase()).filter(k => k)
 
-    // Map to nut.js Key enum
     const keyEnumMap: Record<string, number> = {
       command: Key.LeftCmd,
       cmd: Key.LeftCmd,
@@ -95,18 +83,15 @@ export const hotkeyTool: Tool = {
       end: Key.End,
       pageup: Key.PageUp,
       pagedown: Key.PageDown,
-      // Letters
       a: Key.A, b: Key.B, c: Key.C, d: Key.D, e: Key.E,
       f: Key.F, g: Key.G, h: Key.H, i: Key.I, j: Key.J,
       k: Key.K, l: Key.L, m: Key.M, n: Key.N, o: Key.O,
       p: Key.P, q: Key.Q, r: Key.R, s: Key.S, t: Key.T,
       u: Key.U, v: Key.V, w: Key.W, x: Key.X, y: Key.Y,
       z: Key.Z,
-      // Numbers
       '0': Key.Num0, '1': Key.Num1, '2': Key.Num2, '3': Key.Num3,
       '4': Key.Num4, '5': Key.Num5, '6': Key.Num6, '7': Key.Num7,
       '8': Key.Num8, '9': Key.Num9,
-      // Function keys
       f1: Key.F1, f2: Key.F2, f3: Key.F3, f4: Key.F4,
       f5: Key.F5, f6: Key.F6, f7: Key.F7, f8: Key.F8,
       f9: Key.F9, f10: Key.F10, f11: Key.F11, f12: Key.F12,
@@ -121,61 +106,10 @@ export const hotkeyTool: Tool = {
       keys.push(key)
     }
 
-    // Press all keys
     await keyboard.pressKey(...keys)
     await keyboard.releaseKey(...keys)
 
-    return { success: true, data: { keys: keysStr } }
-  },
-}
-
-export const pressKeyTool: Tool = {
-  definition: {
-    name: 'press_key',
-    description: '按下单个按键，如 enter, escape, tab',
-    parameters: {
-      type: 'object',
-      properties: {
-        key: {
-          type: 'string',
-          description: '按键名称，如 "enter", "escape", "tab", "backspace"',
-        },
-      },
-      required: ['key'],
-    },
-  },
-  async execute(args) {
-    const { keyboard, Key } = await import('@computer-use/nut-js')
-    const keyStr = (args.key as string).toLowerCase()
-
-    const keyEnumMap: Record<string, number> = {
-      return: Key.Enter,
-      enter: Key.Enter,
-      escape: Key.Escape,
-      esc: Key.Escape,
-      tab: Key.Tab,
-      space: Key.Space,
-      backspace: Key.Backspace,
-      delete: Key.Delete,
-      up: Key.Up,
-      down: Key.Down,
-      left: Key.Left,
-      right: Key.Right,
-      home: Key.Home,
-      end: Key.End,
-      pageup: Key.PageUp,
-      pagedown: Key.PageDown,
-    }
-
-    const key = keyEnumMap[keyStr]
-    if (key === undefined) {
-      return { success: false, error: `Unknown key: ${keyStr}` }
-    }
-
-    await keyboard.pressKey(key)
-    await keyboard.releaseKey(key)
-
-    return { success: true, data: { key: keyStr } }
+    return { success: true, data: { key: keysStr } }
   },
 }
 
@@ -183,5 +117,4 @@ export const pressKeyTool: Tool = {
 export const keyboardTools: Tool[] = [
   typeTool,
   hotkeyTool,
-  pressKeyTool,
 ]
