@@ -8,6 +8,14 @@ export function buildToolsPrompt(_tools: ToolDefinition[]): string {
 }
 
 /**
+ * Remove JavaScript-style comments from JSON string
+ */
+function stripJsonComments(json: string): string {
+  // Remove single-line comments (// ...)
+  return json.replace(/\/\/[^\n]*/g, '')
+}
+
+/**
  * Parse tool calls from XML format response
  * Format: <Thought>...</Thought> <Action>[...]</Action>
  */
@@ -19,7 +27,9 @@ export function parseToolCallsFromText(text: string): { thought: string; toolCal
   if (!actionContent) return { thought, toolCalls }
 
   try {
-    const parsed = JSON.parse(actionContent)
+    // Strip comments before parsing JSON
+    const cleanJson = stripJsonComments(actionContent)
+    const parsed = JSON.parse(cleanJson)
     const items = Array.isArray(parsed) ? parsed : [parsed]
 
     for (const item of items) {
