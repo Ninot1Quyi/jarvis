@@ -13,7 +13,7 @@ The `<available_skills>` section lists skills with detailed instructions for spe
 - **DO**: Batch the skill loading with your first action on that application
   ```
   Example: Task requires WeChat
-  → Call skill("wechat") AND hotkey("cmd space") + type("WeChat") + enter in ONE response
+  → skill("wechat") + hotkey("cmd space") + type("WeChat") + hotkey("enter") in ONE response
   → Next turn you'll have both: the app open AND detailed instructions
   ```
 
