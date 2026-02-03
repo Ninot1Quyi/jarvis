@@ -1,43 +1,27 @@
-import * as fs from 'fs'
 import * as path from 'path'
-import { exec } from 'child_process'
-import { promisify } from 'util'
 import type { Tool } from '../../types.js'
 import { ensureDir } from '../../utils/config.js'
 import { logger } from '../../utils/logger.js'
 
-const execAsync = promisify(exec)
-
-// 获取主显示器的逻辑尺寸（鼠标坐标系）
+// 使用 nut-js 获取屏幕尺寸（跨平台）
 async function getScreenLogicalSize(): Promise<{ width: number; height: number }> {
   try {
-    const { stdout } = await execAsync(`osascript -e 'tell application "Finder" to get bounds of window of desktop'`)
-    const parts = stdout.trim().split(',').map(s => parseInt(s.trim()))
-    if (parts.length === 4) {
-      const width = parts[2]
-      const height = parts[3]
-      logger.debug(`Screen logical size: ${width}x${height}`)
-      return { width, height }
-    }
+    const { screen } = await import('@computer-use/nut-js')
+    const width = await screen.width()
+    const height = await screen.height()
+    logger.debug(`Screen logical size: ${width}x${height}`)
+    return { width, height }
   } catch (e) {
-    logger.debug(`osascript failed: ${e}`)
+    logger.debug(`Failed to get screen size: ${e}`)
+    return { width: 1920, height: 1080 }
   }
+}
 
-  try {
-    const { stdout } = await execAsync(`system_profiler SPDisplaysDataType 2>/dev/null`)
-    const retinaMatch = stdout.match(/Resolution:\s*(\d+)\s*x\s*(\d+)\s*\(.*Retina\)/i)
-    if (retinaMatch) {
-      return { width: parseInt(retinaMatch[1]), height: parseInt(retinaMatch[2]) }
-    }
-    const normalMatch = stdout.match(/Resolution:\s*(\d+)\s*x\s*(\d+)(?!\s*\()/)
-    if (normalMatch) {
-      return { width: parseInt(normalMatch[1]), height: parseInt(normalMatch[2]) }
-    }
-  } catch (e) {
-    logger.debug(`system_profiler failed: ${e}`)
-  }
-
-  return { width: 1920, height: 1080 }
+// 使用 nut-js 截图（跨平台）
+async function captureScreen(filepath: string): Promise<void> {
+  const { screen, saveImage } = await import('@computer-use/nut-js')
+  const image = await screen.grab()
+  await saveImage({ image, path: filepath })
 }
 
 export const screenshotTool: Tool = {
@@ -63,12 +47,7 @@ export const screenshotTool: Tool = {
 
     const screenSize = await getScreenLogicalSize()
 
-    const tempPath = path.join(dateDir, `${timestamp}_temp.png`)
-    await execAsync(`screencapture -x -r "${tempPath}"`)
-
-    // 缩放到逻辑分辨率
-    await execAsync(`sips -z ${screenSize.height} ${screenSize.width} "${tempPath}" --out "${filepath}"`)
-    fs.unlinkSync(tempPath)
+    await captureScreen(filepath)
 
     return {
       success: true,
@@ -174,12 +153,7 @@ export const takeScreenshotTool: Tool = {
 
     const screenSize = await getScreenLogicalSize()
 
-    const tempPath = path.join(screenshotDir, `${timestamp}_temp.png`)
-    await execAsync(`screencapture -x -r "${tempPath}"`)
-
-    // 缩放到逻辑分辨率
-    await execAsync(`sips -z ${screenSize.height} ${screenSize.width} "${tempPath}" --out "${filepath}"`)
-    fs.unlinkSync(tempPath)
+    await captureScreen(filepath)
 
     return {
       success: true,

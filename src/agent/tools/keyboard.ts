@@ -1,15 +1,36 @@
 import type { Tool } from '../../types.js'
 import { spawn } from 'child_process'
 
-// 将文本写入剪贴板（macOS）
+// 将文本写入剪贴板（跨平台）
 async function copyToClipboard(text: string): Promise<void> {
+  const isMac = process.platform === 'darwin'
+  const isWin = process.platform === 'win32'
+  // 检测是否在 WSL 中运行
+  const isWSL = process.platform === 'linux' && process.env.WSL_DISTRO_NAME
+
   return new Promise((resolve, reject) => {
-    const proc = spawn('pbcopy')
-    proc.stdin.write(text)
-    proc.stdin.end()
+    let proc
+    if (isMac) {
+      proc = spawn('pbcopy')
+      proc.stdin.write(text)
+      proc.stdin.end()
+    } else if (isWin || isWSL) {
+      // Windows: 使用 UTF-16LE 编码直接写入 clip.exe
+      // clip.exe 原生支持 UTF-16LE（Windows Unicode 格式）
+      proc = spawn(isWSL ? 'clip.exe' : 'clip')
+      const utf16leBuffer = Buffer.from(text, 'utf16le')
+      proc.stdin.write(utf16leBuffer)
+      proc.stdin.end()
+    } else {
+      // Linux: try xclip or xsel
+      proc = spawn('xclip', ['-selection', 'clipboard'])
+      proc.stdin.write(text)
+      proc.stdin.end()
+    }
+
     proc.on('close', (code) => {
       if (code === 0) resolve()
-      else reject(new Error(`pbcopy failed with code ${code}`))
+      else reject(new Error(`clipboard command failed with code ${code}`))
     })
     proc.on('error', reject)
   })
@@ -40,9 +61,10 @@ export const typeTool: Tool = {
       // 将文本写入剪贴板
       await copyToClipboard(text)
 
-      // 执行粘贴 (Cmd+V)
-      await keyboard.pressKey(Key.LeftCmd, Key.V)
-      await keyboard.releaseKey(Key.LeftCmd, Key.V)
+      // 执行粘贴 (macOS: Cmd+V, Windows/Linux: Ctrl+V)
+      const modKey = process.platform === 'darwin' ? Key.LeftCmd : Key.LeftControl
+      await keyboard.pressKey(modKey, Key.V)
+      await keyboard.releaseKey(modKey, Key.V)
 
       return { success: true, data: { text, method: 'paste' } }
     }
