@@ -12,12 +12,13 @@ export class ToolRegistry {
 
   constructor() {
     // Register all built-in tools
+    // Skill tools first - for progressive skill loading
+    this.registerTools(skillTools)
     this.registerTools(mouseTools)
     this.registerTools(keyboardTools)
     this.registerTools(systemTools)
     this.registerTools(fileTools)
     this.registerTools(todoTools)
-    this.registerTools(skillTools)
   }
 
   registerTool(tool: Tool): void {

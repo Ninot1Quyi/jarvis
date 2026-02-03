@@ -17,6 +17,10 @@
 
 ## Available Tools
 
+### Skill Tools
+- skill: Load a skill to get detailed instructions. Args: {"name": "skill_name"}
+- list_skills: List all available skills with descriptions. Args: {}
+
 ### GUI Tools
 - click: Click at position. Args: {"coordinate": [x, y]}
 - left_double: Double click. Args: {"coordinate": [x, y]}
@@ -41,10 +45,6 @@
 ### Task Tools
 - todo_read: Read current TODO list. Args: {}
 - todo_write: Update TODO list. Args: {"todos": [{"id": "1", "content": "task", "status": "pending|in_progress|completed"}]}
-
-### Skill Tools
-- skill: Load a skill to get detailed instructions. Args: {"name": "skill_name"}
-- list_skills: List all available skills with descriptions. Args: {}
 
 ## Examples
 
