@@ -18,7 +18,7 @@ export function createProvider(
   const nativeToolCall = config.nativeToolCall === true
 
   if (apiType === 'anthropic') {
-    return new AnthropicProvider(config.apiKey, config.baseUrl, config.model)
+    return new AnthropicProvider(config.apiKey, config.baseUrl, config.model, nativeToolCall)
   }
 
   // 默认使用 OpenAI 兼容 API

@@ -8,22 +8,35 @@ export function buildToolsPrompt(_tools: ToolDefinition[]): string {
 }
 
 /**
- * Remove JavaScript-style comments from JSON string
+ * Remove comments from JSON string
  */
 function stripJsonComments(json: string): string {
-  // Remove single-line comments (// ...)
-  return json.replace(/\/\/[^\n]*/g, '')
+  // Remove single-line comments (// ... and # ...)
+  return json
+    .replace(/\/\/[^\n]*/g, '')  // Remove // comments
+    .replace(/#[^\n]*/g, '')      // Remove # comments
 }
 
 /**
  * Parse tool calls from XML format response
  * Format: <Thought>...</Thought> <Action>[...]</Action>
+ * Also handles raw JSON array without tags
  */
 export function parseToolCallsFromText(text: string): { thought: string; toolCalls: ToolCall[] } {
   const thought = text.match(/<Thought>([\s\S]*?)<\/Thought>/i)?.[1]?.trim() || ''
   const toolCalls: ToolCall[] = []
 
-  const actionContent = text.match(/<Action>([\s\S]*?)<\/Action>/i)?.[1]?.trim()
+  // Try to extract action content from <Action> tag
+  let actionContent = text.match(/<Action>([\s\S]*?)<\/Action>/i)?.[1]?.trim()
+
+  // If no <Action> tag, try to find raw JSON array in the text
+  if (!actionContent) {
+    const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/)
+    if (jsonArrayMatch) {
+      actionContent = jsonArrayMatch[0]
+    }
+  }
+
   if (!actionContent) return { thought, toolCalls }
 
   try {

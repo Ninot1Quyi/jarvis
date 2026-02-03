@@ -32,6 +32,9 @@ export function loadConfig(): JarvisConfig {
     defaultProvider = 'openai'
   }
 
+  // Workspace defaults to data directory if not specified
+  const workspace = keys.workspace || path.join(ROOT_DIR, 'workspace')
+
   return {
     keys,
     defaultProvider,
@@ -39,6 +42,7 @@ export function loadConfig(): JarvisConfig {
     maxSteps: 50,
     screenshotDir: path.join(ROOT_DIR, 'data', 'memory', 'screenshots'),
     dataDir: path.join(ROOT_DIR, 'data'),
+    workspace,
   }
 }
 

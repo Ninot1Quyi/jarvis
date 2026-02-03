@@ -29,6 +29,7 @@ export interface ImageInput {
   type: 'base64' | 'path' | 'url'
   data: string
   mediaType?: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  name?: string  // Image name for display (e.g., "主屏幕", "tool_screenshot_1")
 }
 
 export interface ChatOptions {
@@ -113,6 +114,7 @@ export interface ProviderConfig {
 export interface KeyConfig {
   defaultProvider?: string
   mouseSpeed?: number
+  workspace?: string
   anthropic?: ProviderConfig
   openai?: ProviderConfig
   doubao?: ProviderConfig
@@ -126,4 +128,5 @@ export interface JarvisConfig {
   maxSteps: number
   screenshotDir: string
   dataDir: string
+  workspace: string
 }

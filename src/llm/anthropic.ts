@@ -9,6 +9,7 @@ import type {
   ToolCall,
 } from '../types.js'
 import { logger } from '../utils/logger.js'
+import { parseToolCallsFromText } from '../agent/tools/utils/parseToolCalls.js'
 import * as fs from 'fs'
 
 type MediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
@@ -17,13 +18,15 @@ export class AnthropicProvider implements LLMProvider {
   name = 'anthropic'
   private client: Anthropic
   private model: string
+  private nativeToolCall: boolean
 
-  constructor(apiKey: string, baseUrl?: string, model?: string) {
+  constructor(apiKey: string, baseUrl?: string, model?: string, nativeToolCall: boolean = true) {
     this.client = new Anthropic({
       apiKey,
       baseURL: baseUrl,
     })
     this.model = model || 'claude-sonnet-4-5-20250514'
+    this.nativeToolCall = nativeToolCall
   }
 
   async chatWithVisionAndTools(
@@ -60,6 +63,11 @@ export class AnthropicProvider implements LLMProvider {
         // Add images only to the last user message
         if (i === lastUserIndex && images.length > 0) {
           for (const img of images) {
+            // Add image name/label as text before the image
+            if (img.name) {
+              (content as Anthropic.TextBlockParam[]).push({ type: 'text', text: `[${img.name}]` })
+            }
+
             let base64Data: string
             const mediaType: MediaType = (img.mediaType as MediaType) || 'image/png'
 
@@ -91,7 +99,8 @@ export class AnthropicProvider implements LLMProvider {
           (content as Anthropic.TextBlockParam[]).push({ type: 'text', text: msg.content })
         }
 
-        if (msg.toolCalls) {
+        // Only use native tool_use blocks if nativeToolCall is enabled
+        if (this.nativeToolCall && msg.toolCalls) {
           for (const tc of msg.toolCalls) {
             (content as Anthropic.ToolUseBlockParam[]).push({
               type: 'tool_use',
@@ -104,21 +113,37 @@ export class AnthropicProvider implements LLMProvider {
 
         anthropicMessages.push({ role: 'assistant', content })
       } else if (msg.role === 'tool') {
-        anthropicMessages.push({
-          role: 'user',
-          content: [
-            {
-              type: 'tool_result',
-              tool_use_id: msg.toolCallId!,
-              content: msg.content,
-            },
-          ],
-        })
+        // Only use native tool_result blocks if nativeToolCall is enabled
+        if (this.nativeToolCall) {
+          anthropicMessages.push({
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: msg.toolCallId!,
+                content: msg.content,
+              },
+            ],
+          })
+        } else {
+          // In non-native mode, append tool result as text to the last user message
+          // or create a new user message
+          const toolResultText = `[Tool Result: ${msg.toolCallId}]\n${msg.content}`
+          const lastMsg = anthropicMessages[anthropicMessages.length - 1]
+          if (lastMsg && lastMsg.role === 'user' && Array.isArray(lastMsg.content)) {
+            (lastMsg.content as Anthropic.TextBlockParam[]).push({ type: 'text', text: toolResultText })
+          } else {
+            anthropicMessages.push({
+              role: 'user',
+              content: [{ type: 'text', text: toolResultText }],
+            })
+          }
+        }
       }
     }
 
-    // Convert tools to Anthropic format
-    const anthropicTools: Anthropic.Tool[] = tools.map(t => ({
+    // Convert tools to Anthropic format (only for native tool call mode)
+    const anthropicTools: Anthropic.Tool[] = this.nativeToolCall ? tools.map(t => ({
       name: t.name,
       description: t.description,
       input_schema: {
@@ -126,22 +151,29 @@ export class AnthropicProvider implements LLMProvider {
         properties: t.parameters.properties,
         required: t.parameters.required,
       },
-    }))
+    })) : []
 
     logger.debug('Calling Anthropic API', {
       model: this.model,
       messageCount: anthropicMessages.length,
       toolCount: anthropicTools.length,
+      nativeToolCall: this.nativeToolCall,
     })
 
-    const response = await this.client.messages.create({
+    const requestParams: Anthropic.MessageCreateParams = {
       model: this.model,
       max_tokens: options?.maxTokens || 4096,
       system: systemMessage?.content,
       messages: anthropicMessages,
-      tools: anthropicTools,
-      tool_choice: { type: 'any' },
-    })
+    }
+
+    // Only add tools if using native tool call
+    if (this.nativeToolCall && anthropicTools.length > 0) {
+      requestParams.tools = anthropicTools
+      requestParams.tool_choice = { type: 'any' }
+    }
+
+    const response = await this.client.messages.create(requestParams)
 
     // Parse response
     let content = ''
@@ -156,6 +188,21 @@ export class AnthropicProvider implements LLMProvider {
           name: block.name,
           arguments: block.input as Record<string, unknown>,
         })
+      }
+    }
+
+    // If not using native tool call, parse tool calls from text
+    if (!this.nativeToolCall && toolCalls.length === 0 && content) {
+      const { thought, toolCalls: parsedCalls } = parseToolCallsFromText(content)
+      if (parsedCalls.length > 0) {
+        return {
+          content: thought || content,
+          toolCalls: parsedCalls,
+          usage: {
+            inputTokens: response.usage.input_tokens,
+            outputTokens: response.usage.output_tokens,
+          },
+        }
       }
     }
 

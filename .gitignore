@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# config
+config.json
+
 # Build output
 dist/
 

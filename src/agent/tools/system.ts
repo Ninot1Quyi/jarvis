@@ -145,10 +145,61 @@ export const callUserTool: Tool = {
   },
 }
 
+// Tool screenshot - agent can use this to capture screen content during operations
+export const takeScreenshotTool: Tool = {
+  definition: {
+    name: 'take_screenshot',
+    description: 'Take a screenshot to capture current screen content. Use this between operations to save what you see for later reference. The screenshot will be included in the next message.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Name/label for this screenshot (e.g., "search_results", "article_content")',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  async execute(args, context?: { screenshotDir?: string; workspace?: string }) {
+    const name = args.name as string
+    const workspace = context?.workspace || '/tmp'
+    const screenshotDir = path.join(workspace, 'screenshots')
+    ensureDir(screenshotDir)
+
+    const timestamp = Date.now()
+    const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_')
+    const filename = `${timestamp}_${safeName}.png`
+    const filepath = path.join(screenshotDir, filename)
+
+    const screenSize = await getScreenLogicalSize()
+
+    const tempPath = path.join(screenshotDir, `${timestamp}_temp.png`)
+    await execAsync(`screencapture -x -r "${tempPath}"`)
+
+    // 缩放到逻辑分辨率
+    await execAsync(`sips -z ${screenSize.height} ${screenSize.width} "${tempPath}" --out "${filepath}"`)
+    fs.unlinkSync(tempPath)
+
+    return {
+      success: true,
+      data: {
+        path: filepath,
+        name: `工具截图: ${name}`,
+        timestamp,
+        screenWidth: screenSize.width,
+        screenHeight: screenSize.height,
+        mediaType: 'image/png',
+        isToolScreenshot: true,
+      },
+    }
+  },
+}
+
 // Export all system tools
 export const systemTools: Tool[] = [
-  screenshotTool,
   waitTool,
   finishedTool,
   callUserTool,
+  takeScreenshotTool,
 ]

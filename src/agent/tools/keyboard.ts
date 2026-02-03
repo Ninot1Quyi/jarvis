@@ -1,39 +1,57 @@
 import type { Tool } from '../../types.js'
+import { spawn } from 'child_process'
+
+// 将文本写入剪贴板（macOS）
+async function copyToClipboard(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('pbcopy')
+    proc.stdin.write(text)
+    proc.stdin.end()
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`pbcopy failed with code ${code}`))
+    })
+    proc.on('error', reject)
+  })
+}
 
 export const typeTool: Tool = {
   definition: {
     name: 'type',
-    description: 'Type text content. Use \\n for newline/enter.',
+    description: 'Type text content. Supports escape sequences: \\n (newline), \\t (tab). For multi-line text, clipboard paste is used to preserve formatting.',
     parameters: {
       type: 'object',
       properties: {
-        text: { type: 'string', description: 'Text to type' },
+        text: { type: 'string', description: 'Text to type. Use \\n for newline, \\t for tab.' },
       },
       required: ['text'],
     },
   },
   async execute(args) {
-    const { keyboard } = await import('@computer-use/nut-js')
+    const { keyboard, Key } = await import('@computer-use/nut-js')
     const text = args.text as string
 
-    // 处理换行符，转换为回车键
-    if (text.includes('\n')) {
-      const parts = text.split('\n')
-      for (let i = 0; i < parts.length; i++) {
-        if (parts[i]) {
-          await keyboard.type(parts[i])
-        }
-        if (i < parts.length - 1) {
-          const { Key } = await import('@computer-use/nut-js')
-          await keyboard.pressKey(Key.Enter)
-          await keyboard.releaseKey(Key.Enter)
-        }
-      }
-    } else {
-      await keyboard.type(text)
+    // 检测是否包含非ASCII字符（中文等）或换行符/制表符
+    const hasNonAscii = /[^\x00-\x7F]/.test(text)
+    const hasSpecialChars = text.includes('\n') || text.includes('\t')
+
+    // 如果包含非ASCII字符或特殊字符，使用剪贴板粘贴以保持格式
+    if (hasNonAscii || hasSpecialChars) {
+      // 将文本写入剪贴板
+      await copyToClipboard(text)
+
+      // 执行粘贴 (Cmd+V)
+      await keyboard.pressKey(Key.LeftCmd, Key.V)
+      await keyboard.releaseKey(Key.LeftCmd, Key.V)
+
+      return { success: true, data: { text, method: 'paste' } }
     }
 
-    return { success: true, data: { text } }
+    // 简单ASCII文本直接打字
+    keyboard.config.autoDelayMs = 10
+    await keyboard.type(text)
+
+    return { success: true, data: { text, method: 'type' } }
   },
 }
 

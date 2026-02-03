@@ -104,6 +104,11 @@ export class OpenAIProvider implements LLMProvider {
         // Add images to the last user message
         if (i === lastUserMsgIndex && images.length > 0) {
           for (const img of images) {
+            // Add image name/label as text before the image
+            if (img.name) {
+              content.push({ type: 'text', text: `[${img.name}]` })
+            }
+
             let imageUrl: string
 
             if (img.type === 'path') {

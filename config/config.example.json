@@ -1,6 +1,7 @@
 {
   "defaultProvider": "anthropic",
   "mouseSpeed": -1,
+  "workspace": "/path/to/your/workspace",
   "anthropic": {
     "apiKey": "your-anthropic-api-key",
     "baseUrl": "https://api.anthropic.com",

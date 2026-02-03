@@ -5,6 +5,7 @@ import type {
   ToolCall,
   Step,
   Task,
+  ProviderConfig,
 } from '../types.js'
 import { ToolRegistry, toolRegistry } from './tools/index.js'
 import { config, getPrompt, fillTemplate, ensureDir } from '../utils/config.js'
@@ -16,7 +17,7 @@ import * as path from 'path'
 
 export interface AgentOptions {
   maxSteps?: number
-  provider?: 'anthropic' | 'openai' | 'doubao'
+  provider?: string
 }
 
 interface ScreenContext {
@@ -24,20 +25,38 @@ interface ScreenContext {
   screenHeight: number
 }
 
+interface ToolScreenshot {
+  path: string
+  name: string
+  mediaType: string
+}
+
+interface RoundClickInfo {
+  coordinates: number[][]  // 该轮次中所有点击的坐标
+}
+
+const ROUND_CLICKS_CAPACITY = 10  // 保存最近10轮的点击信息
+
 export class Agent {
   private llm: LLMProvider
   private tools: ToolRegistry
   private steps: Step[] = []
   private maxSteps: number
   private screenContext: ScreenContext = { screenWidth: 1920, screenHeight: 1080 }
+  private pendingToolScreenshots: ToolScreenshot[] = []
+  private roundClicks: RoundClickInfo[] = new Array(ROUND_CLICKS_CAPACITY).fill(null).map(() => ({ coordinates: [] }))
+  private roundClickIndex: number = 0  // 当前写入位置
+  private nativeToolCall: boolean = true  // 是否使用原生工具调用
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
-    this.llm = createProvider(
-      options.provider || config.defaultProvider,
-      config.keys
-    )
+    const providerName = options.provider || config.defaultProvider
+    this.llm = createProvider(providerName, config.keys)
     this.tools = toolRegistry
+
+    // 获取当前 provider 的 nativeToolCall 配置
+    const providerConfig = config.keys[providerName] as ProviderConfig | undefined
+    this.nativeToolCall = providerConfig?.nativeToolCall !== false
   }
 
   async run(taskDescription: string): Promise<void> {
@@ -54,7 +73,9 @@ export class Agent {
 
     ensureDir(config.screenshotDir)
 
-    const systemPrompt = getPrompt('system')
+    // 根据 nativeToolCall 配置选择 prompt
+    const systemPromptName = this.nativeToolCall ? 'system-native' : 'system'
+    const systemPrompt = getPrompt(systemPromptName)
     const userTemplate = getPrompt('user')
 
     // 消息历史
@@ -95,29 +116,61 @@ export class Agent {
       logger.debug(`Screenshot: ${screenshotData.path}`)
       logger.debug(`Screen: ${this.screenContext.screenWidth}x${this.screenContext.screenHeight}`)
 
+      // 获取当前鼠标位置并转换为 [0, 1000] 坐标系
+      const mousePos = await this.getMousePosition()
+      const mouseX = Math.round((mousePos.x / this.screenContext.screenWidth) * 1000)
+      const mouseY = Math.round((mousePos.y / this.screenContext.screenHeight) * 1000)
+
+      // 获取当前焦点窗口
+      const focusedWindow = await this.getFocusedWindow()
+
+      // 检测是否连续点击同一位置
+      const reminder = this.checkRepeatedClicks()
+
       // 构建 user 消息
       const recentStepsText = this.steps.slice(-5).map((s, i) => {
         return `${i + 1}. [${s.toolCall.name}] ${JSON.stringify(s.toolCall.arguments)} -> ${s.result}`
       }).join('\n') || '(none)'
 
-      const userContent = fillTemplate(userTemplate, {
+      let userContent = fillTemplate(userTemplate, {
         task: task.description,
         todos: '(none)',
         recentSteps: recentStepsText,
         relevantMemories: '(none)',
+        mouseX: mouseX.toString(),
+        mouseY: mouseY.toString(),
+        focusedWindow,
       })
+
+      // 添加提醒
+      if (reminder) {
+        userContent += `\n\n<reminder>${reminder}</reminder>`
+      }
 
       // 添加 user 消息
       messages.push({ role: 'user', content: userContent })
 
-      // 当前截图
+      // 当前截图 - 主屏幕
       const images: ImageInput[] = [
         {
           type: 'path',
           data: screenshotData.path,
-          mediaType: (screenshotData.mediaType || 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+          mediaType: (screenshotData.mediaType || 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+          name: '主屏幕',
         },
       ]
+
+      // 添加工具截图（如果有）
+      for (const toolScreenshot of this.pendingToolScreenshots) {
+        images.push({
+          type: 'path',
+          data: toolScreenshot.path,
+          mediaType: toolScreenshot.mediaType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+          name: toolScreenshot.name,
+        })
+      }
+      // 清空待处理的工具截图
+      this.pendingToolScreenshots = []
 
       // 调用 LLM
       const response = await this.llm.chatWithVisionAndTools(
@@ -146,13 +199,37 @@ export class Agent {
         break
       }
 
+      // 记录本轮的点击坐标
+      const currentRoundClicks: number[][] = []
+
       // 执行工具调用
       for (const toolCall of response.toolCalls) {
         const result = await this.tools.execute(toolCall, {
           screenshotDir: config.screenshotDir,
+          workspace: config.workspace,
           screenWidth: this.screenContext.screenWidth,
           screenHeight: this.screenContext.screenHeight,
         })
+
+        // 记录点击坐标
+        if (toolCall.name === 'click') {
+          const coord = toolCall.arguments.coordinate as number[] | undefined
+          if (coord) {
+            currentRoundClicks.push(coord)
+          }
+        }
+
+        // 检查是否是工具截图，收集起来下次发送
+        if (result.data) {
+          const data = result.data as Record<string, unknown>
+          if (data.isToolScreenshot) {
+            this.pendingToolScreenshots.push({
+              path: data.path as string,
+              name: data.name as string,
+              mediaType: data.mediaType as string,
+            })
+          }
+        }
 
         // 记录步骤
         const step: Step = {
@@ -190,6 +267,10 @@ export class Agent {
         }
       }
 
+      // 保存本轮点击信息（循环写入）
+      this.roundClicks[this.roundClickIndex] = { coordinates: currentRoundClicks }
+      this.roundClickIndex = (this.roundClickIndex + 1) % ROUND_CLICKS_CAPACITY
+
       await new Promise(resolve => setTimeout(resolve, 500))
     }
 
@@ -210,5 +291,84 @@ export class Agent {
 
     fs.writeFileSync(filepath, JSON.stringify(step, null, 2))
     logger.debug(`Step saved: ${filepath}`)
+  }
+
+  private checkRepeatedClicks(): string | null {
+    // 检查最近两轮对话是否都点击了同一位置
+    // 获取当前轮和上一轮的索引（循环数组）
+    const currentIndex = (this.roundClickIndex - 1 + ROUND_CLICKS_CAPACITY) % ROUND_CLICKS_CAPACITY
+    const prevIndex = (this.roundClickIndex - 2 + ROUND_CLICKS_CAPACITY) % ROUND_CLICKS_CAPACITY
+
+    const lastRound = this.roundClicks[currentIndex]
+    const prevRound = this.roundClicks[prevIndex]
+
+    // 如果任一轮没有点击操作，则不检查
+    if (lastRound.coordinates.length === 0 || prevRound.coordinates.length === 0) return null
+
+    // 检查两轮中是否有相近的点击位置
+    const threshold = 50
+    for (const coord1 of lastRound.coordinates) {
+      for (const coord2 of prevRound.coordinates) {
+        const dx = Math.abs(coord1[0] - coord2[0])
+        const dy = Math.abs(coord1[1] - coord2[1])
+
+        if (dx <= threshold && dy <= threshold) {
+          return 'You have clicked the same position for two consecutive rounds. If single click does not work, try double-click (left_double). The click position may also be slightly off - observe carefully and make fine adjustments.'
+        }
+      }
+    }
+
+    return null
+  }
+
+  private async getMousePosition(): Promise<{ x: number; y: number }> {
+    try {
+      const { mouse } = await import('@computer-use/nut-js')
+      const pos = await mouse.getPosition()
+      return { x: pos.x, y: pos.y }
+    } catch {
+      return { x: 0, y: 0 }
+    }
+  }
+
+  private async getFocusedWindow(): Promise<string> {
+    try {
+      const { exec } = await import('child_process')
+      const { promisify } = await import('util')
+      const execAsync = promisify(exec)
+
+      // 使用 AppleScript 获取当前焦点窗口的应用名称和窗口标题
+      const { stdout } = await execAsync(`osascript -e '
+        tell application "System Events"
+          set frontApp to name of first application process whose frontmost is true
+        end tell
+
+        -- 检查 Spotlight 是否打开
+        set spotlightOpen to false
+        try
+          tell application "System Events"
+            if exists (window 1 of process "Spotlight") then
+              set spotlightOpen to true
+            end if
+          end tell
+        end try
+
+        if spotlightOpen then
+          return "Spotlight | Search (system-level, has focus, just type and press enter)"
+        end if
+
+        tell application frontApp
+          try
+            set windowTitle to name of front window
+          on error
+            set windowTitle to "N/A"
+          end try
+        end tell
+        return frontApp & " | " & windowTitle
+      '`)
+      return stdout.trim()
+    } catch {
+      return 'Unknown'
+    }
   }
 }

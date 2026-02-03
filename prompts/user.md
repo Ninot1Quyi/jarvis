@@ -18,6 +18,10 @@
 
 ## 当前屏幕
 
+Mouse: [{{mouseX}}, {{mouseY}}]
+Focused Window: {{focusedWindow}}
+Note: If target window != focused window, first click activates window, second click performs action.
+
 [截图将作为图片附件发送]
 
 ---
