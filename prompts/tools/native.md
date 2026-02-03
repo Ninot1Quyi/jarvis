@@ -28,3 +28,7 @@ Tools are called natively. Simply invoke the appropriate tool with the required 
 #### Task Tools
 - **todo_read**: Read current TODO list
 - **todo_write**: Update TODO list. Args: `todos: [{id, content, status}]`
+
+#### Skill Tools
+- **skill**: Load a skill to get detailed instructions. Args: `name: "skill_name"`
+- **list_skills**: List all available skills with descriptions

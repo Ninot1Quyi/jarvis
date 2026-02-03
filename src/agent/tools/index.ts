@@ -4,6 +4,7 @@ import { keyboardTools } from './keyboard.js'
 import { systemTools } from './system.js'
 import { fileTools } from './file.js'
 import { todoTools } from './todo.js'
+import { skillTools } from './skill.js'
 import { logger } from '../../utils/logger.js'
 
 export class ToolRegistry {
@@ -16,6 +17,7 @@ export class ToolRegistry {
     this.registerTools(systemTools)
     this.registerTools(fileTools)
     this.registerTools(todoTools)
+    this.registerTools(skillTools)
   }
 
   registerTool(tool: Tool): void {
@@ -74,3 +76,4 @@ export { keyboardTools } from './keyboard.js'
 export { systemTools } from './system.js'
 export { fileTools } from './file.js'
 export { todoTools } from './todo.js'
+export { skillTools, setSkillRegistry, getSkillRegistry } from './skill.js'

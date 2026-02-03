@@ -42,6 +42,10 @@
 - todo_read: Read current TODO list. Args: {}
 - todo_write: Update TODO list. Args: {"todos": [{"id": "1", "content": "task", "status": "pending|in_progress|completed"}]}
 
+### Skill Tools
+- skill: Load a skill to get detailed instructions. Args: {"name": "skill_name"}
+- list_skills: List all available skills with descriptions. Args: {}
+
 ## Examples
 
 Search scenario - click input, type, press enter, wait:

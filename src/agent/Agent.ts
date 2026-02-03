@@ -7,12 +7,12 @@ import type {
   Task,
   ProviderConfig,
 } from '../types.js'
-import { ToolRegistry, toolRegistry } from './tools/index.js'
+import { ToolRegistry, toolRegistry, setSkillRegistry } from './tools/index.js'
 import { config, getSystemPrompt, getPrompt, fillTemplate, ensureDir } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
 import { screenshotTool } from './tools/system.js'
-import { initSkills, getCurrentPlatform, type PromptComposer } from '../skills/index.js'
+import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry as SkillRegistryType } from '../skills/index.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -78,8 +78,10 @@ export class Agent {
     // 初始化Skills系统
     try {
       const projectRoot = process.cwd()
-      const { composer } = await initSkills(projectRoot)
+      const { registry, composer } = await initSkills(projectRoot)
       this.skillComposer = composer
+      // 设置SkillRegistry供skill tool使用
+      setSkillRegistry(registry)
       logger.debug(composer.getSummary())
     } catch (error) {
       logger.warn('Failed to initialize skills system:', error)
