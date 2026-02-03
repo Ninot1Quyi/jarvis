@@ -8,7 +8,7 @@ import type {
   ProviderConfig,
 } from '../types.js'
 import { ToolRegistry, toolRegistry } from './tools/index.js'
-import { config, getPrompt, fillTemplate, ensureDir } from '../utils/config.js'
+import { config, getSystemPrompt, getPrompt, fillTemplate, ensureDir } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
 import { screenshotTool } from './tools/system.js'
@@ -85,13 +85,12 @@ export class Agent {
       logger.warn('Failed to initialize skills system:', error)
     }
 
-    // 根据 nativeToolCall 配置选择 prompt
-    const systemPromptName = this.nativeToolCall ? 'system-native' : 'system'
-    let systemPrompt = getPrompt(systemPromptName)
+    // 获取组合后的系统提示（根据nativeToolCall和平台自动选择）
+    const platform = getCurrentPlatform()
+    let systemPrompt = getSystemPrompt(this.nativeToolCall, platform)
 
-    // 使用Skills系统增强system prompt
+    // 使用Skills系统增强system prompt（追加用户自定义skills）
     if (this.skillComposer) {
-      const platform = getCurrentPlatform()
       systemPrompt = this.skillComposer.compose(systemPrompt, platform)
     }
 
