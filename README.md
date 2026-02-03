@@ -38,8 +38,61 @@ npm start -- "用ppt给我画个房子，添加新的页面，合理排版，介
 -v, --verbose          # Show debug output
 ```
 
+## Skills System
+
+Jarvis supports the [Agent Skills](https://agentskills.io) open standard. Skills extend what the agent can do by providing domain-specific knowledge and instructions.
+
+### Skill Locations
+
+| Location | Path | Scope |
+|----------|------|-------|
+| Project | `./skills/<skill-name>/SKILL.md` | This project only |
+| Project (Claude) | `./.claude/skills/<skill-name>/SKILL.md` | This project only |
+| User | `~/.claude/skills/<skill-name>/SKILL.md` | All projects |
+| User (Jarvis) | `~/.jarvis/skills/<skill-name>/SKILL.md` | All projects |
+
+### Built-in Skills
+
+- `platform-macos` - macOS platform rules and hotkeys
+- `platform-windows` - Windows platform rules and hotkeys
+- `platform-linux` - Linux platform rules and hotkeys
+- `browser` - Browser operation patterns
+- `search` - Web search strategies
+
+### Creating Custom Skills
+
+Create a directory with a `SKILL.md` file:
+
+```
+skills/my-skill/
+└── SKILL.md
+```
+
+SKILL.md format:
+
+```yaml
+---
+name: my-skill
+description: What this skill does and when to use it.
+---
+
+# My Skill Instructions
+
+Your instructions here...
+```
+
+### Using Community Skills
+
+You can use any skill from the [Anthropic Skills Repository](https://github.com/anthropics/skills):
+
+```bash
+# Clone a skill to your project
+cp -r /path/to/anthropic-skills/skills/pdf ./skills/
+```
+
 ## Development
 
 ```bash
 npm run dev
 ```
+

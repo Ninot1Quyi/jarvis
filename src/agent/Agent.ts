@@ -12,6 +12,7 @@ import { config, getPrompt, fillTemplate, ensureDir } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
 import { screenshotTool } from './tools/system.js'
+import { initSkills, getCurrentPlatform, type PromptComposer } from '../skills/index.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -47,6 +48,7 @@ export class Agent {
   private roundClicks: RoundClickInfo[] = new Array(ROUND_CLICKS_CAPACITY).fill(null).map(() => ({ coordinates: [] }))
   private roundClickIndex: number = 0  // 当前写入位置
   private nativeToolCall: boolean = true  // 是否使用原生工具调用
+  private skillComposer: PromptComposer | null = null  // Skills系统
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -73,9 +75,26 @@ export class Agent {
 
     ensureDir(config.screenshotDir)
 
+    // 初始化Skills系统
+    try {
+      const projectRoot = process.cwd()
+      const { composer } = await initSkills(projectRoot)
+      this.skillComposer = composer
+      logger.debug(composer.getSummary())
+    } catch (error) {
+      logger.warn('Failed to initialize skills system:', error)
+    }
+
     // 根据 nativeToolCall 配置选择 prompt
     const systemPromptName = this.nativeToolCall ? 'system-native' : 'system'
-    const systemPrompt = getPrompt(systemPromptName)
+    let systemPrompt = getPrompt(systemPromptName)
+
+    // 使用Skills系统增强system prompt
+    if (this.skillComposer) {
+      const platform = getCurrentPlatform()
+      systemPrompt = this.skillComposer.compose(systemPrompt, platform)
+    }
+
     const userTemplate = getPrompt('user')
 
     // 消息历史

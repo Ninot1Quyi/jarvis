@@ -1,272 +1,208 @@
-// Skill Registry - 技能注册中心
+// Skill Registry - 基于文件系统的技能注册中心
 
-import type { Skill, SkillContext, SkillRegistryOptions, SkillLoader, Platform } from './types.js'
+import * as fs from 'fs'
+import * as path from 'path'
+import type { FileSkill, FileSkillLoaderOptions, Platform } from './types.js'
 
-// 内置技能导入
-import { macosSkill, windowsSkill, linuxSkill } from './platform/index.js'
-import { browserSkill } from './application/index.js'
-import { searchSkill } from './domain/index.js'
+/**
+ * 解析SKILL.md文件的frontmatter
+ */
+function parseFrontmatter(content: string): { meta: Record<string, any>; body: string } {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
+  if (!match) {
+    return { meta: {}, body: content }
+  }
+
+  const yamlStr = match[1]
+  const body = match[2]
+  const meta: Record<string, any> = {}
+
+  for (const line of yamlStr.split('\n')) {
+    const colonIndex = line.indexOf(':')
+    if (colonIndex > 0) {
+      const key = line.slice(0, colonIndex).trim()
+      let value = line.slice(colonIndex + 1).trim()
+      // 去除引号
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+      meta[key] = value
+    }
+  }
+
+  return { meta, body }
+}
+
+/**
+ * XML特殊字符转义
+ */
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
 
 /**
  * 技能注册中心
  *
- * 负责管理所有技能的注册、查询和匹配
- * 支持可插拔设计，可以动态添加/移除技能
+ * 基于文件系统的技能加载器，支持：
+ * - 扫描指定目录查找SKILL.md文件
+ * - 解析YAML frontmatter获取元数据
+ * - 懒加载：启动时只加载metadata，激活时才加载完整content
+ * - 支持多个目录（项目级、用户级）
  */
 export class SkillRegistry {
-  private skills: Map<string, Skill> = new Map()
-  private loaders: SkillLoader[] = []
+  private skills: Map<string, FileSkill> = new Map()
+  private directories: string[] = []
 
-  constructor(options: SkillRegistryOptions = {}) {
-    const { loadBuiltin = true } = options
+  constructor(options: FileSkillLoaderOptions = { directories: [] }) {
+    this.directories = options.directories
+  }
 
-    if (loadBuiltin) {
-      this.registerBuiltinSkills()
+  /**
+   * 扫描目录加载所有skills的元数据
+   */
+  async discover(): Promise<void> {
+    for (const dir of this.directories) {
+      await this.scanDirectory(dir)
     }
   }
 
   /**
-   * 注册内置技能
+   * 添加扫描目录
    */
-  private registerBuiltinSkills(): void {
-    // 平台技能
-    this.register(macosSkill)
-    this.register(windowsSkill)
-    this.register(linuxSkill)
-
-    // 应用技能
-    this.register(browserSkill)
-
-    // 领域技能
-    this.register(searchSkill)
-  }
-
-  /**
-   * 注册单个技能
-   */
-  register(skill: Skill): void {
-    if (this.skills.has(skill.name)) {
-      console.warn(`Skill "${skill.name}" already registered, overwriting...`)
-    }
-    this.skills.set(skill.name, skill)
-  }
-
-  /**
-   * 批量注册技能
-   */
-  registerAll(skills: Skill[]): void {
-    for (const skill of skills) {
-      this.register(skill)
+  addDirectory(dir: string): void {
+    if (!this.directories.includes(dir)) {
+      this.directories.push(dir)
     }
   }
 
   /**
-   * 注销技能
+   * 扫描单个目录
    */
-  unregister(name: string): boolean {
-    return this.skills.delete(name)
+  private async scanDirectory(dir: string): Promise<void> {
+    if (!fs.existsSync(dir)) return
+
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillPath = path.join(dir, entry.name)
+        const skillFile = path.join(skillPath, 'SKILL.md')
+
+        if (fs.existsSync(skillFile)) {
+          await this.loadSkillMetadata(skillPath, skillFile)
+        }
+      }
+    }
   }
 
   /**
-   * 获取指定技能
+   * 加载skill元数据（不加载完整内容）
    */
-  get(name: string): Skill | undefined {
-    return this.skills.get(name)
+  private async loadSkillMetadata(skillPath: string, skillFile: string): Promise<void> {
+    const content = fs.readFileSync(skillFile, 'utf-8')
+    const { meta, body } = parseFrontmatter(content)
+
+    const name = meta.name || path.basename(skillPath)
+
+    // 验证必需字段
+    if (!meta.description) {
+      console.warn(`Skill ${name} missing required 'description' field`)
+      return
+    }
+
+    const skill: FileSkill = {
+      path: skillPath,
+      meta: {
+        name,
+        description: meta.description,
+        license: meta.license,
+        compatibility: meta.compatibility,
+        metadata: meta.metadata,
+        allowedTools: meta['allowed-tools']?.split(' ').filter(Boolean),
+      },
+      // content 懒加载，这里先存储body
+      content: body.trim(),
+    }
+
+    this.skills.set(name, skill)
   }
 
   /**
-   * 获取所有技能
+   * 获取所有skills
    */
-  getAll(): Skill[] {
+  getAll(): FileSkill[] {
     return Array.from(this.skills.values())
   }
 
   /**
-   * 获取所有启用的技能
+   * 获取指定skill
    */
-  getEnabled(): Skill[] {
-    return this.getAll().filter(s => s.enabled !== false)
+  get(name: string): FileSkill | undefined {
+    return this.skills.get(name)
   }
 
   /**
-   * 启用/禁用技能
+   * 获取skill的完整内容（懒加载）
    */
-  setEnabled(name: string, enabled: boolean): boolean {
+  getContent(name: string): string | undefined {
     const skill = this.skills.get(name)
-    if (skill) {
-      skill.enabled = enabled
-      return true
+    if (!skill) return undefined
+
+    // 如果content未加载，从文件读取
+    if (skill.content === undefined) {
+      const skillFile = path.join(skill.path, 'SKILL.md')
+      const content = fs.readFileSync(skillFile, 'utf-8')
+      const { body } = parseFrontmatter(content)
+      skill.content = body.trim()
     }
-    return false
+
+    return skill.content
   }
 
   /**
-   * 添加技能加载器
+   * 生成available_skills XML（用于注入system prompt）
    */
-  addLoader(loader: SkillLoader): void {
-    this.loaders.push(loader)
-  }
+  generateAvailableSkillsXml(): string {
+    const skills = this.getAll()
+    if (skills.length === 0) return ''
 
-  /**
-   * 从所有加载器加载技能
-   */
-  async loadFromLoaders(): Promise<void> {
-    for (const loader of this.loaders) {
-      try {
-        const skills = await loader.load()
-        this.registerAll(skills)
-        console.log(`Loaded ${skills.length} skills from loader: ${loader.name}`)
-      } catch (error) {
-        console.error(`Failed to load skills from loader: ${loader.name}`, error)
-      }
-    }
-  }
-
-  /**
-   * 根据上下文匹配适用的技能
-   *
-   * @param context 技能上下文
-   * @returns 匹配的技能列表（按优先级排序）
-   */
-  match(context: SkillContext): Skill[] {
-    const matched: Skill[] = []
-
-    for (const skill of this.getEnabled()) {
-      if (this.isSkillApplicable(skill, context)) {
-        matched.push(skill)
-      }
-    }
-
-    // 处理互斥关系
-    const filtered = this.resolveExclusions(matched)
-
-    // 解析依赖
-    const withDeps = this.resolveDependencies(filtered)
-
-    // 按优先级排序（高优先级在前）
-    return withDeps.sort((a, b) => b.priority - a.priority)
-  }
-
-  /**
-   * 判断技能是否适用于当前上下文
-   */
-  private isSkillApplicable(skill: Skill, context: SkillContext): boolean {
-    const { match } = skill
-
-    // 平台匹配
-    if (match.platform && match.platform.length > 0) {
-      if (!match.platform.includes(context.platform)) {
-        return false
-      }
-    }
-
-    // 应用匹配（任一匹配即可）
-    if (match.applications && match.applications.length > 0) {
-      if (!context.focusedApp) {
-        // 如果没有焦点应用信息，跳过应用匹配（不排除）
-      } else {
-        const appLower = context.focusedApp.toLowerCase()
-        const appMatch = match.applications.some(app =>
-          appLower.includes(app.toLowerCase())
-        )
-        if (!appMatch) {
-          return false
-        }
-      }
-    }
-
-    // 关键词匹配（任一匹配即可）
-    if (match.keywords && match.keywords.length > 0) {
-      const taskLower = context.taskDescription.toLowerCase()
-      const keywordMatch = match.keywords.some(kw =>
-        taskLower.includes(kw.toLowerCase())
-      )
-      // 关键词不匹配不直接排除，只是不加分
-      // 这里我们选择：如果有关键词条件但不匹配，则不激活
-      if (!keywordMatch) {
-        // 对于 domain 类型技能，关键词是必须匹配的
-        if (skill.type === 'domain') {
-          return false
-        }
-      }
-    }
-
-    // 正则匹配（任一匹配即可）
-    if (match.patterns && match.patterns.length > 0) {
-      const patternMatch = match.patterns.some(pattern =>
-        pattern.test(context.taskDescription)
-      )
-      if (!patternMatch && skill.type === 'domain') {
-        return false
-      }
-    }
-
-    // 自定义匹配函数
-    if (match.custom) {
-      if (!match.custom(context)) {
-        return false
-      }
-    }
-
-    return true
-  }
-
-  /**
-   * 处理技能互斥关系
-   */
-  private resolveExclusions(skills: Skill[]): Skill[] {
-    const result: Skill[] = []
-    const excluded = new Set<string>()
-
-    // 按优先级排序，高优先级的先处理
-    const sorted = [...skills].sort((a, b) => b.priority - a.priority)
-
-    for (const skill of sorted) {
-      if (excluded.has(skill.name)) {
-        continue
-      }
-
-      result.push(skill)
-
-      // 标记被排斥的技能
-      if (skill.exclusive) {
-        for (const excl of skill.exclusive) {
-          excluded.add(excl)
-        }
-      }
-    }
-
-    return result
-  }
-
-  /**
-   * 解析技能依赖
-   */
-  private resolveDependencies(skills: Skill[]): Skill[] {
-    const result = new Map<string, Skill>()
-    const skillNames = new Set(skills.map(s => s.name))
-
-    const addWithDeps = (skill: Skill) => {
-      if (result.has(skill.name)) return
-
-      // 先添加依赖
-      if (skill.dependencies) {
-        for (const depName of skill.dependencies) {
-          const dep = this.skills.get(depName)
-          if (dep && dep.enabled !== false) {
-            addWithDeps(dep)
-          }
-        }
-      }
-
-      result.set(skill.name, skill)
-    }
-
+    const lines = ['<available_skills>']
     for (const skill of skills) {
-      addWithDeps(skill)
+      lines.push('  <skill>')
+      lines.push(`    <name>${escapeXml(skill.meta.name)}</name>`)
+      lines.push(`    <description>${escapeXml(skill.meta.description)}</description>`)
+      lines.push(`    <location>${escapeXml(path.join(skill.path, 'SKILL.md'))}</location>`)
+      lines.push('  </skill>')
     }
+    lines.push('</available_skills>')
 
-    return Array.from(result.values())
+    return lines.join('\n')
+  }
+
+  /**
+   * 根据平台过滤skills
+   */
+  filterByPlatform(platform: Platform): FileSkill[] {
+    return this.getAll().filter(skill => {
+      const name = skill.meta.name.toLowerCase()
+      // 平台特定skill只在对应平台激活
+      if (name.includes('macos') || name.includes('darwin')) {
+        return platform === 'darwin'
+      }
+      if (name.includes('windows') || name.includes('win32')) {
+        return platform === 'win32'
+      }
+      if (name.includes('linux')) {
+        return platform === 'linux'
+      }
+      // 非平台特定skill始终可用
+      return true
+    })
   }
 
   /**
@@ -274,6 +210,20 @@ export class SkillRegistry {
    */
   static getCurrentPlatform(): Platform {
     return process.platform as Platform
+  }
+
+  /**
+   * 清空所有已加载的skills
+   */
+  clear(): void {
+    this.skills.clear()
+  }
+
+  /**
+   * 获取已加载的skill数量
+   */
+  get size(): number {
+    return this.skills.size
   }
 }
 

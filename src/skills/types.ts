@@ -1,144 +1,61 @@
 // Skills System Types
 
 /**
- * 技能类型
- * - platform: 平台相关（macOS/Windows/Linux）
- * - application: 应用相关（浏览器/VSCode/终端）
- * - domain: 领域相关（搜索/表单填写/编程）
- */
-export type SkillType = 'platform' | 'application' | 'domain'
-
-/**
  * 支持的平台
  */
 export type Platform = 'darwin' | 'win32' | 'linux'
 
 /**
- * 技能匹配条件
+ * Skill元数据（从SKILL.md frontmatter解析）
  */
-export interface SkillMatch {
-  /** 平台限制，不设置则适用所有平台 */
-  platform?: Platform[]
-
-  /** 应用名匹配（模糊匹配，不区分大小写） */
-  applications?: string[]
-
-  /** 任务关键词匹配 */
-  keywords?: string[]
-
-  /** 任务正则匹配 */
-  patterns?: RegExp[]
-
-  /** 自定义匹配函数 */
-  custom?: (context: SkillContext) => boolean
-}
-
-/**
- * 技能提示内容
- */
-export interface SkillPrompt {
-  /** 规则说明 */
-  rules?: string
-
-  /** 快捷键列表 */
-  hotkeys?: string
-
-  /** 使用示例 */
-  examples?: string
-
-  /** 使用技巧 */
-  tips?: string
-
-  /** 注意事项/警告 */
-  warnings?: string
-}
-
-/**
- * 技能定义
- */
-export interface Skill {
-  /** 技能唯一标识 */
+export interface SkillMetadata {
+  /** 技能名称（必需，与目录名一致） */
   name: string
 
-  /** 技能类型 */
-  type: SkillType
-
-  /** 技能描述 */
+  /** 技能描述（必需，用于LLM判断何时使用） */
   description: string
 
-  /** 版本号 */
-  version: string
+  /** 许可证（可选） */
+  license?: string
 
-  /** 匹配条件 */
-  match: SkillMatch
+  /** 兼容性说明（可选） */
+  compatibility?: string
 
-  /** 提示内容 */
-  prompt: SkillPrompt
+  /** 额外元数据（可选） */
+  metadata?: Record<string, string>
 
-  /** 优先级（数值越大优先级越高） */
-  priority: number
-
-  /** 依赖的其他技能名称 */
-  dependencies?: string[]
-
-  /** 与其他技能互斥（同时只能激活一个） */
-  exclusive?: string[]
-
-  /** 是否启用 */
-  enabled?: boolean
+  /** 预授权工具列表（可选，实验性） */
+  allowedTools?: string[]
 }
 
 /**
- * 技能上下文（用于匹配判断）
+ * 完整的Skill定义（基于SKILL.md文件）
  */
-export interface SkillContext {
-  /** 当前平台 */
-  platform: Platform
+export interface Skill {
+  /** 技能目录路径 */
+  path: string
 
-  /** 当前焦点应用 */
-  focusedApp?: string
+  /** 元数据（从frontmatter解析） */
+  meta: SkillMetadata
 
-  /** 任务描述 */
-  taskDescription: string
-
-  /** 额外元数据 */
-  metadata?: Record<string, unknown>
+  /** 完整内容（懒加载，首次访问时从SKILL.md body读取） */
+  content?: string
 }
+
+// 类型别名，保持向后兼容
+export type FileSkill = Skill
+export type FileSkillMetadata = SkillMetadata
 
 /**
- * 组合后的提示结果
+ * Skill加载选项
  */
-export interface ComposedPrompt {
-  /** 组合后的系统提示 */
-  system: string
+export interface SkillLoaderOptions {
+  /** 技能目录列表 */
+  directories: string[]
 
-  /** 激活的技能列表 */
-  activeSkills: string[]
-
-  /** 技能注入的位置标记 */
-  injectionPoints?: {
-    rules: string
-    hotkeys: string
-    examples: string
-    tips: string
-  }
+  /** 是否递归搜索 */
+  recursive?: boolean
 }
 
-/**
- * 技能注册选项
- */
-export interface SkillRegistryOptions {
-  /** 是否自动加载内置技能 */
-  loadBuiltin?: boolean
-}
-
-/**
- * 技能加载器接口（用于扩展加载方式）
- */
-export interface SkillLoader {
-  /** 加载器名称 */
-  name: string
-
-  /** 加载技能 */
-  load(): Promise<Skill[]>
-}
+// 类型别名，保持向后兼容
+export type FileSkillLoaderOptions = SkillLoaderOptions
