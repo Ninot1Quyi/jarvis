@@ -79,15 +79,15 @@ export function getSystemPrompt(nativeToolCall: boolean, platform?: Platform): s
 
   // 加载工具说明
   const toolsPrompt = nativeToolCall
-    ? getPrompt('tools-native')
-    : getPrompt('tools-text')
+    ? getPrompt('tools/native')
+    : getPrompt('tools/text')
 
   // 加载平台特定内容
   let platformPrompt = ''
   const platformMap: Record<Platform, string> = {
-    'darwin': 'platform-macos',
-    'win32': 'platform-windows',
-    'linux': 'platform-linux',
+    'darwin': 'platform/macos',
+    'win32': 'platform/windows',
+    'linux': 'platform/linux',
   }
 
   const platformFile = platformMap[currentPlatform]
