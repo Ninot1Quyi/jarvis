@@ -85,7 +85,36 @@ async function appendNearbyElements(
 
   let message = result.message || ''
 
+  // Helper to convert screen pixels to normalized [0, 1000] coordinates
+  const toNormalized = (x: number, y: number): [number, number] => [
+    Math.round((x / screenWidth) * 1000),
+    Math.round((y / screenHeight) * 1000),
+  ]
+
   try {
+    // Show element at click position from state snapshot
+    if (stateDiffResult?.before?.elementAtPoint) {
+      const el = stateDiffResult.before.elementAtPoint
+      const elTitle = el.title || el.description || el.value || '(no title)'
+      const elRole = el.role?.replace('AX', '') || 'Unknown'
+
+      // Calculate normalized coordinates for the element
+      let coordStr = ''
+      if (el.x !== undefined && el.y !== undefined && el.width !== undefined && el.height !== undefined) {
+        const centerX = el.x + el.width / 2
+        const centerY = el.y + el.height / 2
+        const [normX, normY] = toNormalized(centerX, centerY)
+        coordStr = ` [${normX}, ${normY}]`
+      }
+
+      message += `\nClicked: [${elRole}] "${elTitle}"${coordStr}`
+
+      // If no desc provided but we have element title, use it for global search
+      if (!desc && elTitle !== '(no title)') {
+        desc = elTitle
+      }
+    }
+
     // If we have state diff, use it to show UI changes
     if (stateDiffResult) {
       const diff = diffState(stateDiffResult.before, stateDiffResult.after)
@@ -116,7 +145,7 @@ async function appendNearbyElements(
       }
     }
 
-    // If desc is provided, also search for elements matching the desc keyword
+    // If desc is provided (or derived from clicked element), search globally
     if (desc && desc.trim()) {
       const searchResult = await searchUIElements(desc.trim(), { maxResults: 2 })
 
