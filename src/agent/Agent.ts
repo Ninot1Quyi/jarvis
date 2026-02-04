@@ -167,28 +167,35 @@ export class Agent {
 
       // 添加上一轮的工具执行结果
       if (lastToolResults.length > 0) {
-        userContent += '\n\n## Tool Execution Results\n'
+        userContent += '\n\n---\n\n## Tool Execution Results\n'
         for (const { toolCall, result } of lastToolResults) {
-          userContent += `\n### ${toolCall.name}(${JSON.stringify(toolCall.arguments)})\n`
+          // 简化参数显示
+          const argsStr = Object.entries(toolCall.arguments)
+            .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+            .join(', ')
+          userContent += `\n### ${toolCall.name}(${argsStr})\n\n`
+
           // Parse and format the result for better readability
           try {
             const parsed = JSON.parse(result)
             if (parsed.message) {
               // message 字段包含格式化的反馈，直接显示
-              userContent += parsed.message
-              // 如果还有其他数据，也显示
-              if (parsed.data) {
-                userContent += `\nData: ${JSON.stringify(parsed.data)}`
-              }
+              userContent += parsed.message.trim()
+              // 如果有 error，显示
               if (parsed.error) {
-                userContent += `\nError: ${parsed.error}`
+                userContent += `\n\n**Error:** ${parsed.error}`
               }
+            } else if (parsed.error) {
+              userContent += `**Error:** ${parsed.error}`
+            } else if (parsed.data) {
+              userContent += JSON.stringify(parsed.data, null, 2)
             } else {
               userContent += result
             }
           } catch {
             userContent += result
           }
+          userContent += '\n'
         }
         // 清空，准备下一轮
         lastToolResults = []
