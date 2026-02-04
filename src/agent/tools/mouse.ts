@@ -60,7 +60,9 @@ async function executeWithStateDiff(
     // If significant change detected (app switch, window open/close), wait longer for UI to stabilize
     const appChanged = before.focusedApplication?.bundleIdentifier !== after.focusedApplication?.bundleIdentifier
     const windowCountChanged = before.windows.length !== after.windows.length
-    const spotlightClosed = before.focusedApplication?.title === '聚焦' && after.focusedApplication?.title !== '聚焦'
+    // Detect Spotlight closed (macOS Spotlight bundle ID: com.apple.Spotlight)
+    const spotlightClosed = before.focusedApplication?.bundleIdentifier === 'com.apple.Spotlight' &&
+                            after.focusedApplication?.bundleIdentifier !== 'com.apple.Spotlight'
 
     if (appChanged || windowCountChanged || spotlightClosed) {
       // Wait longer for app launch / window animation
@@ -200,7 +202,7 @@ export const clickTool: Tool = {
         },
         desc: {
           type: 'string',
-          description: 'Target element name/label (e.g., "Insert", "Save", "Submit"). Used to verify click accuracy.',
+          description: 'The exact name/label of the target element (e.g., "Save", "Insert", "Microsoft PowerPoint"). This will be searched in the accessibility tree. Keep it short and match the actual UI text.',
         },
       },
       required: ['coordinate'],
@@ -247,7 +249,7 @@ export const doubleClickTool: Tool = {
         },
         desc: {
           type: 'string',
-          description: 'Target element name/label (e.g., "Insert", "Save", "Submit"). Used to verify click accuracy.',
+          description: 'The exact name/label of the target element. Searched in accessibility tree. Keep short.',
         },
       },
       required: ['coordinate'],
@@ -294,7 +296,7 @@ export const rightClickTool: Tool = {
         },
         desc: {
           type: 'string',
-          description: 'Target element name/label. Used to verify click accuracy.',
+          description: 'The exact name/label of the target element. Searched in accessibility tree. Keep short.',
         },
       },
       required: ['coordinate'],
@@ -341,7 +343,7 @@ export const middleClickTool: Tool = {
         },
         desc: {
           type: 'string',
-          description: 'Target element name/label. Used to verify click accuracy.',
+          description: 'The exact name/label of the target element. Searched in accessibility tree. Keep short.',
         },
       },
       required: ['coordinate'],

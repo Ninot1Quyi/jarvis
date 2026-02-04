@@ -25,10 +25,10 @@
 - find_element: Search for UI elements by keyword when unsure about position. Args: {"keyword": "Insert", "max_results": 5}. Use this to find exact coordinates instead of guessing.
 
 ### GUI Tools
-- click: Click at position. Args: {"coordinate": [x, y], "desc": "element name"}. Returns: clicked element, UI changes, nearby elements, global search.
-- left_double: Double click. Args: {"coordinate": [x, y], "desc": "element name"}. Returns same feedback as click.
-- right_single: Right click. Args: {"coordinate": [x, y], "desc": "element name"}. Returns same feedback as click.
-- middle_click: Middle click to open link in new tab. Args: {"coordinate": [x, y], "desc": "element name"}. Returns same feedback as click.
+- click: Click at position. Args: {"coordinate": [x, y], "desc": "element name"}. The `desc` should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree.
+- left_double: Double click. Args: {"coordinate": [x, y], "desc": "element name"}
+- right_single: Right click. Args: {"coordinate": [x, y], "desc": "element name"}
+- middle_click: Middle click to open link in new tab. Args: {"coordinate": [x, y], "desc": "element name"}
 - drag: Drag from start to end. Args: {"startCoordinate": [x1, y1], "endCoordinate": [x2, y2]}
 - scroll: Scroll at position. Args: {"coordinate": [x, y], "direction": "up|down|left|right"}
 - type: Type text. Supports \\n for newline, \\t for tab. Args: {"text": "line1\\nline2"}
