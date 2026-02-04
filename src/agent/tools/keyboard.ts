@@ -67,7 +67,7 @@ export const typeTool: Tool = {
       await keyboard.releaseKey(modKey, Key.V)
 
       // Wait for paste to complete
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await new Promise(resolve => setTimeout(resolve, 150))
 
       return { success: true, data: { text, method: 'paste' } }
     }
@@ -77,7 +77,7 @@ export const typeTool: Tool = {
     await keyboard.type(text)
 
     // Wait for typing to complete
-    await new Promise(resolve => setTimeout(resolve, 100))
+    await new Promise(resolve => setTimeout(resolve, 150))
 
     return { success: true, data: { text, method: 'type' } }
   },
@@ -153,7 +153,11 @@ export const hotkeyTool: Tool = {
     }
 
     await keyboard.pressKey(...keys)
+    // Small delay between press and release for reliability
+    await new Promise(resolve => setTimeout(resolve, 50))
     await keyboard.releaseKey(...keys)
+    // Wait for key action to be processed
+    await new Promise(resolve => setTimeout(resolve, 100))
 
     return { success: true, data: { key: keysStr } }
   },
