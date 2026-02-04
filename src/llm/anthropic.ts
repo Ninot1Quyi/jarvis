@@ -162,9 +162,19 @@ export class AnthropicProvider implements LLMProvider {
     })
 
     // Log only new messages since last call
+    // ANSI colors: green for ASSISTANT, blue for USER, gray for others
+    const roleColors: Record<string, string> = {
+      assistant: '\x1b[32m',  // green
+      user: '\x1b[34m',       // blue
+      system: '\x1b[90m',     // gray
+      tool: '\x1b[90m',       // gray
+    }
+    const RESET = '\x1b[0m'
+
     for (let i = this.lastMessageCount; i < anthropicMessages.length; i++) {
       const msg = anthropicMessages[i]
       const role = msg.role.toUpperCase()
+      const color = roleColors[msg.role] || '\x1b[0m'
 
       // Helper to format content for display (handle escaped newlines)
       const formatContent = (content: string): string => {
@@ -183,7 +193,8 @@ export class AnthropicProvider implements LLMProvider {
       }
 
       if (typeof msg.content === 'string') {
-        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(msg.content)}`)
+        const content = formatContent(msg.content)
+        logger.debug(`${color}[MSG ${i}] ${role}:${RESET}\n${content}`)
       } else if (Array.isArray(msg.content)) {
         const textParts = msg.content
           .filter((p): p is Anthropic.TextBlockParam => p.type === 'text')
@@ -196,7 +207,9 @@ export class AnthropicProvider implements LLMProvider {
         let suffix = ''
         if (toolUseCount > 0) suffix += ` [+${toolUseCount} tool_use]`
         if (toolResultCount > 0) suffix += ` [+${toolResultCount} tool_result]`
-        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(textParts)}${suffix}`)
+
+        const content = formatContent(textParts)
+        logger.debug(`${color}[MSG ${i}] ${role}:${RESET}\n${content}${suffix}`)
 
         // Log each image attachment
         for (let j = 0; j < imageParts.length; j++) {

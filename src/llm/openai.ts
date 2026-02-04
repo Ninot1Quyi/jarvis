@@ -187,9 +187,19 @@ export class OpenAIProvider implements LLMProvider {
     })
 
     // Log only new messages since last call
+    // ANSI colors: green for ASSISTANT, blue for USER, gray for others
+    const roleColors: Record<string, string> = {
+      assistant: '\x1b[32m',  // green
+      user: '\x1b[34m',       // blue
+      system: '\x1b[90m',     // gray
+      tool: '\x1b[90m',       // gray
+    }
+    const RESET = '\x1b[0m'
+
     for (let i = this.lastMessageCount; i < openaiMessages.length; i++) {
       const msg = openaiMessages[i]
       const role = msg.role.toUpperCase()
+      const color = roleColors[msg.role] || '\x1b[0m'
 
       // Helper to format content for display (handle escaped newlines)
       const formatContent = (content: string): string => {
@@ -208,7 +218,8 @@ export class OpenAIProvider implements LLMProvider {
       }
 
       if (typeof msg.content === 'string') {
-        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(msg.content)}`)
+        const content = formatContent(msg.content)
+        logger.debug(`${color}[MSG ${i}] ${role}:${RESET}\n${content}`)
       } else if (Array.isArray(msg.content)) {
         const textParts = msg.content
           .filter((p): p is OpenAI.ChatCompletionContentPartText => p.type === 'text')
@@ -216,7 +227,8 @@ export class OpenAIProvider implements LLMProvider {
           .join('\n')
         const imageParts = msg.content.filter((p): p is OpenAI.ChatCompletionContentPartImage => p.type === 'image_url')
 
-        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(textParts)}`)
+        const content = formatContent(textParts)
+        logger.debug(`${color}[MSG ${i}] ${role}:${RESET}\n${content}`)
 
         // Log each image attachment
         for (let j = 0; j < imageParts.length; j++) {
