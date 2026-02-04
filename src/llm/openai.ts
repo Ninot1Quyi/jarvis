@@ -191,16 +191,32 @@ export class OpenAIProvider implements LLMProvider {
       const msg = openaiMessages[i]
       const role = msg.role.toUpperCase()
 
+      // Helper to format content for display (handle escaped newlines)
+      const formatContent = (content: string): string => {
+        // Parse JSON strings to handle escaped characters
+        try {
+          // If it looks like JSON, try to parse and re-stringify with proper formatting
+          if (content.startsWith('{') || content.startsWith('[')) {
+            const parsed = JSON.parse(content)
+            return JSON.stringify(parsed, null, 2)
+          }
+        } catch {
+          // Not JSON, continue
+        }
+        // Replace literal \n with actual newlines for display
+        return content.replace(/\\n/g, '\n')
+      }
+
       if (typeof msg.content === 'string') {
-        logger.debug(`[MSG ${i}] ${role}: ${msg.content}`)
+        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(msg.content)}`)
       } else if (Array.isArray(msg.content)) {
         const textParts = msg.content
           .filter((p): p is OpenAI.ChatCompletionContentPartText => p.type === 'text')
           .map(p => p.text)
-          .join(' ')
+          .join('\n')
         const imageParts = msg.content.filter((p): p is OpenAI.ChatCompletionContentPartImage => p.type === 'image_url')
 
-        logger.debug(`[MSG ${i}] ${role}: ${textParts}`)
+        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(textParts)}`)
 
         // Log each image attachment
         for (let j = 0; j < imageParts.length; j++) {

@@ -166,13 +166,29 @@ export class AnthropicProvider implements LLMProvider {
       const msg = anthropicMessages[i]
       const role = msg.role.toUpperCase()
 
+      // Helper to format content for display (handle escaped newlines)
+      const formatContent = (content: string): string => {
+        // Parse JSON strings to handle escaped characters
+        try {
+          // If it looks like JSON, try to parse and re-stringify with proper formatting
+          if (content.startsWith('{') || content.startsWith('[')) {
+            const parsed = JSON.parse(content)
+            return JSON.stringify(parsed, null, 2)
+          }
+        } catch {
+          // Not JSON, continue
+        }
+        // Replace literal \n with actual newlines for display
+        return content.replace(/\\n/g, '\n')
+      }
+
       if (typeof msg.content === 'string') {
-        logger.debug(`[MSG ${i}] ${role}: ${msg.content}`)
+        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(msg.content)}`)
       } else if (Array.isArray(msg.content)) {
         const textParts = msg.content
           .filter((p): p is Anthropic.TextBlockParam => p.type === 'text')
           .map(p => p.text)
-          .join(' ')
+          .join('\n')
         const imageParts = msg.content.filter((p): p is Anthropic.ImageBlockParam => p.type === 'image')
         const toolUseCount = msg.content.filter(p => p.type === 'tool_use').length
         const toolResultCount = msg.content.filter(p => p.type === 'tool_result').length
@@ -180,7 +196,7 @@ export class AnthropicProvider implements LLMProvider {
         let suffix = ''
         if (toolUseCount > 0) suffix += ` [+${toolUseCount} tool_use]`
         if (toolResultCount > 0) suffix += ` [+${toolResultCount} tool_result]`
-        logger.debug(`[MSG ${i}] ${role}: ${textParts}${suffix}`)
+        logger.debug(`[MSG ${i}] ${role}:\n${formatContent(textParts)}${suffix}`)
 
         // Log each image attachment
         for (let j = 0; j < imageParts.length; j++) {
