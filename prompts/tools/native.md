@@ -12,10 +12,10 @@ Tools are called natively. Simply invoke the appropriate tool with the required 
 - **find_element**: Search for UI elements by keyword when unsure about position. Args: `keyword: "Insert"`, `max_results?: 5`. Use this to find the exact coordinates of buttons, menus, or other UI elements instead of guessing.
 
 #### GUI Tools
-- **click**: Click at position. Args: `coordinate: [x, y]`, `desc?: "element name"`. The `desc` helps verify if you clicked the right element.
-- **left_double**: Double click. Args: `coordinate: [x, y]`, `desc?: "element name"`
-- **right_single**: Right click for context menu. Args: `coordinate: [x, y]`, `desc?: "element name"`
-- **middle_click**: Middle click to open link in new tab. Args: `coordinate: [x, y]`, `desc?: "element name"`
+- **click**: Click at position. Args: `coordinate: [x, y]`, `desc?: "element name"`. The `desc` helps verify click accuracy. Returns: clicked element info, UI changes, nearby elements, and global search results.
+- **left_double**: Double click. Args: `coordinate: [x, y]`, `desc?: "element name"`. Returns same feedback as click.
+- **right_single**: Right click for context menu. Args: `coordinate: [x, y]`, `desc?: "element name"`. Returns same feedback as click.
+- **middle_click**: Middle click to open link in new tab. Args: `coordinate: [x, y]`, `desc?: "element name"`. Returns same feedback as click.
 - **drag**: Drag from start to end. Args: `startCoordinate: [x1, y1], endCoordinate: [x2, y2]`
 - **scroll**: Scroll at position. Args: `coordinate: [x, y], direction: "up"|"down"|"left"|"right"`
 - **type**: Type text (supports `\n` for newline, `\t` for tab). Args: `text: "content"`

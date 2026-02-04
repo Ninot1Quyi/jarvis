@@ -44,9 +44,16 @@ When you need to click a UI element but are unsure of its exact position:
 2. The tool returns exact coordinates you can use directly
 3. Example: `find_element(keyword: "插入")` → returns `[button] "插入" [85, 122]` → click `[85, 122]`
 
-After each click, the system returns nearby UI elements. Use this feedback to:
+After each click, the system returns detailed feedback:
+- **Clicked**: The element you actually clicked (role, title, coordinates)
+- **UI Changes**: What changed after the click (menu opened, focus changed, window opened, etc.)
+- **Nearby UI elements**: Elements near the click position
+- **Global search**: If you provided `desc` or clicked a named element, shows matching elements globally
+
+Use this feedback to:
 - Verify if you clicked the right element
-- Find the correct position if you missed
+- Understand what UI changes occurred
+- Find the correct position if you missed (check global search results)
 
 ### Visual Target Analysis
 Before clicking ANY element, you MUST:
