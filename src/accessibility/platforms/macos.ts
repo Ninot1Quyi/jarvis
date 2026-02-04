@@ -16,6 +16,12 @@ import type {
   AccessibilitySearchResult,
   AccessibilityElement,
   ElementRole,
+  CaptureStateOptions,
+  StateSnapshot,
+  SnapshotElement,
+  SnapshotWindow,
+  SnapshotMenu,
+  SnapshotApplication,
 } from '../types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -88,6 +94,74 @@ interface RawSearchResponse {
   queryTimeMs: number
 }
 
+/** Raw snapshot element from Swift CLI */
+interface RawSnapshotElement {
+  role: string
+  subrole?: string
+  title?: string
+  description?: string
+  value?: string
+  identifier?: string
+  enabled?: boolean
+  focused?: boolean
+  selected?: boolean
+  expanded?: boolean
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  actions?: string[]
+}
+
+/** Raw window info from Swift CLI */
+interface RawWindowInfo {
+  title?: string
+  role: string
+  subrole?: string
+  isMain: boolean
+  isMinimized: boolean
+  isFocused: boolean
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  identifier?: string
+}
+
+/** Raw menu info from Swift CLI */
+interface RawMenuInfo {
+  title?: string
+  role: string
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  items?: string[]
+}
+
+/** Raw application info from Swift CLI */
+interface RawApplicationInfo {
+  title?: string
+  bundleIdentifier?: string
+  isFrontmost: boolean
+  isHidden: boolean
+  pid: number
+}
+
+/** Raw response from Swift CLI (snapshot mode) */
+interface RawSnapshotResponse {
+  success: boolean
+  error?: string
+  timestamp: number
+  focusedApplication?: RawApplicationInfo
+  focusedWindow?: RawWindowInfo
+  focusedElement?: RawSnapshotElement
+  elementAtPoint?: RawSnapshotElement
+  windows: RawWindowInfo[]
+  openMenus: RawMenuInfo[]
+  queryTimeMs: number
+}
+
 function transformElement(raw: RawElement): AccessibilityElement {
   const centerX = raw.x + raw.width / 2
   const centerY = raw.y + raw.height / 2
@@ -111,6 +185,64 @@ function transformElement(raw: RawElement): AccessibilityElement {
     distance: Math.round(raw.distance),
     interactive: interactiveRoles.includes(role),
     similarity: raw.similarity,
+  }
+}
+
+function transformSnapshotElement(raw: RawSnapshotElement): SnapshotElement {
+  return {
+    role: raw.role,
+    subrole: raw.subrole,
+    title: raw.title,
+    description: raw.description,
+    value: raw.value,
+    identifier: raw.identifier,
+    enabled: raw.enabled,
+    focused: raw.focused,
+    selected: raw.selected,
+    expanded: raw.expanded,
+    x: raw.x,
+    y: raw.y,
+    width: raw.width,
+    height: raw.height,
+    actions: raw.actions,
+  }
+}
+
+function transformWindow(raw: RawWindowInfo): SnapshotWindow {
+  return {
+    title: raw.title,
+    role: raw.role,
+    subrole: raw.subrole,
+    isMain: raw.isMain,
+    isMinimized: raw.isMinimized,
+    isFocused: raw.isFocused,
+    x: raw.x,
+    y: raw.y,
+    width: raw.width,
+    height: raw.height,
+    identifier: raw.identifier,
+  }
+}
+
+function transformMenu(raw: RawMenuInfo): SnapshotMenu {
+  return {
+    title: raw.title,
+    role: raw.role,
+    x: raw.x,
+    y: raw.y,
+    width: raw.width,
+    height: raw.height,
+    items: raw.items,
+  }
+}
+
+function transformApplication(raw: RawApplicationInfo): SnapshotApplication {
+  return {
+    title: raw.title,
+    bundleIdentifier: raw.bundleIdentifier,
+    isFrontmost: raw.isFrontmost,
+    isHidden: raw.isHidden,
+    pid: raw.pid,
   }
 }
 
@@ -300,6 +432,107 @@ export class MacOSAccessibilityProvider implements AccessibilityProvider {
           error: 'ax-query search timed out',
           results: [],
           searchKeyword: keyword,
+          queryTimeMs: Date.now() - startTime,
+        })
+      }, 3000)
+    })
+  }
+
+  async captureState(options?: CaptureStateOptions): Promise<StateSnapshot> {
+    const startTime = Date.now()
+
+    return new Promise((resolve) => {
+      const args = ['--snapshot']
+
+      if (options?.x !== undefined && options?.y !== undefined) {
+        args.push('--x', String(Math.round(options.x)))
+        args.push('--y', String(Math.round(options.y)))
+      }
+
+      const proc = spawn(AX_QUERY_PATH, args)
+      let stdout = ''
+      let stderr = ''
+
+      proc.stdout.on('data', (data) => {
+        stdout += data.toString()
+      })
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code) => {
+        const queryTimeMs = Date.now() - startTime
+
+        if (code !== 0) {
+          resolve({
+            success: false,
+            error: stderr || `ax-query exited with code ${code}`,
+            timestamp: Date.now(),
+            windows: [],
+            openMenus: [],
+            queryTimeMs,
+          })
+          return
+        }
+
+        try {
+          const raw: RawSnapshotResponse = JSON.parse(stdout)
+
+          const result: StateSnapshot = {
+            success: raw.success,
+            error: raw.error,
+            timestamp: raw.timestamp,
+            focusedApplication: raw.focusedApplication
+              ? transformApplication(raw.focusedApplication)
+              : undefined,
+            focusedWindow: raw.focusedWindow
+              ? transformWindow(raw.focusedWindow)
+              : undefined,
+            focusedElement: raw.focusedElement
+              ? transformSnapshotElement(raw.focusedElement)
+              : undefined,
+            elementAtPoint: raw.elementAtPoint
+              ? transformSnapshotElement(raw.elementAtPoint)
+              : undefined,
+            windows: (raw.windows || []).map(transformWindow),
+            openMenus: (raw.openMenus || []).map(transformMenu),
+            queryTimeMs,
+          }
+
+          resolve(result)
+        } catch (parseError) {
+          resolve({
+            success: false,
+            error: `Failed to parse ax-query output: ${parseError}`,
+            timestamp: Date.now(),
+            windows: [],
+            openMenus: [],
+            queryTimeMs,
+          })
+        }
+      })
+
+      proc.on('error', (err) => {
+        resolve({
+          success: false,
+          error: `Failed to spawn ax-query: ${err.message}`,
+          timestamp: Date.now(),
+          windows: [],
+          openMenus: [],
+          queryTimeMs: Date.now() - startTime,
+        })
+      })
+
+      // Timeout after 3 seconds for snapshot
+      setTimeout(() => {
+        proc.kill()
+        resolve({
+          success: false,
+          error: 'ax-query snapshot timed out',
+          timestamp: Date.now(),
+          windows: [],
+          openMenus: [],
           queryTimeMs: Date.now() - startTime,
         })
       }, 3000)

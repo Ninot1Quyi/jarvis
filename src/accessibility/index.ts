@@ -14,6 +14,15 @@ import type {
   AccessibilitySearchResult,
   AccessibilityElement,
   ElementRole,
+  CaptureStateOptions,
+  StateSnapshot,
+  StateDiff,
+  SnapshotElement,
+  SnapshotWindow,
+  SnapshotMenu,
+  SnapshotApplication,
+  WindowChange,
+  MenuChange,
 } from './types.js'
 
 // Re-export types
@@ -26,6 +35,15 @@ export type {
   AccessibilitySearchResult,
   AccessibilityElement,
   ElementRole,
+  CaptureStateOptions,
+  StateSnapshot,
+  StateDiff,
+  SnapshotElement,
+  SnapshotWindow,
+  SnapshotMenu,
+  SnapshotApplication,
+  WindowChange,
+  MenuChange,
 }
 
 // Platform providers (lazy loaded)
@@ -257,4 +275,262 @@ export function formatSearchResultForAgent(
   }
 
   return lines.join('\n')
+}
+
+// ============================================================================
+// State Snapshot Functions
+// ============================================================================
+
+/**
+ * Capture a complete UI state snapshot
+ *
+ * @param options - Optional click position for elementAtPoint
+ * @returns State snapshot
+ */
+export async function captureState(
+  options?: CaptureStateOptions
+): Promise<StateSnapshot> {
+  const provider = await getProvider()
+
+  if (!provider || !provider.captureState) {
+    return {
+      success: false,
+      error: `State capture not available on ${process.platform}`,
+      timestamp: Date.now(),
+      windows: [],
+      openMenus: [],
+      queryTimeMs: 0,
+    }
+  }
+
+  return provider.captureState(options)
+}
+
+/**
+ * Compare two state snapshots and return the differences
+ *
+ * @param before - State snapshot before an action
+ * @param after - State snapshot after an action
+ * @returns Diff describing what changed
+ */
+export function diffState(before: StateSnapshot, after: StateSnapshot): StateDiff {
+  const summary: string[] = []
+
+  // Time delta
+  const timeDeltaMs = (after.timestamp - before.timestamp) * 1000
+
+  // Application change
+  const applicationChanged =
+    before.focusedApplication?.bundleIdentifier !== after.focusedApplication?.bundleIdentifier
+
+  if (applicationChanged) {
+    summary.push(
+      `App changed: ${before.focusedApplication?.title || 'none'} → ${after.focusedApplication?.title || 'none'}`
+    )
+  }
+
+  // Window focus change
+  const windowFocusChanged =
+    before.focusedWindow?.title !== after.focusedWindow?.title ||
+    before.focusedWindow?.identifier !== after.focusedWindow?.identifier
+
+  if (windowFocusChanged && !applicationChanged) {
+    summary.push(
+      `Window focus: ${before.focusedWindow?.title || 'none'} → ${after.focusedWindow?.title || 'none'}`
+    )
+  }
+
+  // Focus element change
+  const focusChanged = !elementsEqual(before.focusedElement, after.focusedElement)
+
+  if (focusChanged) {
+    const beforeDesc = describeElement(before.focusedElement)
+    const afterDesc = describeElement(after.focusedElement)
+    if (beforeDesc !== afterDesc) {
+      summary.push(`Focus: ${beforeDesc} → ${afterDesc}`)
+    }
+  }
+
+  // Clicked element change
+  const clickedElementChanged = !elementsEqual(before.elementAtPoint, after.elementAtPoint)
+
+  if (clickedElementChanged) {
+    const beforeDesc = describeElement(before.elementAtPoint)
+    const afterDesc = describeElement(after.elementAtPoint)
+    if (beforeDesc !== afterDesc) {
+      summary.push(`Element at click: ${beforeDesc} → ${afterDesc}`)
+    }
+  }
+
+  // Window changes
+  const beforeWindowTitles = new Set(before.windows.map(w => w.title || w.identifier || ''))
+  const afterWindowTitles = new Set(after.windows.map(w => w.title || w.identifier || ''))
+
+  const windowsOpened: WindowChange[] = []
+  const windowsClosed: WindowChange[] = []
+  const windowChanges: WindowChange[] = []
+
+  for (const w of after.windows) {
+    const key = w.title || w.identifier || ''
+    if (!beforeWindowTitles.has(key)) {
+      windowsOpened.push({
+        type: 'opened',
+        title: w.title,
+        position: w.x !== undefined && w.y !== undefined ? [w.x, w.y] : undefined,
+        size: w.width !== undefined && w.height !== undefined ? [w.width, w.height] : undefined,
+      })
+      summary.push(`Window opened: ${w.title || 'untitled'}`)
+    }
+  }
+
+  for (const w of before.windows) {
+    const key = w.title || w.identifier || ''
+    if (!afterWindowTitles.has(key)) {
+      windowsClosed.push({
+        type: 'closed',
+        title: w.title,
+      })
+      summary.push(`Window closed: ${w.title || 'untitled'}`)
+    }
+  }
+
+  // Menu changes
+  const beforeMenuTitles = new Set(before.openMenus.map(m => m.title || ''))
+  const afterMenuTitles = new Set(after.openMenus.map(m => m.title || ''))
+
+  const menusOpened: MenuChange[] = []
+  const menusClosed: MenuChange[] = []
+
+  for (const m of after.openMenus) {
+    const key = m.title || ''
+    if (!beforeMenuTitles.has(key) || before.openMenus.length === 0) {
+      menusOpened.push({
+        type: 'opened',
+        title: m.title,
+        items: m.items,
+        position: m.x !== undefined && m.y !== undefined ? [m.x, m.y] : undefined,
+      })
+      summary.push(`Menu opened: ${m.title || 'popup'}${m.items ? ` (${m.items.length} items)` : ''}`)
+    }
+  }
+
+  for (const m of before.openMenus) {
+    const key = m.title || ''
+    if (!afterMenuTitles.has(key) || after.openMenus.length === 0) {
+      menusClosed.push({
+        type: 'closed',
+        title: m.title,
+      })
+      summary.push(`Menu closed: ${m.title || 'popup'}`)
+    }
+  }
+
+  // If nothing changed, note that
+  if (summary.length === 0) {
+    summary.push('No significant UI changes detected')
+  }
+
+  return {
+    timeDeltaMs,
+    applicationChanged,
+    applicationBefore: applicationChanged ? before.focusedApplication : undefined,
+    applicationAfter: applicationChanged ? after.focusedApplication : undefined,
+    windowFocusChanged,
+    focusedWindowBefore: windowFocusChanged ? before.focusedWindow : undefined,
+    focusedWindowAfter: windowFocusChanged ? after.focusedWindow : undefined,
+    focusChanged,
+    focusedElementBefore: focusChanged ? before.focusedElement : undefined,
+    focusedElementAfter: focusChanged ? after.focusedElement : undefined,
+    clickedElementChanged,
+    clickedElementBefore: clickedElementChanged ? before.elementAtPoint : undefined,
+    clickedElementAfter: clickedElementChanged ? after.elementAtPoint : undefined,
+    windowsOpened,
+    windowsClosed,
+    windowChanges,
+    menusOpened,
+    menusClosed,
+    summary,
+  }
+}
+
+/**
+ * Format a state diff for display to the agent
+ *
+ * @param diff - The state diff to format
+ * @returns Human-readable string describing the changes
+ */
+export function formatDiffForAgent(diff: StateDiff): string {
+  if (diff.summary.length === 1 && diff.summary[0] === 'No significant UI changes detected') {
+    return '⚠ No UI changes detected after action'
+  }
+
+  const lines: string[] = ['UI Changes:']
+
+  for (const item of diff.summary) {
+    lines.push(`  • ${item}`)
+  }
+
+  // Add details for menu items if a menu was opened
+  if (diff.menusOpened.length > 0) {
+    for (const menu of diff.menusOpened) {
+      if (menu.items && menu.items.length > 0) {
+        lines.push(`  Menu items: ${menu.items.slice(0, 5).join(', ')}${menu.items.length > 5 ? '...' : ''}`)
+      }
+    }
+  }
+
+  return lines.join('\n')
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Check if two snapshot elements are equal
+ */
+function elementsEqual(a?: SnapshotElement, b?: SnapshotElement): boolean {
+  if (!a && !b) return true
+  if (!a || !b) return false
+
+  return (
+    a.role === b.role &&
+    a.title === b.title &&
+    a.value === b.value &&
+    a.focused === b.focused &&
+    a.selected === b.selected &&
+    a.expanded === b.expanded
+  )
+}
+
+/**
+ * Create a short description of an element
+ */
+function describeElement(el?: SnapshotElement): string {
+  if (!el) return 'none'
+
+  const parts: string[] = []
+
+  // Role (simplified)
+  const role = el.role.replace('AX', '')
+  parts.push(role)
+
+  // Title or value
+  if (el.title) {
+    parts.push(`"${el.title.slice(0, 30)}${el.title.length > 30 ? '...' : ''}"`)
+  } else if (el.value) {
+    const val = el.value.slice(0, 20)
+    parts.push(`[${val}${el.value.length > 20 ? '...' : ''}]`)
+  }
+
+  // State indicators
+  const states: string[] = []
+  if (el.focused) states.push('focused')
+  if (el.selected) states.push('selected')
+  if (el.expanded) states.push('expanded')
+  if (states.length > 0) {
+    parts.push(`(${states.join(', ')})`)
+  }
+
+  return parts.join(' ')
 }

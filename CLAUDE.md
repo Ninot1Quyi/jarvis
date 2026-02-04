@@ -206,7 +206,7 @@ GUI coordinates use normalized [0, 1000] range. (0,0) = top-left, (1000,1000) = 
    "数据结构错了，应该是..."
    \```
 
-<IMPORTTANT>
+<IMPORTANT>
 
 1.你应该尽可能的将任务拆分成可以交个subAgent来完成的任务，你负责汇总，不要让垃圾信息快速充满你的上下文。
 
@@ -218,7 +218,17 @@ GUI coordinates use normalized [0, 1000] range. (0,0) = top-left, (1000,1000) = 
 
 5.如果你不按照我说的来做，我将会对你大吼大叫。
 
-</IMPORTTANT>
+6.**完整性原则**：当定义枚举、状态、类型或常量时，必须问自己：
+  - "这是完整的官方定义，还是我只列出了部分常见内容？"
+  - "有没有官方头文件、SDK文档、或规范定义了完整列表？"
+  - 如果存在官方完整定义，**必须加载并使用完整定义**，而不是手动列举部分内容
+  - 示例：macOS Accessibility API 的 Attributes、Roles、Actions 等应从 SDK 头文件获取完整列表
+    - `/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/.../HIServices.framework/Headers/AXAttributeConstants.h`
+    - `/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/.../HIServices.framework/Headers/AXRoleConstants.h`
+    - `/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/.../HIServices.framework/Headers/AXActionConstants.h`
+  - 手动定义部分内容会导致遗漏，造成功能不完整或难以维护
+
+</IMPORTANT>
 
 
 

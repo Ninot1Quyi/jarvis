@@ -31,6 +31,132 @@ export type ElementRole =
   | 'window'
   | 'unknown'
 
+/**
+ * macOS Accessibility Roles (from AXRoleConstants.h)
+ * Complete list of standard roles defined in macOS SDK
+ */
+export type AXRole =
+  | 'AXApplication'
+  | 'AXSystemWide'
+  | 'AXWindow'
+  | 'AXSheet'
+  | 'AXDrawer'
+  | 'AXGrowArea'
+  | 'AXImage'
+  | 'AXUnknown'
+  | 'AXButton'
+  | 'AXRadioButton'
+  | 'AXCheckBox'
+  | 'AXPopUpButton'
+  | 'AXMenuButton'
+  | 'AXTabGroup'
+  | 'AXTable'
+  | 'AXColumn'
+  | 'AXRow'
+  | 'AXOutline'
+  | 'AXBrowser'
+  | 'AXScrollArea'
+  | 'AXScrollBar'
+  | 'AXRadioGroup'
+  | 'AXList'
+  | 'AXGroup'
+  | 'AXValueIndicator'
+  | 'AXComboBox'
+  | 'AXSlider'
+  | 'AXIncrementor'
+  | 'AXBusyIndicator'
+  | 'AXProgressIndicator'
+  | 'AXRelevanceIndicator'
+  | 'AXToolbar'
+  | 'AXDisclosureTriangle'
+  | 'AXTextField'
+  | 'AXTextArea'
+  | 'AXStaticText'
+  | 'AXHeading'
+  | 'AXMenuBar'
+  | 'AXMenuBarItem'
+  | 'AXMenu'
+  | 'AXMenuItem'
+  | 'AXSplitGroup'
+  | 'AXSplitter'
+  | 'AXColorWell'
+  | 'AXTimeField'
+  | 'AXDateField'
+  | 'AXHelpTag'
+  | 'AXMatte'
+  | 'AXDockItem'
+  | 'AXRuler'
+  | 'AXRulerMarker'
+  | 'AXGrid'
+  | 'AXLevelIndicator'
+  | 'AXCell'
+  | 'AXLayoutArea'
+  | 'AXLayoutItem'
+  | 'AXHandle'
+  | 'AXPopover'
+
+/**
+ * macOS Accessibility Subroles (from AXRoleConstants.h)
+ */
+export type AXSubrole =
+  // Standard subroles
+  | 'AXCloseButton'
+  | 'AXMinimizeButton'
+  | 'AXZoomButton'
+  | 'AXToolbarButton'
+  | 'AXFullScreenButton'
+  | 'AXSecureTextField'
+  | 'AXTableRow'
+  | 'AXOutlineRow'
+  | 'AXUnknown'
+  // Window subroles
+  | 'AXStandardWindow'
+  | 'AXDialog'
+  | 'AXSystemDialog'
+  | 'AXFloatingWindow'
+  | 'AXSystemFloatingWindow'
+  | 'AXDecorative'
+  // Scroll subroles
+  | 'AXIncrementArrow'
+  | 'AXDecrementArrow'
+  | 'AXIncrementPage'
+  | 'AXDecrementPage'
+  // Other subroles
+  | 'AXSortButton'
+  | 'AXSearchField'
+  | 'AXTimeline'
+  | 'AXRatingIndicator'
+  | 'AXContentList'
+  | 'AXDefinitionList'
+  | 'AXDescriptionList'
+  | 'AXToggle'
+  | 'AXSwitch'
+  // Dock subroles
+  | 'AXApplicationDockItem'
+  | 'AXDocumentDockItem'
+  | 'AXFolderDockItem'
+  | 'AXMinimizedWindowDockItem'
+  | 'AXURLDockItem'
+  | 'AXDockExtraDockItem'
+  | 'AXTrashDockItem'
+  | 'AXSeparatorDockItem'
+  | 'AXProcessSwitcherList'
+
+/**
+ * macOS Accessibility Actions (from AXActionConstants.h)
+ */
+export type AXAction =
+  | 'AXPress'
+  | 'AXIncrement'
+  | 'AXDecrement'
+  | 'AXConfirm'
+  | 'AXCancel'
+  | 'AXShowAlternateUI'
+  | 'AXShowDefaultUI'
+  | 'AXRaise'
+  | 'AXShowMenu'
+  | 'AXPick'
+
 /** A UI element with its accessibility information */
 export interface AccessibilityElement {
   /** Normalized role (cross-platform) */
@@ -109,6 +235,227 @@ export interface AccessibilitySearchOptions {
   maxResults?: number
 }
 
+// ============================================================================
+// Snapshot Types - For capturing and comparing UI state
+// ============================================================================
+
+/** Detailed element state for snapshots */
+export interface SnapshotElement {
+  /** Element role (e.g., AXButton, AXTextField) */
+  role: string
+  /** Element subrole (e.g., AXCloseButton) */
+  subrole?: string
+  /** Element title/label */
+  title?: string
+  /** Element description */
+  description?: string
+  /** Element value */
+  value?: string
+  /** Element identifier (for programmatic access) */
+  identifier?: string
+  /** Whether the element is enabled */
+  enabled?: boolean
+  /** Whether the element has keyboard focus */
+  focused?: boolean
+  /** Whether the element is selected */
+  selected?: boolean
+  /** Whether the element is expanded (for disclosure triangles, etc.) */
+  expanded?: boolean
+  /** Position X in screen pixels */
+  x?: number
+  /** Position Y in screen pixels */
+  y?: number
+  /** Width in pixels */
+  width?: number
+  /** Height in pixels */
+  height?: number
+  /** Available actions */
+  actions?: string[]
+}
+
+/** Window information for snapshots */
+export interface SnapshotWindow {
+  /** Window title */
+  title?: string
+  /** Window role */
+  role: string
+  /** Window subrole */
+  subrole?: string
+  /** Whether this is the main window */
+  isMain: boolean
+  /** Whether the window is minimized */
+  isMinimized: boolean
+  /** Whether the window has focus */
+  isFocused: boolean
+  /** Position X */
+  x?: number
+  /** Position Y */
+  y?: number
+  /** Width */
+  width?: number
+  /** Height */
+  height?: number
+  /** Window identifier */
+  identifier?: string
+}
+
+/** Menu information for snapshots */
+export interface SnapshotMenu {
+  /** Menu title */
+  title?: string
+  /** Menu role */
+  role: string
+  /** Position X */
+  x?: number
+  /** Position Y */
+  y?: number
+  /** Width */
+  width?: number
+  /** Height */
+  height?: number
+  /** Menu item titles */
+  items?: string[]
+}
+
+/** Application information for snapshots */
+export interface SnapshotApplication {
+  /** Application title */
+  title?: string
+  /** Bundle identifier (e.g., com.apple.Safari) */
+  bundleIdentifier?: string
+  /** Whether the app is frontmost */
+  isFrontmost: boolean
+  /** Whether the app is hidden */
+  isHidden: boolean
+  /** Process ID */
+  pid: number
+}
+
+/** Complete UI state snapshot */
+export interface StateSnapshot {
+  /** Whether the snapshot was captured successfully */
+  success: boolean
+  /** Error message if failed */
+  error?: string
+  /** Unix timestamp when snapshot was taken */
+  timestamp: number
+  /** The focused (frontmost) application */
+  focusedApplication?: SnapshotApplication
+  /** The focused window */
+  focusedWindow?: SnapshotWindow
+  /** The element with keyboard focus */
+  focusedElement?: SnapshotElement
+  /** Element at the specified click position (if coordinates provided) */
+  elementAtPoint?: SnapshotElement
+  /** All windows of the focused application */
+  windows: SnapshotWindow[]
+  /** Currently open menus (context menus, dropdowns, etc.) */
+  openMenus: SnapshotMenu[]
+  /** Time taken to capture the snapshot in milliseconds */
+  queryTimeMs: number
+}
+
+/** Options for capturing a state snapshot */
+export interface CaptureStateOptions {
+  /** Optional click position X (screen pixels) */
+  x?: number
+  /** Optional click position Y (screen pixels) */
+  y?: number
+}
+
+// ============================================================================
+// Diff Types - For comparing two snapshots
+// ============================================================================
+
+/** Represents a change in an element's state */
+export interface ElementChange {
+  /** Type of change */
+  type: 'added' | 'removed' | 'modified'
+  /** Element role */
+  role: string
+  /** Element title (for identification) */
+  title?: string
+  /** What changed (for 'modified' type) */
+  changes?: {
+    property: string
+    before: unknown
+    after: unknown
+  }[]
+}
+
+/** Represents a window change */
+export interface WindowChange {
+  /** Type of change */
+  type: 'opened' | 'closed' | 'focused' | 'unfocused' | 'moved' | 'resized'
+  /** Window title */
+  title?: string
+  /** Window position (for opened/moved) */
+  position?: [number, number]
+  /** Window size (for opened/resized) */
+  size?: [number, number]
+}
+
+/** Represents a menu change */
+export interface MenuChange {
+  /** Type of change */
+  type: 'opened' | 'closed'
+  /** Menu title */
+  title?: string
+  /** Menu items (for opened) */
+  items?: string[]
+  /** Menu position (for opened) */
+  position?: [number, number]
+}
+
+/** Difference between two state snapshots */
+export interface StateDiff {
+  /** Time between snapshots in milliseconds */
+  timeDeltaMs: number
+
+  /** Whether the focused application changed */
+  applicationChanged: boolean
+  /** Application before (if changed) */
+  applicationBefore?: SnapshotApplication
+  /** Application after (if changed) */
+  applicationAfter?: SnapshotApplication
+
+  /** Whether the focused window changed */
+  windowFocusChanged: boolean
+  /** Focused window before */
+  focusedWindowBefore?: SnapshotWindow
+  /** Focused window after */
+  focusedWindowAfter?: SnapshotWindow
+
+  /** Whether the focused element changed */
+  focusChanged: boolean
+  /** Focused element before */
+  focusedElementBefore?: SnapshotElement
+  /** Focused element after */
+  focusedElementAfter?: SnapshotElement
+
+  /** Whether the element at click position changed */
+  clickedElementChanged: boolean
+  /** Element at click position before */
+  clickedElementBefore?: SnapshotElement
+  /** Element at click position after */
+  clickedElementAfter?: SnapshotElement
+
+  /** Windows that were opened */
+  windowsOpened: WindowChange[]
+  /** Windows that were closed */
+  windowsClosed: WindowChange[]
+  /** Other window changes */
+  windowChanges: WindowChange[]
+
+  /** Menus that were opened */
+  menusOpened: MenuChange[]
+  /** Menus that were closed */
+  menusClosed: MenuChange[]
+
+  /** Summary of what changed (human-readable) */
+  summary: string[]
+}
+
 /** Platform-specific accessibility provider interface */
 export interface AccessibilityProvider {
   /** Platform identifier */
@@ -119,4 +466,6 @@ export interface AccessibilityProvider {
   query(options: AccessibilityQueryOptions): Promise<AccessibilityQueryResult>
   /** Search UI elements by keyword */
   search(options: AccessibilitySearchOptions): Promise<AccessibilitySearchResult>
+  /** Capture a complete UI state snapshot */
+  captureState?(options?: CaptureStateOptions): Promise<StateSnapshot>
 }
