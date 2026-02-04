@@ -103,6 +103,9 @@ export class Agent {
       { role: 'system', content: systemPrompt },
     ]
 
+    // 上一轮的工具执行结果（用于合并到下一轮的 user prompt）
+    let lastToolResults: { toolCall: ToolCall; result: string }[] = []
+
     let stepCount = 0
     let finished = false
 
@@ -161,6 +164,35 @@ export class Agent {
         mouseY: mouseY.toString(),
         focusedWindow,
       })
+
+      // 添加上一轮的工具执行结果
+      if (lastToolResults.length > 0) {
+        userContent += '\n\n## Tool Execution Results\n'
+        for (const { toolCall, result } of lastToolResults) {
+          userContent += `\n### ${toolCall.name}(${JSON.stringify(toolCall.arguments)})\n`
+          // Parse and format the result for better readability
+          try {
+            const parsed = JSON.parse(result)
+            if (parsed.message) {
+              // message 字段包含格式化的反馈，直接显示
+              userContent += parsed.message
+              // 如果还有其他数据，也显示
+              if (parsed.data) {
+                userContent += `\nData: ${JSON.stringify(parsed.data)}`
+              }
+              if (parsed.error) {
+                userContent += `\nError: ${parsed.error}`
+              }
+            } else {
+              userContent += result
+            }
+          } catch {
+            userContent += result
+          }
+        }
+        // 清空，准备下一轮
+        lastToolResults = []
+      }
 
       // 添加提醒
       if (reminder) {
@@ -262,14 +294,13 @@ export class Agent {
         this.steps.push(step)
         await this.saveStep(step)
 
-        // 添加 tool 结果消息
+        // 收集 tool 结果，下一轮合并到 user prompt
         // 过滤掉 success 字段，避免误导 agent（实际成功与否需要看截图）
         const { success: _success, ...resultForAgent } = result
         const hasContent = resultForAgent.data || resultForAgent.message || resultForAgent.error
-        messages.push({
-          role: 'tool',
-          content: hasContent ? JSON.stringify(resultForAgent) : 'done',
-          toolCallId: toolCall.id,
+        lastToolResults.push({
+          toolCall,
+          result: hasContent ? JSON.stringify(resultForAgent) : 'done',
         })
 
         // 检查是否完成
