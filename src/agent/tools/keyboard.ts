@@ -66,12 +66,18 @@ export const typeTool: Tool = {
       await keyboard.pressKey(modKey, Key.V)
       await keyboard.releaseKey(modKey, Key.V)
 
+      // Wait for paste to complete
+      await new Promise(resolve => setTimeout(resolve, 100))
+
       return { success: true, data: { text, method: 'paste' } }
     }
 
     // 简单ASCII文本直接打字
     keyboard.config.autoDelayMs = 10
     await keyboard.type(text)
+
+    // Wait for typing to complete
+    await new Promise(resolve => setTimeout(resolve, 100))
 
     return { success: true, data: { text, method: 'type' } }
   },
