@@ -51,11 +51,23 @@ async function executeWithStateDiff(
     // Execute the click
     await clickFn()
 
-    // Wait a bit for UI to update
-    await new Promise(resolve => setTimeout(resolve, 100))
+    // Initial wait for UI to start updating
+    await new Promise(resolve => setTimeout(resolve, 150))
 
     // Capture state after click
-    const after = await captureState({ x: screenX, y: screenY })
+    let after = await captureState({ x: screenX, y: screenY })
+
+    // If significant change detected (app switch, window open/close), wait longer for UI to stabilize
+    const appChanged = before.focusedApplication?.bundleIdentifier !== after.focusedApplication?.bundleIdentifier
+    const windowCountChanged = before.windows.length !== after.windows.length
+    const spotlightClosed = before.focusedApplication?.title === '聚焦' && after.focusedApplication?.title !== '聚焦'
+
+    if (appChanged || windowCountChanged || spotlightClosed) {
+      // Wait longer for app launch / window animation
+      await new Promise(resolve => setTimeout(resolve, 300))
+      // Re-capture to get stable state
+      after = await captureState({ x: screenX, y: screenY })
+    }
 
     return { before, after }
   } catch (error) {
