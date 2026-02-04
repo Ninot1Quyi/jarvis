@@ -5,6 +5,7 @@ import { systemTools } from './system.js'
 import { fileTools } from './file.js'
 import { todoTools } from './todo.js'
 import { skillTools } from './skill.js'
+import { uiSearchTools } from './ui-search.js'
 import { logger } from '../../utils/logger.js'
 
 export class ToolRegistry {
@@ -14,6 +15,7 @@ export class ToolRegistry {
     // Register all built-in tools
     // Skill tools first - for progressive skill loading
     this.registerTools(skillTools)
+    this.registerTools(uiSearchTools)
     this.registerTools(mouseTools)
     this.registerTools(keyboardTools)
     this.registerTools(systemTools)
@@ -78,3 +80,4 @@ export { systemTools } from './system.js'
 export { fileTools } from './file.js'
 export { todoTools } from './todo.js'
 export { skillTools, setSkillRegistry, getSkillRegistry } from './skill.js'
+export { uiSearchTools } from './ui-search.js'

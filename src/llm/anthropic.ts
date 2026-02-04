@@ -19,6 +19,7 @@ export class AnthropicProvider implements LLMProvider {
   private client: Anthropic
   private model: string
   private nativeToolCall: boolean
+  private lastMessageCount: number = 0  // Track message count for debug logging
 
   constructor(apiKey: string, baseUrl?: string, model?: string, nativeToolCall: boolean = true) {
     this.client = new Anthropic({
@@ -159,6 +160,41 @@ export class AnthropicProvider implements LLMProvider {
       toolCount: anthropicTools.length,
       nativeToolCall: this.nativeToolCall,
     })
+
+    // Log only new messages since last call
+    for (let i = this.lastMessageCount; i < anthropicMessages.length; i++) {
+      const msg = anthropicMessages[i]
+      const role = msg.role.toUpperCase()
+
+      if (typeof msg.content === 'string') {
+        logger.debug(`[MSG ${i}] ${role}: ${msg.content}`)
+      } else if (Array.isArray(msg.content)) {
+        const textParts = msg.content
+          .filter((p): p is Anthropic.TextBlockParam => p.type === 'text')
+          .map(p => p.text)
+          .join(' ')
+        const imageParts = msg.content.filter((p): p is Anthropic.ImageBlockParam => p.type === 'image')
+        const toolUseCount = msg.content.filter(p => p.type === 'tool_use').length
+        const toolResultCount = msg.content.filter(p => p.type === 'tool_result').length
+
+        let suffix = ''
+        if (toolUseCount > 0) suffix += ` [+${toolUseCount} tool_use]`
+        if (toolResultCount > 0) suffix += ` [+${toolResultCount} tool_result]`
+        logger.debug(`[MSG ${i}] ${role}: ${textParts}${suffix}`)
+
+        // Log each image attachment
+        for (let j = 0; j < imageParts.length; j++) {
+          const img = imageParts[j]
+          if (img.source.type === 'base64') {
+            const sizeKB = Math.round(img.source.data.length * 0.75 / 1024)
+            logger.debug(`  [ATTACHMENT ${j}] ${img.source.media_type}, ~${sizeKB}KB`)
+          } else if (img.source.type === 'url') {
+            logger.debug(`  [ATTACHMENT ${j}] URL: ${(img.source as any).url}`)
+          }
+        }
+      }
+    }
+    this.lastMessageCount = anthropicMessages.length
 
     const requestParams: Anthropic.MessageCreateParams = {
       model: this.model,

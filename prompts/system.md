@@ -35,6 +35,19 @@ The skill content will appear in the next message. Plan ahead and combine skill 
 
 **Your clicks must be surgically precise. Every pixel matters.**
 
+### NEVER Guess Coordinates
+
+**CRITICAL: Do NOT estimate or assume UI element positions.** Guessing coordinates like "估算为 [168, 122]" is WRONG and will cause errors.
+
+When you need to click a UI element but are unsure of its exact position:
+1. **Use `find_element` tool** to search for the element by keyword
+2. The tool returns exact coordinates you can use directly
+3. Example: `find_element(keyword: "插入")` → returns `[button] "插入" [85, 122]` → click `[85, 122]`
+
+After each click, the system returns nearby UI elements. Use this feedback to:
+- Verify if you clicked the right element
+- Find the correct position if you missed
+
 ### Visual Target Analysis
 Before clicking ANY element, you MUST:
 1. **Identify the exact visual boundaries** of the target element

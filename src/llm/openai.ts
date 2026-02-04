@@ -58,6 +58,7 @@ export class OpenAIProvider implements LLMProvider {
   protected client: OpenAI
   protected model: string
   protected nativeToolCall: boolean
+  private lastMessageCount: number = 0  // Track message count for debug logging
 
   constructor(apiKey: string, baseUrl?: string, model?: string, nativeToolCall: boolean = true) {
     this.client = new OpenAI({
@@ -184,6 +185,39 @@ export class OpenAIProvider implements LLMProvider {
       messageCount: openaiMessages.length,
       nativeToolCall: this.nativeToolCall,
     })
+
+    // Log only new messages since last call
+    for (let i = this.lastMessageCount; i < openaiMessages.length; i++) {
+      const msg = openaiMessages[i]
+      const role = msg.role.toUpperCase()
+
+      if (typeof msg.content === 'string') {
+        logger.debug(`[MSG ${i}] ${role}: ${msg.content}`)
+      } else if (Array.isArray(msg.content)) {
+        const textParts = msg.content
+          .filter((p): p is OpenAI.ChatCompletionContentPartText => p.type === 'text')
+          .map(p => p.text)
+          .join(' ')
+        const imageParts = msg.content.filter((p): p is OpenAI.ChatCompletionContentPartImage => p.type === 'image_url')
+
+        logger.debug(`[MSG ${i}] ${role}: ${textParts}`)
+
+        // Log each image attachment
+        for (let j = 0; j < imageParts.length; j++) {
+          const img = imageParts[j]
+          const url = img.image_url.url
+          if (url.startsWith('data:')) {
+            const mediaType = url.split(';')[0].replace('data:', '')
+            const base64Length = url.split(',')[1]?.length || 0
+            const sizeKB = Math.round(base64Length * 0.75 / 1024)
+            logger.debug(`  [ATTACHMENT ${j}] ${mediaType}, ~${sizeKB}KB`)
+          } else {
+            logger.debug(`  [ATTACHMENT ${j}] URL: ${url}`)
+          }
+        }
+      }
+    }
+    this.lastMessageCount = openaiMessages.length
 
     if (this.nativeToolCall) {
       return this.chatWithNativeTools(openaiMessages, tools, options)

@@ -20,6 +20,11 @@ config/config.json
 # OS files
 .DS_Store
 
+# Swift build artifacts
+.build/
+*.xcodeproj
+*.xcworkspace
+
 # IDE
 .idea/
 .vscode/

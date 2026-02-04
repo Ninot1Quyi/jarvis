@@ -60,8 +60,9 @@ export interface LLMProvider {
 
 export interface ToolResult {
   success: boolean
-  data?: unknown
+  data?: Record<string, unknown>
   error?: string
+  message?: string  // Additional info to display to the agent
 }
 
 export interface Tool {

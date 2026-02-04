@@ -263,9 +263,12 @@ export class Agent {
         await this.saveStep(step)
 
         // 添加 tool 结果消息
+        // 过滤掉 success 字段，避免误导 agent（实际成功与否需要看截图）
+        const { success: _success, ...resultForAgent } = result
+        const hasContent = resultForAgent.data || resultForAgent.message || resultForAgent.error
         messages.push({
           role: 'tool',
-          content: JSON.stringify(result),
+          content: hasContent ? JSON.stringify(resultForAgent) : 'done',
           toolCallId: toolCall.id,
         })
 

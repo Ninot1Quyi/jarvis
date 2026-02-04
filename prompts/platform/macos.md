@@ -1,5 +1,14 @@
 ## macOS Platform Rules
 
+### Screen Layout
+**IMPORTANT**: macOS has TWO menu areas:
+1. **System Menu Bar** (very top of screen, y ≈ 0-25): Apple menu, app name, File, Edit, View... - **AVOID clicking here** as it opens dropdown menus and may cause the automation to hang
+2. **App Toolbar/Ribbon**: Located INSIDE the application window, below the title bar. Position varies by app.
+
+When targeting app features like "Insert", "Format", etc., look at the **screenshot carefully** to find the toolbar inside the app window, NOT the macOS menu bar at the very top of the screen.
+
+**WARNING**: Clicking the system menu bar (y < 30) will open a dropdown menu and may cause the program to hang. Always use the app's internal toolbar instead.
+
 ### Window Focus Behavior
 **IMPORTANT**: Always check `Focused Window` in the message.
 
@@ -14,11 +23,23 @@ This is macOS system behavior - the first click on an inactive window ONLY bring
 - Common mistakes: `ctrl+c` should be `cmd c`, `ctrl+v` should be `cmd v`
 
 ### System Hotkeys
-- `cmd space` → Spotlight search, type app name, `enter` to launch
+- `cmd space` → Spotlight search (see important note below)
 - `cmd tab` → Switch applications
 - `cmd q` → Quit current application
 - `cmd h` → Hide current window
 - `cmd m` → Minimize current window
+
+### Spotlight Search (cmd space)
+**IMPORTANT**: When using Spotlight to open applications:
+- Always type the **FULL application name** (e.g., "Microsoft Word", "Visual Studio Code", "Google Chrome")
+- If you type a partial name, Spotlight may show files/documents containing that name instead of the application
+- Example: typing "Word" may show Word documents; type "Microsoft Word" to ensure the app appears first
+- After typing, wait briefly for results, then press `enter` to launch
+
+**Selecting results**:
+- Use `arrow keys` + `enter` to quickly select (recommended)
+- Or `double-click` to select and launch
+- Single click only highlights the item, does NOT launch it
 
 ### Text Editing
 - `cmd c/v/x` → Copy/Paste/Cut

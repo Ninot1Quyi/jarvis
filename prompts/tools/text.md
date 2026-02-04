@@ -21,11 +21,14 @@
 - skill: Load a skill to get detailed instructions. Args: {"name": "skill_name"}
 - list_skills: List all available skills with descriptions. Args: {}
 
+### UI Search Tools
+- find_element: Search for UI elements by keyword when unsure about position. Args: {"keyword": "Insert", "max_results": 5}. Use this to find exact coordinates instead of guessing.
+
 ### GUI Tools
-- click: Click at position. Args: {"coordinate": [x, y]}
-- left_double: Double click. Args: {"coordinate": [x, y]}
-- right_single: Right click. Args: {"coordinate": [x, y]}
-- middle_click: Middle click to open link in new tab. Args: {"coordinate": [x, y]}
+- click: Click at position. Args: {"coordinate": [x, y], "desc": "element name"}. The `desc` helps verify if you clicked the right element.
+- left_double: Double click. Args: {"coordinate": [x, y], "desc": "element name"}
+- right_single: Right click. Args: {"coordinate": [x, y], "desc": "element name"}
+- middle_click: Middle click to open link in new tab. Args: {"coordinate": [x, y], "desc": "element name"}
 - drag: Drag from start to end. Args: {"startCoordinate": [x1, y1], "endCoordinate": [x2, y2]}
 - scroll: Scroll at position. Args: {"coordinate": [x, y], "direction": "up|down|left|right"}
 - type: Type text. Supports \\n for newline, \\t for tab. Args: {"text": "line1\\nline2"}
