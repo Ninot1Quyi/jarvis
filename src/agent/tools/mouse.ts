@@ -7,6 +7,10 @@ import {
   searchUIElements,
   formatSearchResultForAgent,
   isAccessibilityAvailable,
+  captureState,
+  diffState,
+  formatDiffForAgent,
+  type StateSnapshot,
 } from '../../accessibility/index.js'
 
 const COORDINATE_FACTOR = 1000
@@ -29,6 +33,38 @@ async function moveMouse(x: number, y: number) {
 }
 
 /**
+ * Capture state before click, execute click, capture state after, return diff
+ */
+async function executeWithStateDiff(
+  screenX: number,
+  screenY: number,
+  clickFn: () => Promise<void>
+): Promise<{ before: StateSnapshot; after: StateSnapshot } | null> {
+  if (!(await isAccessibilityAvailable())) {
+    return null
+  }
+
+  try {
+    // Capture state before click
+    const before = await captureState({ x: screenX, y: screenY })
+
+    // Execute the click
+    await clickFn()
+
+    // Wait a bit for UI to update
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    // Capture state after click
+    const after = await captureState({ x: screenX, y: screenY })
+
+    return { before, after }
+  } catch (error) {
+    logger.debug(`State diff capture failed: ${error}`)
+    return null
+  }
+}
+
+/**
  * Query nearby UI elements and optionally search by desc keyword
  * Append results to the tool result message
  */
@@ -38,7 +74,8 @@ async function appendNearbyElements(
   screenY: number,
   screenWidth: number,
   screenHeight: number,
-  desc?: string
+  desc?: string,
+  stateDiffResult?: { before: StateSnapshot; after: StateSnapshot } | null
 ): Promise<ToolResult> {
   // Check if accessibility is available
   if (!(await isAccessibilityAvailable())) {
@@ -49,6 +86,16 @@ async function appendNearbyElements(
   let message = result.message || ''
 
   try {
+    // If we have state diff, use it to show UI changes
+    if (stateDiffResult) {
+      const diff = diffState(stateDiffResult.before, stateDiffResult.after)
+      const diffInfo = formatDiffForAgent(diff)
+      if (diffInfo) {
+        message += '\n' + diffInfo
+      }
+      logger.debug(`State diff: ${diff.summary.join(', ')}`)
+    }
+
     // Query nearby elements based on click position
     const queryResult = await queryNearbyElements(screenX, screenY, {
       maxElements: 5,
@@ -130,15 +177,18 @@ export const clickTool: Tool = {
 
     logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
 
-    await moveMouse(x, y)
-    await mouse.leftClick()
+    // Execute click with state diff
+    const stateDiffResult = await executeWithStateDiff(x, y, async () => {
+      await moveMouse(x, y)
+      await mouse.leftClick()
+    })
 
     const result: ToolResult = {
       success: true,
       data: { coordinate: coord },
     }
 
-    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc)
+    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc, stateDiffResult)
   },
 }
 
@@ -174,15 +224,18 @@ export const doubleClickTool: Tool = {
 
     logger.debug(`left_double: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
 
-    await moveMouse(x, y)
-    await mouse.doubleClick(0)
+    // Execute double click with state diff
+    const stateDiffResult = await executeWithStateDiff(x, y, async () => {
+      await moveMouse(x, y)
+      await mouse.doubleClick(0)
+    })
 
     const result: ToolResult = {
       success: true,
       data: { coordinate: coord },
     }
 
-    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc)
+    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc, stateDiffResult)
   },
 }
 
@@ -218,15 +271,18 @@ export const rightClickTool: Tool = {
 
     logger.debug(`right_single: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
 
-    await moveMouse(x, y)
-    await mouse.rightClick()
+    // Execute right click with state diff
+    const stateDiffResult = await executeWithStateDiff(x, y, async () => {
+      await moveMouse(x, y)
+      await mouse.rightClick()
+    })
 
     const result: ToolResult = {
       success: true,
       data: { coordinate: coord },
     }
 
-    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc)
+    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc, stateDiffResult)
   },
 }
 
@@ -262,15 +318,18 @@ export const middleClickTool: Tool = {
 
     logger.debug(`middle_click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
 
-    await moveMouse(x, y)
-    await mouse.click(Button.MIDDLE)
+    // Execute middle click with state diff
+    const stateDiffResult = await executeWithStateDiff(x, y, async () => {
+      await moveMouse(x, y)
+      await mouse.click(Button.MIDDLE)
+    })
 
     const result: ToolResult = {
       success: true,
       data: { coordinate: coord },
     }
 
-    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc)
+    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc, stateDiffResult)
   },
 }
 
