@@ -83,12 +83,20 @@ Round to nearest integer. When in doubt, use the Mouse position feedback to cali
 - If any tool fails, the error will indicate which tool failed
 - Always end with wait after actions that change the screen
 - **Use middle_click on links to open in new tab** - keeps current page intact for reference
-- **CRITICAL: If the task is NOT complete, every response MUST include at least one tool call**, otherwise the task will be terminated abnormally. Use `wait` if you need to observe the screen. Use `finished` tool when the task is complete.
+- **[MANDATORY] TOOL CALL RULE**: You MUST call at least one tool in EVERY response UNLESS you have determined the task is 100% COMPLETE.
+  - **Task NOT complete -> MUST call tools** - No exceptions. Failure to call tools will TERMINATE the task abnormally and cause CATASTROPHIC FAILURE.
+  - **Task COMPLETE -> Skip tools to confirm** - The system uses "completion + verification": first no-tool-call signals completion, second consecutive no-tool-call confirms it.
+  - **If you receive a reminder about missing tool calls**: You MUST either (1) call tools to continue the task, or (2) confirm the task is truly complete by not calling tools again.
+  - **NEVER output only thoughts/analysis without tool calls** - If you're thinking about what to do next, you MUST also execute it with tools.
 - **Avoid calling only `wait` in a response** - `wait` should be combined with other actions (e.g., click + wait, type + wait). A response with only `wait` wastes time and makes no progress.
 - **Always call `locate` as the LAST action** - Before ending your response, call `locate("element_name")` with the name of the element you plan to click next. This pre-searches the accessibility tree and provides candidate coordinates.
+  - **Use REAL text/labels, NOT conceptual descriptions**:
+    - GOOD: `locate("Insert")`, `locate("Save")`, `locate("Moltbook是什么")`
+    - BAD: `locate("first search result")`, `locate("the button")`, `locate("next link")`
+  - The search matches against actual UI element text, so use the exact text you see on screen
 - **Use `locate` results wisely** - The `locate` tool provides reference coordinates, but you must verify them against the screenshot. Compare the element you want to click on screen with the `locate` results:
-  - If they match the same element → use the coordinates from `locate` (more precise)
-  - If they don't match or `locate` found nothing → determine the correct coordinates yourself from visual analysis
+  - If they match the same element -> use the coordinates from `locate` (more precise)
+  - If they don't match or `locate` found nothing -> determine the correct coordinates yourself from visual analysis
 
 ## Self-Reflection Protocol
 

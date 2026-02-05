@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type {
-  LLMProvider,
   Message,
   ImageInput,
   ToolDefinition,
@@ -8,20 +7,20 @@ import type {
   ChatResponse,
   ToolCall,
 } from '../types.js'
-import { logger } from '../utils/logger.js'
+import { BaseLLMProvider } from './base.js'
 import { parseToolCallsFromText } from '../agent/tools/utils/parseToolCalls.js'
 import * as fs from 'fs'
 
 type MediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 
-export class AnthropicProvider implements LLMProvider {
+export class AnthropicProvider extends BaseLLMProvider {
   name = 'anthropic'
   private client: Anthropic
   private model: string
   private nativeToolCall: boolean
-  private lastMessageCount: number = 0  // Track message count for debug logging
 
   constructor(apiKey: string, baseUrl?: string, model?: string, nativeToolCall: boolean = true) {
+    super()
     this.client = new Anthropic({
       apiKey,
       baseURL: baseUrl,
@@ -30,7 +29,7 @@ export class AnthropicProvider implements LLMProvider {
     this.nativeToolCall = nativeToolCall
   }
 
-  async chatWithVisionAndTools(
+  protected async doChat(
     messages: Message[],
     images: ImageInput[],
     tools: ToolDefinition[],
@@ -154,77 +153,6 @@ export class AnthropicProvider implements LLMProvider {
       },
     })) : []
 
-    logger.debug('Calling Anthropic API', {
-      model: this.model,
-      messageCount: anthropicMessages.length,
-      toolCount: anthropicTools.length,
-      nativeToolCall: this.nativeToolCall,
-    })
-
-    // Log only new messages since last call
-    // ANSI colors: orange for ASSISTANT, green for USER, gray for others
-    const roleColors: Record<string, string> = {
-      assistant: '\x1b[38;5;208m',  // orange
-      user: '\x1b[32m',             // green
-      system: '\x1b[90m',           // gray
-      tool: '\x1b[90m',             // gray
-    }
-    const RESET = '\x1b[0m'
-
-    for (let i = this.lastMessageCount; i < anthropicMessages.length; i++) {
-      const msg = anthropicMessages[i]
-      const role = msg.role.toUpperCase()
-      const color = roleColors[msg.role] || '\x1b[0m'
-
-      // Helper to format content for display (handle escaped newlines)
-      const formatContent = (content: string): string => {
-        // Parse JSON strings to handle escaped characters
-        try {
-          // If it looks like JSON, try to parse and re-stringify with proper formatting
-          if (content.startsWith('{') || content.startsWith('[')) {
-            const parsed = JSON.parse(content)
-            return JSON.stringify(parsed, null, 2)
-          }
-        } catch {
-          // Not JSON, continue
-        }
-        // Replace literal \n with actual newlines for display
-        return content.replace(/\\n/g, '\n')
-      }
-
-      if (typeof msg.content === 'string') {
-        const content = formatContent(msg.content)
-        logger.debug(`${color}[MSG ${i}] ${role}:\n${content}${RESET}`)
-      } else if (Array.isArray(msg.content)) {
-        const textParts = msg.content
-          .filter((p): p is Anthropic.TextBlockParam => p.type === 'text')
-          .map(p => p.text)
-          .join('\n')
-        const imageParts = msg.content.filter((p): p is Anthropic.ImageBlockParam => p.type === 'image')
-        const toolUseCount = msg.content.filter(p => p.type === 'tool_use').length
-        const toolResultCount = msg.content.filter(p => p.type === 'tool_result').length
-
-        let suffix = ''
-        if (toolUseCount > 0) suffix += ` [+${toolUseCount} tool_use]`
-        if (toolResultCount > 0) suffix += ` [+${toolResultCount} tool_result]`
-
-        const content = formatContent(textParts)
-        logger.debug(`${color}[MSG ${i}] ${role}:\n${content}${suffix}${RESET}`)
-
-        // Log each image attachment
-        for (let j = 0; j < imageParts.length; j++) {
-          const img = imageParts[j]
-          if (img.source.type === 'base64') {
-            const sizeKB = Math.round(img.source.data.length * 0.75 / 1024)
-            logger.debug(`${color}  [ATTACHMENT ${j}] ${img.source.media_type}, ~${sizeKB}KB${RESET}`)
-          } else if (img.source.type === 'url') {
-            logger.debug(`${color}  [ATTACHMENT ${j}] URL: ${(img.source as any).url}${RESET}`)
-          }
-        }
-      }
-    }
-    this.lastMessageCount = anthropicMessages.length
-
     const requestParams: Anthropic.MessageCreateParams = {
       model: this.model,
       max_tokens: options?.maxTokens || 4096,
@@ -254,23 +182,6 @@ export class AnthropicProvider implements LLMProvider {
           arguments: block.input as Record<string, unknown>,
         })
       }
-    }
-
-    // Log ASSISTANT response
-    {
-      const ORANGE = '\x1b[38;5;208m'
-      const RESET = '\x1b[0m'
-      let assistantLog = `${ORANGE}[MSG ${this.lastMessageCount}] ASSISTANT:\n`
-      if (content) {
-        assistantLog += content
-      }
-      // Only show [Tools: ...] for native tool call mode (text mode already has <Action> in content)
-      if (this.nativeToolCall && toolCalls.length > 0) {
-        const toolsStr = toolCalls.map(tc => `${tc.name}(${JSON.stringify(tc.arguments)})`).join(', ')
-        assistantLog += `${content ? '\n' : ''}[Tools: ${toolsStr}]`
-      }
-      assistantLog += RESET
-      logger.debug(assistantLog)
     }
 
     // If not using native tool call, parse tool calls from text

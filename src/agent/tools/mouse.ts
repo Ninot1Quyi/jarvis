@@ -89,7 +89,8 @@ async function appendNearbyElements(
   screenWidth: number,
   screenHeight: number,
   desc?: string,
-  stateDiffResult?: { before: StateSnapshot; after: StateSnapshot } | null
+  stateDiffResult?: { before: StateSnapshot; after: StateSnapshot } | null,
+  options?: { skipNoChangeWarning?: boolean }
 ): Promise<ToolResult> {
   // Check if accessibility is available
   if (!(await isAccessibilityAvailable())) {
@@ -132,9 +133,13 @@ async function appendNearbyElements(
     // If we have state diff, use it to show UI changes
     if (stateDiffResult) {
       const diff = diffState(stateDiffResult.before, stateDiffResult.after)
-      const diffInfo = formatDiffForAgent(diff)
-      if (diffInfo) {
-        message += '\n' + diffInfo
+      // Skip "no changes" warning for middle_click (opens tab in background, no focus change expected)
+      const isNoChange = diff.summary.length === 1 && diff.summary[0] === 'No significant UI changes detected'
+      if (!isNoChange || !options?.skipNoChangeWarning) {
+        const diffInfo = formatDiffForAgent(diff)
+        if (diffInfo) {
+          message += '\n' + diffInfo
+        }
       }
       logger.debug(`State diff: ${diff.summary.join(', ')}`)
     }
@@ -171,7 +176,7 @@ async function appendNearbyElements(
           message += '\n' + searchInfo
         }
       } else if (searchResult.success && searchResult.results.length === 0) {
-        message += `\n⚠ No UI element found matching "${desc}". The target may not exist or have a different name.`
+        message += `\n[WARNING] No UI element found matching "${desc}". The target may not exist or have a different name.`
       }
     }
   } catch (error) {
@@ -410,7 +415,8 @@ export const middleClickTool: Tool = {
       data: { coordinate: coord },
     }
 
-    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc, stateDiffResult)
+    // Skip "no changes" warning for middle_click - it opens tabs in background without focus change
+    return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc, stateDiffResult, { skipNoChangeWarning: true })
   },
 }
 

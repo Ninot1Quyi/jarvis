@@ -2,6 +2,58 @@
  * macOS Accessibility Provider
  *
  * Uses AXUIElement API via a Swift CLI tool to query UI elements.
+ *
+ * =============================================================================
+ * IMPLEMENTATION STATUS - UI Change Detection
+ * =============================================================================
+ *
+ * The following changes should be detected in captureState() and diffState():
+ *
+ * ## 1. Container-level Changes
+ * - [x] Application change (focused app switched)
+ * - [x] Window changes (opened, closed, focus changed)
+ * - [x] Menu changes (opened, closed)
+ * - [ ] Dialog/Sheet changes (AXSheet, AXDialog subrole) - TODO
+ * - [ ] Popover changes (AXPopover) - TODO
+ * - [ ] Drawer changes (AXDrawer) - TODO
+ *
+ * ## 2. Tab/Navigation Changes (CRITICAL for browsers)
+ * - [ ] Tab changes (AXTabGroup, AXTabs attribute) - TODO: PRIORITY HIGH
+ *       This is needed to detect browser tab open/close/switch
+ * - [ ] Browser column changes (AXBrowser, AXColumns) - TODO
+ *
+ * ## 3. Focus/Selection Changes
+ * - [x] Focused element change (AXFocusedUIElement)
+ * - [x] Element at click point change
+ * - [ ] Selected children change (AXSelectedChildren) - TODO
+ * - [ ] Selected rows change (AXSelectedRows) - TODO
+ * - [ ] Selected cells change (AXSelectedCells) - TODO
+ *
+ * ## 4. State Changes
+ * - [ ] Expanded/Collapsed state (AXExpanded) - TODO
+ * - [ ] Disclosing state (AXDisclosing) - TODO
+ * - [ ] Enabled/Disabled state (AXEnabled) - TODO
+ * - [ ] Busy/Loading state (AXElementBusy) - TODO
+ * - [ ] Minimized state (AXMinimized) - TODO
+ * - [ ] Modal state (AXModal) - TODO
+ *
+ * ## 5. Value Changes
+ * - [ ] Value change (AXValue) - TODO
+ * - [ ] Selected text change (AXSelectedText) - TODO
+ *
+ * ## macOS AX Attributes Reference
+ * - AXTabs: Array of tab elements in AXTabGroup
+ * - AXSelectedChildren: Currently selected child elements
+ * - AXExpanded: Boolean for disclosure state
+ * - AXElementBusy: Boolean for loading state
+ * - AXModal: Boolean for modal dialogs
+ * - AXSheet: Role for sheet dialogs
+ * - AXPopover: Role for popover windows
+ *
+ * Reference: /Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/
+ *            System/Library/Frameworks/ApplicationServices.framework/
+ *            Frameworks/HIServices.framework/Headers/AXAttributeConstants.h
+ * =============================================================================
  */
 
 import { spawn } from 'child_process'

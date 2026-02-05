@@ -49,6 +49,7 @@ export class Agent {
   private roundClickIndex: number = 0  // 当前写入位置
   private nativeToolCall: boolean = true  // 是否使用原生工具调用
   private skillComposer: PromptComposer | null = null  // Skills系统
+  private noToolCallCount: number = 0  // Track consecutive no-tool-call rounds
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -254,9 +255,33 @@ export class Agent {
 
       // 判断是否有工具调用
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        logger.info('No tool call, stopping')
-        break
+        this.noToolCallCount++
+
+        if (this.noToolCallCount >= 2) {
+          // Two consecutive no-tool-call rounds, stop
+          logger.info('No tool call for 2 consecutive rounds, stopping')
+          break
+        } else {
+          // First no-tool-call, add reminder and continue
+          logger.info('No tool call (1st time), adding reminder and continuing')
+          lastToolResults.push({
+            toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
+            result: JSON.stringify({
+              message: `<reminder>[CRITICAL] No tool was called in your previous response!
+
+If the task is COMPLETE: You may skip tools again to confirm completion.
+
+If the task is NOT COMPLETE: You MUST call at least one tool NOW. Failure to do so will TERMINATE the task and cause CATASTROPHIC FAILURE.
+
+DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder>`
+            })
+          })
+          continue
+        }
       }
+
+      // Reset counter when tools are called
+      this.noToolCallCount = 0
 
       // 记录本轮的点击坐标
       const currentRoundClicks: number[][] = []
@@ -374,7 +399,7 @@ export class Agent {
         const dy = Math.abs(coord1[1] - coord2[1])
 
         if (dx <= threshold && dy <= threshold) {
-          return `⚠ You have clicked the same position [${coord1[0]}, ${coord1[1]}] for two consecutive rounds. Please try a different approach:
+          return `[WARNING] You have clicked the same position [${coord1[0]}, ${coord1[1]}] for two consecutive rounds. Please try a different approach:
 1. If single click doesn't work, try double-click (left_double) or right-click (right_single)
 2. The click position may be slightly off - use find_element to locate the exact coordinates
 3. The element may require a different interaction method (e.g., hotkey, type)

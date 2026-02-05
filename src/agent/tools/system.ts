@@ -17,11 +17,24 @@ async function getScreenLogicalSize(): Promise<{ width: number; height: number }
   }
 }
 
-// 使用 nut-js 截图（跨平台）
+// 使用 macOS screencapture 截图（包含鼠标光标）
+// IMPORTANT: Screenshots MUST include the mouse cursor for LLM to calibrate click positions
 async function captureScreen(filepath: string): Promise<void> {
-  const { screen, saveImage } = await import('@computer-use/nut-js')
-  const image = await screen.grab()
-  await saveImage({ image, path: filepath })
+  const os = await import('os')
+  if (os.platform() === 'darwin') {
+    // macOS: use screencapture with -C (include cursor) and -x (no sound)
+    const { exec } = await import('child_process')
+    const { promisify } = await import('util')
+    const execAsync = promisify(exec)
+    await execAsync(`screencapture -C -x "${filepath}"`)
+  } else {
+    // TODO: Other platforms - MUST include mouse cursor in screenshot
+    // Windows: consider using PowerShell or native API that captures cursor
+    // Linux: consider using scrot with cursor option or similar
+    const { screen, saveImage } = await import('@computer-use/nut-js')
+    const image = await screen.grab()
+    await saveImage({ image, path: filepath })
+  }
 }
 
 export const screenshotTool: Tool = {

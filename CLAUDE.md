@@ -168,7 +168,7 @@ GUI coordinates use normalized [0, 1000] range. (0,0) = top-left, (1000,1000) = 
 
    \```text
    【核心判断】
-   ✅ 值得做：[原因] / ❌ 不值得做：[原因]
+   [YES] 值得做：[原因] / [NO] 不值得做：[原因]
 
    【关键洞察】
    \- 数据结构：[最关键的数据关系]
@@ -195,7 +195,7 @@ GUI coordinates use normalized [0, 1000] range. (0,0) = top-left, (1000,1000) = 
 
    \```text
    【品味评分】
-   🟢 好品味 / 🟡 凑合 / 🔴 垃圾
+   [GOOD] 好品味 / [OK] 凑合 / [BAD] 垃圾
 
    【致命问题】
    \- [如果有，直接指出最糟糕的部分]
@@ -227,6 +227,8 @@ GUI coordinates use normalized [0, 1000] range. (0,0) = top-left, (1000,1000) = 
     - `/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/.../HIServices.framework/Headers/AXRoleConstants.h`
     - `/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/.../HIServices.framework/Headers/AXActionConstants.h`
   - 手动定义部分内容会导致遗漏，造成功能不完整或难以维护
+
+7.**禁止使用 Emoji**：不要在代码、日志、prompt、注释中添加任何 emoji 符号。保持专业和简洁。
 
 </IMPORTANT>
 

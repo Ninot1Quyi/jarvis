@@ -2,6 +2,7 @@
 
 import { Agent } from '../agent/Agent.js'
 import { logger } from '../utils/logger.js'
+import { traceLogger } from '../utils/trace.js'
 
 async function main() {
   const args = process.argv.slice(2)
@@ -56,7 +57,11 @@ async function main() {
     process.exit(0)
   }
 
+  // Always enable trace logging
+  traceLogger.enable()
+
   console.log('[JARVIS] Starting...\n')
+  console.log(`[TRACE] ${traceLogger.getTracePath()}\n`)
   if (provider) {
     console.log(`[CONFIG] Provider: ${provider}\n`)
   }
@@ -93,6 +98,9 @@ Options:
   --doubao               Use Doubao
   -v, --verbose          Show debug output
   -h, --help             Show this help
+
+Trace:
+  Conversation traces are automatically saved to data/traces/
 
 Configuration:
   Edit config/key.json to set API keys and model names.

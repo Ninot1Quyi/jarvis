@@ -1,5 +1,3 @@
-# User Message Template
-
 ## 当前任务
 
 {{task}}

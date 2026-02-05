@@ -163,7 +163,7 @@ export function formatResultForAgent(
   const [, clickY] = result.queryPosition
   const menuBarThreshold = 30
   if (clickY < menuBarThreshold && process.platform === 'darwin') {
-    lines.push('  ⚠ WARNING: You clicked the macOS system menu bar. Use the app\'s internal toolbar instead.')
+    lines.push('  [WARNING] You clicked the macOS system menu bar. Use the app\'s internal toolbar instead.')
   }
 
   for (const el of result.nearbyElements) {
@@ -462,7 +462,7 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
 export function formatDiffForAgent(diff: StateDiff): string {
   if (diff.summary.length === 1 && diff.summary[0] === 'No significant UI changes detected') {
     return `<reminder>
-⚠ The previous action did NOT produce any GUI changes. Please analyze:
+[WARNING] The previous action did NOT produce any GUI changes. Please analyze:
 1. Did you click the correct position? Check if the target element exists at that coordinate.
 2. Was the click type correct? (single click vs double click vs right click)
 3. Is the element clickable? Some elements may be disabled or non-interactive.
