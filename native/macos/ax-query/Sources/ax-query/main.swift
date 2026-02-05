@@ -677,7 +677,10 @@ func findSheets(_ window: AXUIElement) -> [SheetInfo] {
 
         // AXSheet is a modal dialog attached to a window
         // AXDialog subrole also indicates a dialog
-        if role == "AXSheet" || subrole == "AXDialog" || subrole == "AXSystemDialog" {
+        // AXPopover is a popover window
+        // AXDrawer is a drawer panel
+        if role == "AXSheet" || role == "AXPopover" || role == "AXDrawer" ||
+           subrole == "AXDialog" || subrole == "AXSystemDialog" {
             let title = getStringAttribute(element, kAXTitleAttribute)
             let identifier = getStringAttribute(element, kAXIdentifierAttribute)
             let isModal = getBoolAttribute(element, "AXModal") ?? (role == "AXSheet")

@@ -578,6 +578,47 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     }
   }
 
+  // Value change detection (for text fields, etc.)
+  let valueChanged = false
+  let valueBefore: string | undefined
+  let valueAfter: string | undefined
+
+  if (before.focusedElement && after.focusedElement) {
+    const beforeValue = before.focusedElement.value
+    const afterValue = after.focusedElement.value
+
+    if (beforeValue !== afterValue) {
+      valueChanged = true
+      valueBefore = beforeValue
+      valueAfter = afterValue
+
+      const elementDesc = describeElement(after.focusedElement)
+      // Truncate long values for summary
+      const beforeShort = beforeValue ? (beforeValue.length > 20 ? beforeValue.slice(0, 20) + '...' : beforeValue) : 'empty'
+      const afterShort = afterValue ? (afterValue.length > 20 ? afterValue.slice(0, 20) + '...' : afterValue) : 'empty'
+      summary.push(`Value changed: ${elementDesc} "${beforeShort}"->"${afterShort}"`)
+    }
+  }
+
+  // Enabled state change detection
+  let enabledChanged = false
+  let enabledBefore: boolean | undefined
+  let enabledAfter: boolean | undefined
+
+  if (before.focusedElement && after.focusedElement) {
+    const beforeEnabled = before.focusedElement.enabled
+    const afterEnabled = after.focusedElement.enabled
+
+    if (beforeEnabled !== afterEnabled && (beforeEnabled !== undefined || afterEnabled !== undefined)) {
+      enabledChanged = true
+      enabledBefore = beforeEnabled
+      enabledAfter = afterEnabled
+
+      const elementDesc = describeElement(after.focusedElement)
+      summary.push(`Enabled: ${elementDesc} ${beforeEnabled ?? 'undefined'}->${afterEnabled ?? 'undefined'}`)
+    }
+  }
+
   // If nothing changed, note that
   if (summary.length === 0) {
     summary.push('No significant UI changes detected')
@@ -615,6 +656,12 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     expandedBefore: expandedChanged ? expandedBefore : undefined,
     expandedAfter: expandedChanged ? expandedAfter : undefined,
     expandedElement: expandedChanged ? expandedElement : undefined,
+    valueChanged,
+    valueBefore: valueChanged ? valueBefore : undefined,
+    valueAfter: valueChanged ? valueAfter : undefined,
+    enabledChanged,
+    enabledBefore: enabledChanged ? enabledBefore : undefined,
+    enabledAfter: enabledChanged ? enabledAfter : undefined,
     summary,
   }
 }

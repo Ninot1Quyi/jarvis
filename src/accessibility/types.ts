@@ -554,6 +554,20 @@ export interface StateDiff {
   /** Whether the window state changed (minimized/modal) */
   windowStateChanged: boolean
 
+  /** Whether focused element value changed */
+  valueChanged: boolean
+  /** Value before (if changed) */
+  valueBefore?: string
+  /** Value after (if changed) */
+  valueAfter?: string
+
+  /** Whether focused element enabled state changed */
+  enabledChanged: boolean
+  /** Enabled state before (if changed) */
+  enabledBefore?: boolean
+  /** Enabled state after (if changed) */
+  enabledAfter?: boolean
+
   /** Summary of what changed (human-readable) */
   summary: string[]
 }
