@@ -14,13 +14,13 @@
  * - [x] Window changes (opened, closed, focus changed)
  * - [x] Menu changes (opened, closed)
  * - [x] Dialog/Sheet changes (AXSheet, AXDialog subrole)
- * - [ ] Popover changes (AXPopover) - TODO
- * - [ ] Drawer changes (AXDrawer) - TODO
+ * - [x] Popover changes (AXPopover)
+ * - [x] Drawer changes (AXDrawer)
  *
  * ## 2. Tab/Navigation Changes (CRITICAL for browsers)
  * - [x] Tab changes (AXTabGroup, AXRadioButton tabs)
  * - [x] Active tab change detection
- * - [ ] Browser column changes (AXBrowser, AXColumns) - TODO
+ * - [ ] Browser column changes (AXBrowser, AXColumns) - Low priority, Finder specific
  *
  * ## 3. Focus/Selection Changes
  * - [x] Focused element change (AXFocusedUIElement)
@@ -32,13 +32,13 @@
  * ## 4. State Changes
  * - [x] Expanded/Collapsed state (AXExpanded)
  * - [x] Disclosing state (AXDisclosing)
- * - [ ] Enabled/Disabled state (AXEnabled) - TODO
+ * - [x] Enabled/Disabled state (AXEnabled)
  * - [x] Busy/Loading state (AXElementBusy)
  * - [x] Minimized state (AXMinimized)
  * - [x] Modal state (AXModal)
  *
  * ## 5. Value Changes
- * - [ ] Value change (AXValue) - TODO
+ * - [x] Value change (AXValue)
  * - [ ] Selected text change (AXSelectedText) - TODO
  *
  * ## macOS AX Attributes Reference
@@ -76,6 +76,7 @@ import type {
   SnapshotApplication,
   SnapshotTab,
   SnapshotSheet,
+  SnapshotSelection,
 } from '../types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -217,6 +218,14 @@ interface RawSheetInfo {
   height?: number
 }
 
+/** Raw selection info from Swift CLI */
+interface RawSelectionInfo {
+  elementRole: string
+  elementTitle?: string
+  selectedCount: number
+  selectedTitles: string[]
+}
+
 /** Raw application info from Swift CLI */
 interface RawApplicationInfo {
   title?: string
@@ -239,6 +248,7 @@ interface RawSnapshotResponse {
   openMenus: RawMenuInfo[]
   tabs?: RawTabInfo[]
   sheets?: RawSheetInfo[]
+  selections?: RawSelectionInfo[]
   queryTimeMs: number
 }
 
@@ -352,6 +362,15 @@ function transformSheet(raw: RawSheetInfo): SnapshotSheet {
     y: raw.y,
     width: raw.width,
     height: raw.height,
+  }
+}
+
+function transformSelection(raw: RawSelectionInfo): SnapshotSelection {
+  return {
+    elementRole: raw.elementRole,
+    elementTitle: raw.elementTitle,
+    selectedCount: raw.selectedCount,
+    selectedTitles: raw.selectedTitles,
   }
 }
 
@@ -608,6 +627,7 @@ export class MacOSAccessibilityProvider implements AccessibilityProvider {
             openMenus: (raw.openMenus || []).map(transformMenu),
             tabs: raw.tabs ? raw.tabs.map(transformTab) : undefined,
             sheets: raw.sheets ? raw.sheets.map(transformSheet) : undefined,
+            selections: raw.selections ? raw.selections.map(transformSelection) : undefined,
             queryTimeMs,
           }
 

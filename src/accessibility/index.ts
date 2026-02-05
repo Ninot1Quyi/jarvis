@@ -619,6 +619,43 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     }
   }
 
+  // Selection change detection
+  let selectionChanged = false
+  let selectionCountBefore: number | undefined
+  let selectionCountAfter: number | undefined
+  let selectionTitlesBefore: string[] | undefined
+  let selectionTitlesAfter: string[] | undefined
+
+  const beforeSelections = before.selections || []
+  const afterSelections = after.selections || []
+
+  // Compare first selection (most common case)
+  const beforeSel = beforeSelections[0]
+  const afterSel = afterSelections[0]
+
+  if (beforeSel || afterSel) {
+    const beforeCount = beforeSel?.selectedCount ?? 0
+    const afterCount = afterSel?.selectedCount ?? 0
+    const beforeTitles = beforeSel?.selectedTitles ?? []
+    const afterTitles = afterSel?.selectedTitles ?? []
+
+    // Check if selection changed
+    if (beforeCount !== afterCount ||
+        JSON.stringify(beforeTitles) !== JSON.stringify(afterTitles)) {
+      selectionChanged = true
+      selectionCountBefore = beforeCount
+      selectionCountAfter = afterCount
+      selectionTitlesBefore = beforeTitles
+      selectionTitlesAfter = afterTitles
+
+      if (beforeCount !== afterCount) {
+        summary.push(`Selection: ${beforeCount} -> ${afterCount} items`)
+      } else {
+        summary.push(`Selection changed: ${afterTitles.slice(0, 3).join(', ')}${afterTitles.length > 3 ? '...' : ''}`)
+      }
+    }
+  }
+
   // If nothing changed, note that
   if (summary.length === 0) {
     summary.push('No significant UI changes detected')
@@ -662,6 +699,11 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     enabledChanged,
     enabledBefore: enabledChanged ? enabledBefore : undefined,
     enabledAfter: enabledChanged ? enabledAfter : undefined,
+    selectionChanged,
+    selectionCountBefore: selectionChanged ? selectionCountBefore : undefined,
+    selectionCountAfter: selectionChanged ? selectionCountAfter : undefined,
+    selectionTitlesBefore: selectionChanged ? selectionTitlesBefore : undefined,
+    selectionTitlesAfter: selectionChanged ? selectionTitlesAfter : undefined,
     summary,
   }
 }

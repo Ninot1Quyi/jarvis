@@ -568,6 +568,17 @@ export interface StateDiff {
   /** Enabled state after (if changed) */
   enabledAfter?: boolean
 
+  /** Whether selection changed */
+  selectionChanged: boolean
+  /** Selection count before */
+  selectionCountBefore?: number
+  /** Selection count after */
+  selectionCountAfter?: number
+  /** Selected titles before */
+  selectionTitlesBefore?: string[]
+  /** Selected titles after */
+  selectionTitlesAfter?: string[]
+
   /** Summary of what changed (human-readable) */
   summary: string[]
 }

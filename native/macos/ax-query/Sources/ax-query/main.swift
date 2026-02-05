@@ -102,6 +102,13 @@ struct SheetInfo: Codable {
     let height: Double?
 }
 
+struct SelectionInfo: Codable {
+    let elementRole: String
+    let elementTitle: String?
+    let selectedCount: Int
+    let selectedTitles: [String]
+}
+
 struct ApplicationInfo: Codable {
     let title: String?
     let bundleIdentifier: String?
@@ -122,6 +129,7 @@ struct SnapshotResponse: Codable {
     let openMenus: [MenuInfo]
     let tabs: [TabInfo]?
     let sheets: [SheetInfo]?
+    let selections: [SelectionInfo]?
     let queryTimeMs: Double
 }
 
@@ -710,6 +718,63 @@ func findSheets(_ window: AXUIElement) -> [SheetInfo] {
     return sheets
 }
 
+func findSelections(_ window: AXUIElement) -> [SelectionInfo] {
+    var selections: [SelectionInfo] = []
+
+    func findSelectionsRecursive(_ element: AXUIElement, depth: Int) {
+        guard depth < 15 else { return }
+
+        let role = getStringAttribute(element, kAXRoleAttribute) ?? ""
+
+        // Check for elements that can have selections
+        // AXTable, AXList, AXOutline, AXBrowser can have selected rows/children
+        if role == "AXTable" || role == "AXList" || role == "AXOutline" || role == "AXBrowser" {
+            // Try AXSelectedRows first (for tables/outlines)
+            var selectedTitles: [String] = []
+            var selectedCount = 0
+
+            let selectedRows = getElementArrayAttribute(element, kAXSelectedRowsAttribute as String)
+            if !selectedRows.isEmpty {
+                selectedCount = selectedRows.count
+                for row in selectedRows.prefix(10) {  // Limit to first 10 for performance
+                    if let title = getStringAttribute(row, kAXTitleAttribute) ?? getStringAttribute(row, kAXDescriptionAttribute) {
+                        selectedTitles.append(title)
+                    }
+                }
+            } else {
+                // Try AXSelectedChildren (for lists)
+                let selectedChildren = getElementArrayAttribute(element, kAXSelectedChildrenAttribute as String)
+                if !selectedChildren.isEmpty {
+                    selectedCount = selectedChildren.count
+                    for child in selectedChildren.prefix(10) {
+                        if let title = getStringAttribute(child, kAXTitleAttribute) ?? getStringAttribute(child, kAXDescriptionAttribute) {
+                            selectedTitles.append(title)
+                        }
+                    }
+                }
+            }
+
+            if selectedCount > 0 {
+                let title = getStringAttribute(element, kAXTitleAttribute)
+                selections.append(SelectionInfo(
+                    elementRole: role,
+                    elementTitle: title,
+                    selectedCount: selectedCount,
+                    selectedTitles: selectedTitles
+                ))
+            }
+        }
+
+        // Continue searching in children
+        for child in getChildren(element) {
+            findSelectionsRecursive(child, depth: depth + 1)
+        }
+    }
+
+    findSelectionsRecursive(window, depth: 0)
+    return selections
+}
+
 func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> SnapshotResponse {
     let startTime = Date()
     let systemWide = AXUIElementCreateSystemWide()
@@ -731,6 +796,7 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
             openMenus: [],
             tabs: nil,
             sheets: nil,
+            selections: nil,
             queryTimeMs: Date().timeIntervalSince(startTime) * 1000
         )
     }
@@ -785,6 +851,12 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
         sheets.append(contentsOf: findSheets(window))
     }
 
+    // Find selections in focused window
+    var selections: [SelectionInfo] = []
+    if let focusedWindow = focusedWindowRef {
+        selections = findSelections(focusedWindow)
+    }
+
     return SnapshotResponse(
         success: true,
         error: nil,
@@ -797,6 +869,7 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
         openMenus: openMenus,
         tabs: tabs,
         sheets: sheets.isEmpty ? nil : sheets,
+        selections: selections.isEmpty ? nil : selections,
         queryTimeMs: Date().timeIntervalSince(startTime) * 1000
     )
 }
