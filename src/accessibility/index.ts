@@ -362,6 +362,58 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     }
   }
 
+  // Busy state change detection
+  const beforeBusy = before.focusedElement?.busy ?? false
+  const afterBusy = after.focusedElement?.busy ?? false
+  const busyStateChanged = beforeBusy !== afterBusy
+
+  if (busyStateChanged) {
+    if (afterBusy) {
+      summary.push('Loading started')
+    } else {
+      summary.push('Loading finished')
+    }
+  }
+
+  // Window state change detection (minimized/modal)
+  let windowStateChanged = false
+
+  // Check minimized state change on focused window
+  const beforeMinimized = before.focusedWindow?.isMinimized ?? false
+  const afterMinimized = after.focusedWindow?.isMinimized ?? false
+  if (beforeMinimized !== afterMinimized) {
+    windowStateChanged = true
+    if (afterMinimized) {
+      summary.push('Window minimized')
+    } else {
+      summary.push('Window restored')
+    }
+  }
+
+  // Check modal state on focused window
+  const beforeModal = before.focusedWindow?.isModal ?? false
+  const afterModal = after.focusedWindow?.isModal ?? false
+  if (beforeModal !== afterModal) {
+    windowStateChanged = true
+    if (afterModal) {
+      summary.push('Modal dialog active')
+    }
+  }
+
+  // Also check if any window in the list became modal
+  for (const w of after.windows) {
+    if (w.isModal) {
+      const beforeWindow = before.windows.find(bw => bw.identifier === w.identifier || bw.title === w.title)
+      if (!beforeWindow?.isModal) {
+        windowStateChanged = true
+        if (!afterModal) { // Avoid duplicate message
+          summary.push(`Modal dialog active: ${w.title || 'untitled'}`)
+        }
+        break
+      }
+    }
+  }
+
   // Window changes
   const beforeWindowTitles = new Set(before.windows.map(w => w.title || w.identifier || ''))
   const afterWindowTitles = new Set(after.windows.map(w => w.title || w.identifier || ''))
@@ -444,6 +496,8 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     clickedElementChanged,
     clickedElementBefore: clickedElementChanged ? before.elementAtPoint : undefined,
     clickedElementAfter: clickedElementChanged ? after.elementAtPoint : undefined,
+    busyStateChanged,
+    windowStateChanged,
     windowsOpened,
     windowsClosed,
     windowChanges,

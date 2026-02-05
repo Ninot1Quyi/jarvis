@@ -271,6 +271,8 @@ export interface SnapshotElement {
   height?: number
   /** Available actions */
   actions?: string[]
+  /** Whether the element is busy/loading */
+  busy?: boolean
 }
 
 /** Window information for snapshots */
@@ -287,6 +289,8 @@ export interface SnapshotWindow {
   isMinimized: boolean
   /** Whether the window has focus */
   isFocused: boolean
+  /** Whether the window is a modal dialog */
+  isModal?: boolean
   /** Position X */
   x?: number
   /** Position Y */
@@ -451,6 +455,11 @@ export interface StateDiff {
   menusOpened: MenuChange[]
   /** Menus that were closed */
   menusClosed: MenuChange[]
+
+  /** Whether the busy state changed */
+  busyStateChanged: boolean
+  /** Whether the window state changed (minimized/modal) */
+  windowStateChanged: boolean
 
   /** Summary of what changed (human-readable) */
   summary: string[]
