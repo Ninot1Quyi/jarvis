@@ -13,13 +13,13 @@
  * - [x] Application change (focused app switched)
  * - [x] Window changes (opened, closed, focus changed)
  * - [x] Menu changes (opened, closed)
- * - [ ] Dialog/Sheet changes (AXSheet, AXDialog subrole) - TODO
+ * - [x] Dialog/Sheet changes (AXSheet, AXDialog subrole)
  * - [ ] Popover changes (AXPopover) - TODO
  * - [ ] Drawer changes (AXDrawer) - TODO
  *
  * ## 2. Tab/Navigation Changes (CRITICAL for browsers)
- * - [ ] Tab changes (AXTabGroup, AXTabs attribute) - TODO: PRIORITY HIGH
- *       This is needed to detect browser tab open/close/switch
+ * - [x] Tab changes (AXTabGroup, AXRadioButton tabs)
+ * - [x] Active tab change detection
  * - [ ] Browser column changes (AXBrowser, AXColumns) - TODO
  *
  * ## 3. Focus/Selection Changes
@@ -30,12 +30,12 @@
  * - [ ] Selected cells change (AXSelectedCells) - TODO
  *
  * ## 4. State Changes
- * - [ ] Expanded/Collapsed state (AXExpanded) - TODO
- * - [ ] Disclosing state (AXDisclosing) - TODO
+ * - [x] Expanded/Collapsed state (AXExpanded)
+ * - [x] Disclosing state (AXDisclosing)
  * - [ ] Enabled/Disabled state (AXEnabled) - TODO
- * - [ ] Busy/Loading state (AXElementBusy) - TODO
- * - [ ] Minimized state (AXMinimized) - TODO
- * - [ ] Modal state (AXModal) - TODO
+ * - [x] Busy/Loading state (AXElementBusy)
+ * - [x] Minimized state (AXMinimized)
+ * - [x] Modal state (AXModal)
  *
  * ## 5. Value Changes
  * - [ ] Value change (AXValue) - TODO
