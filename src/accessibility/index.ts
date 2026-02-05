@@ -472,6 +472,59 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     summary.push(`Active tab: ${beforeActiveTab.title || 'none'} -> ${afterActiveTab.title || 'none'}`)
   }
 
+  // Sheet/dialog changes (handle undefined for backwards compatibility)
+  const beforeSheets = before.sheets || []
+  const afterSheets = after.sheets || []
+  const beforeSheetTitles = new Set(beforeSheets.map(s => s.title || s.identifier || ''))
+  const afterSheetTitles = new Set(afterSheets.map(s => s.title || s.identifier || ''))
+
+  const sheetsOpened: WindowChange[] = []
+  const sheetsClosed: WindowChange[] = []
+
+  for (const s of afterSheets) {
+    const key = s.title || s.identifier || ''
+    if (!beforeSheetTitles.has(key)) {
+      sheetsOpened.push({
+        type: 'opened',
+        title: s.title,
+        position: s.x !== undefined && s.y !== undefined ? [s.x, s.y] : undefined,
+        size: s.width !== undefined && s.height !== undefined ? [s.width, s.height] : undefined,
+      })
+      summary.push(`Dialog opened: ${s.title || 'untitled'}`)
+    }
+  }
+
+  for (const s of beforeSheets) {
+    const key = s.title || s.identifier || ''
+    if (!afterSheetTitles.has(key)) {
+      sheetsClosed.push({
+        type: 'closed',
+        title: s.title,
+      })
+      summary.push(`Dialog closed: ${s.title || 'untitled'}`)
+    }
+  }
+
+  // Expanded state change detection
+  let expandedChanged = false
+  let expandedBefore: boolean | undefined
+  let expandedAfter: boolean | undefined
+  let expandedElement: SnapshotElement | undefined
+
+  if (before.focusedElement && after.focusedElement) {
+    const beforeExpanded = before.focusedElement.expanded
+    const afterExpanded = after.focusedElement.expanded
+
+    if (beforeExpanded !== afterExpanded && (beforeExpanded !== undefined || afterExpanded !== undefined)) {
+      expandedChanged = true
+      expandedBefore = beforeExpanded
+      expandedAfter = afterExpanded
+      expandedElement = after.focusedElement
+
+      const elementDesc = describeElement(after.focusedElement)
+      summary.push(`Expanded: ${elementDesc} ${beforeExpanded ?? 'undefined'}->${afterExpanded ?? 'undefined'}`)
+    }
+  }
 
   // If nothing changed, note that
   if (summary.length === 0) {
@@ -502,6 +555,12 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     activeTabChanged,
     activeTabBefore: activeTabChanged ? beforeActiveTab?.title : undefined,
     activeTabAfter: activeTabChanged ? afterActiveTab?.title : undefined,
+    sheetsOpened,
+    sheetsClosed,
+    expandedChanged,
+    expandedBefore: expandedChanged ? expandedBefore : undefined,
+    expandedAfter: expandedChanged ? expandedAfter : undefined,
+    expandedElement: expandedChanged ? expandedElement : undefined,
     summary,
   }
 }

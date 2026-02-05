@@ -534,6 +534,19 @@ export interface StateDiff {
   /** Active tab title after (if changed) */
   activeTabAfter?: string
 
+  /** Sheets/dialogs that were opened */
+  sheetsOpened: WindowChange[]
+  /** Sheets/dialogs that were closed */
+  sheetsClosed: WindowChange[]
+
+  /** Whether focused element expanded state changed */
+  expandedChanged: boolean
+  /** Expanded state before (if changed) */
+  expandedBefore?: boolean
+  /** Expanded state after (if changed) */
+  expandedAfter?: boolean
+  /** Element whose expanded state changed */
+  expandedElement?: SnapshotElement
 
   /** Summary of what changed (human-readable) */
   summary: string[]
