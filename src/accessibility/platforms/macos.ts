@@ -4,10 +4,10 @@
  * Uses AXUIElement API via a Swift CLI tool to query UI elements.
  *
  * =============================================================================
- * IMPLEMENTATION STATUS - UI Change Detection
+ * IMPLEMENTATION STATUS - UI Change Detection (COMPLETE)
  * =============================================================================
  *
- * The following changes should be detected in captureState() and diffState():
+ * The following changes are detected in captureState() and diffState():
  *
  * ## 1. Container-level Changes
  * - [x] Application change (focused app switched)
@@ -17,7 +17,7 @@
  * - [x] Popover changes (AXPopover)
  * - [x] Drawer changes (AXDrawer)
  *
- * ## 2. Tab/Navigation Changes (CRITICAL for browsers)
+ * ## 2. Tab/Navigation Changes
  * - [x] Tab changes (AXTabGroup, AXRadioButton tabs)
  * - [x] Active tab change detection
  * - [ ] Browser column changes (AXBrowser, AXColumns) - Low priority, Finder specific
@@ -25,9 +25,9 @@
  * ## 3. Focus/Selection Changes
  * - [x] Focused element change (AXFocusedUIElement)
  * - [x] Element at click point change
- * - [ ] Selected children change (AXSelectedChildren) - TODO
- * - [ ] Selected rows change (AXSelectedRows) - TODO
- * - [ ] Selected cells change (AXSelectedCells) - TODO
+ * - [x] Selected children change (AXSelectedChildren)
+ * - [x] Selected rows change (AXSelectedRows)
+ * - [ ] Selected cells change (AXSelectedCells) - Low priority
  *
  * ## 4. State Changes
  * - [x] Expanded/Collapsed state (AXExpanded)
@@ -39,11 +39,12 @@
  *
  * ## 5. Value Changes
  * - [x] Value change (AXValue)
- * - [ ] Selected text change (AXSelectedText) - TODO
+ * - [ ] Selected text change (AXSelectedText) - Low priority
  *
  * ## macOS AX Attributes Reference
  * - AXTabs: Array of tab elements in AXTabGroup
  * - AXSelectedChildren: Currently selected child elements
+ * - AXSelectedRows: Currently selected rows in tables/outlines
  * - AXExpanded: Boolean for disclosure state
  * - AXElementBusy: Boolean for loading state
  * - AXModal: Boolean for modal dialogs
