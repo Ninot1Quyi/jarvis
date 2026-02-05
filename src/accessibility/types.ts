@@ -242,23 +242,37 @@ export interface AccessibilitySearchOptions {
 /** Tab information for snapshots */
 export interface SnapshotTab {
   /** Tab title */
-  title: string
-  /** Whether this tab is currently selected */
+  title?: string
+  /** Whether this tab is currently selected/active */
   isSelected: boolean
+  /** Whether this tab is currently active (alias for isSelected) */
+  isActive?: boolean
   /** Tab index (0-based) */
-  index: number
+  index?: number
+  /** Tab URL (if available, e.g., browser tabs) */
+  url?: string
 }
 
 /** Sheet (modal dialog) information for snapshots */
 export interface SnapshotSheet {
   /** Sheet title */
-  title: string
+  title?: string
   /** Sheet role (e.g., AXSheet) */
   role: string
   /** Sheet subrole */
   subrole?: string
   /** Whether the sheet is modal */
   isModal: boolean
+  /** Sheet identifier */
+  identifier?: string
+  /** Position X */
+  x?: number
+  /** Position Y */
+  y?: number
+  /** Width */
+  width?: number
+  /** Height */
+  height?: number
 }
 
 /** Selection state information for snapshots */
@@ -309,8 +323,6 @@ export interface SnapshotElement {
   height?: number
   /** Available actions */
   actions?: string[]
-  /** Whether the element is busy/loading */
-  busy?: boolean
 }
 
 /** Window information for snapshots */
@@ -360,19 +372,6 @@ export interface SnapshotMenu {
   /** Menu item titles */
   items?: string[]
 }
-/** Tab information for snapshots (browser tabs, etc.) */
-export interface SnapshotTab {
-  /** Tab title */
-  title?: string
-  /** Whether this tab is currently active/selected */
-  isActive: boolean
-  /** Tab URL (if available) */
-  url?: string
-  /** Tab index in the tab bar */
-  index?: number
-}
-
-
 
 /** Application information for snapshots */
 export interface SnapshotApplication {
