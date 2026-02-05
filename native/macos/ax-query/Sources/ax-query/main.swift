@@ -83,6 +83,25 @@ struct MenuInfo: Codable {
     let items: [String]?
 }
 
+struct TabInfo: Codable {
+    let title: String?
+    let isSelected: Bool
+    let index: Int?
+    let url: String?
+}
+
+struct SheetInfo: Codable {
+    let title: String?
+    let role: String
+    let subrole: String?
+    let isModal: Bool
+    let identifier: String?
+    let x: Double?
+    let y: Double?
+    let width: Double?
+    let height: Double?
+}
+
 struct ApplicationInfo: Codable {
     let title: String?
     let bundleIdentifier: String?
@@ -101,6 +120,8 @@ struct SnapshotResponse: Codable {
     let elementAtPoint: SnapshotElementInfo?
     let windows: [WindowInfo]
     let openMenus: [MenuInfo]
+    let tabs: [TabInfo]?
+    let sheets: [SheetInfo]?
     let queryTimeMs: Double
 }
 
@@ -586,6 +607,106 @@ func findOpenMenus(_ app: AXUIElement) -> [MenuInfo] {
     return menus
 }
 
+func findTabs(_ window: AXUIElement) -> [TabInfo] {
+    var tabs: [TabInfo] = []
+
+    func findTabsRecursive(_ element: AXUIElement, depth: Int) {
+        guard depth < 15 else { return }
+
+        let role = getStringAttribute(element, kAXRoleAttribute) ?? ""
+
+        // AXTabGroup contains tabs
+        if role == "AXTabGroup" {
+            var tabIndex = 0
+            for child in getChildren(element) {
+                let childRole = getStringAttribute(child, kAXRoleAttribute) ?? ""
+                if childRole == "AXRadioButton" {
+                    // Tab buttons are typically radio buttons in a tab group
+                    let title = getStringAttribute(child, kAXTitleAttribute)
+                    let isSelected = getBoolAttribute(child, kAXValueAttribute) ?? false
+                    let description = getStringAttribute(child, kAXDescriptionAttribute)
+
+                    // Try to get URL from description (browsers often put URL there)
+                    var url: String? = nil
+                    if let desc = description, desc.hasPrefix("http") {
+                        url = desc
+                    }
+
+                    tabs.append(TabInfo(
+                        title: title,
+                        isSelected: isSelected,
+                        index: tabIndex,
+                        url: url
+                    ))
+                    tabIndex += 1
+                }
+            }
+            return // Don't recurse into tab group children
+        }
+
+        // Also check for AXTab role (some apps use this)
+        if role == "AXTab" {
+            let title = getStringAttribute(element, kAXTitleAttribute)
+            let isSelected = getBoolAttribute(element, kAXValueAttribute) ?? false
+            tabs.append(TabInfo(
+                title: title,
+                isSelected: isSelected,
+                index: nil,
+                url: nil
+            ))
+        }
+
+        // Continue searching in children
+        for child in getChildren(element) {
+            findTabsRecursive(child, depth: depth + 1)
+        }
+    }
+
+    findTabsRecursive(window, depth: 0)
+    return tabs
+}
+
+func findSheets(_ window: AXUIElement) -> [SheetInfo] {
+    var sheets: [SheetInfo] = []
+
+    func findSheetsRecursive(_ element: AXUIElement, depth: Int) {
+        guard depth < 10 else { return }
+
+        let role = getStringAttribute(element, kAXRoleAttribute) ?? ""
+        let subrole = getStringAttribute(element, kAXSubroleAttribute)
+
+        // AXSheet is a modal dialog attached to a window
+        // AXDialog subrole also indicates a dialog
+        if role == "AXSheet" || subrole == "AXDialog" || subrole == "AXSystemDialog" {
+            let title = getStringAttribute(element, kAXTitleAttribute)
+            let identifier = getStringAttribute(element, kAXIdentifierAttribute)
+            let isModal = getBoolAttribute(element, "AXModal") ?? (role == "AXSheet")
+            let position = getPointAttribute(element, kAXPositionAttribute)
+            let size = getSizeAttribute(element, kAXSizeAttribute)
+
+            sheets.append(SheetInfo(
+                title: title,
+                role: role,
+                subrole: subrole,
+                isModal: isModal,
+                identifier: identifier,
+                x: position.map { Double($0.x) },
+                y: position.map { Double($0.y) },
+                width: size.map { Double($0.width) },
+                height: size.map { Double($0.height) }
+            ))
+        }
+
+        // Continue searching in children
+        for child in getChildren(element) {
+            findSheetsRecursive(child, depth: depth + 1)
+        }
+    }
+
+    findSheetsRecursive(window, depth: 0)
+    return sheets
+}
+
 func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> SnapshotResponse {
     let startTime = Date()
     let systemWide = AXUIElementCreateSystemWide()
@@ -605,6 +726,8 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
             elementAtPoint: nil,
             windows: [],
             openMenus: [],
+            tabs: nil,
+            sheets: nil,
             queryTimeMs: Date().timeIntervalSince(startTime) * 1000
         )
     }
@@ -644,6 +767,21 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
     // Find open menus
     let openMenus = findOpenMenus(app)
 
+    // Find tabs in focused window
+    var tabs: [TabInfo]? = nil
+    if let focusedWindow = focusedWindowRef {
+        let foundTabs = findTabs(focusedWindow)
+        if !foundTabs.isEmpty {
+            tabs = foundTabs
+        }
+    }
+
+    // Find sheets/dialogs in all windows
+    var sheets: [SheetInfo] = []
+    for window in getElementArrayAttribute(app, kAXWindowsAttribute) {
+        sheets.append(contentsOf: findSheets(window))
+    }
+
     return SnapshotResponse(
         success: true,
         error: nil,
@@ -654,6 +792,8 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
         elementAtPoint: elementAtPointInfo,
         windows: windowInfos,
         openMenus: openMenus,
+        tabs: tabs,
+        sheets: sheets.isEmpty ? nil : sheets,
         queryTimeMs: Date().timeIntervalSince(startTime) * 1000
     )
 }

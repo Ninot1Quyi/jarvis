@@ -74,6 +74,8 @@ import type {
   SnapshotWindow,
   SnapshotMenu,
   SnapshotApplication,
+  SnapshotTab,
+  SnapshotSheet,
 } from '../types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -191,6 +193,27 @@ interface RawMenuInfo {
   items?: string[]
 }
 
+/** Raw tab info from Swift CLI */
+interface RawTabInfo {
+  title?: string
+  isSelected: boolean
+  index?: number
+  url?: string
+}
+
+/** Raw sheet info from Swift CLI */
+interface RawSheetInfo {
+  title?: string
+  role: string
+  subrole?: string
+  isModal: boolean
+  identifier?: string
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+}
+
 /** Raw application info from Swift CLI */
 interface RawApplicationInfo {
   title?: string
@@ -211,6 +234,8 @@ interface RawSnapshotResponse {
   elementAtPoint?: RawSnapshotElement
   windows: RawWindowInfo[]
   openMenus: RawMenuInfo[]
+  tabs?: RawTabInfo[]
+  sheets?: RawSheetInfo[]
   queryTimeMs: number
 }
 
@@ -296,6 +321,30 @@ function transformApplication(raw: RawApplicationInfo): SnapshotApplication {
     isFrontmost: raw.isFrontmost,
     isHidden: raw.isHidden,
     pid: raw.pid,
+  }
+}
+
+function transformTab(raw: RawTabInfo): SnapshotTab {
+  return {
+    title: raw.title,
+    isSelected: raw.isSelected,
+    isActive: raw.isSelected,
+    index: raw.index,
+    url: raw.url,
+  }
+}
+
+function transformSheet(raw: RawSheetInfo): SnapshotSheet {
+  return {
+    title: raw.title,
+    role: raw.role,
+    subrole: raw.subrole,
+    isModal: raw.isModal,
+    identifier: raw.identifier,
+    x: raw.x,
+    y: raw.y,
+    width: raw.width,
+    height: raw.height,
   }
 }
 
@@ -550,6 +599,8 @@ export class MacOSAccessibilityProvider implements AccessibilityProvider {
               : undefined,
             windows: (raw.windows || []).map(transformWindow),
             openMenus: (raw.openMenus || []).map(transformMenu),
+            tabs: raw.tabs ? raw.tabs.map(transformTab) : undefined,
+            sheets: raw.sheets ? raw.sheets.map(transformSheet) : undefined,
             queryTimeMs,
           }
 
