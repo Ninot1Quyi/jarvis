@@ -4,10 +4,10 @@
  * Uses AXUIElement API via a Swift CLI tool to query UI elements.
  *
  * =============================================================================
- * IMPLEMENTATION STATUS - UI Change Detection (COMPLETE)
+ * IMPLEMENTATION STATUS - UI Change Detection (ALL COMPLETE)
  * =============================================================================
  *
- * The following changes are detected in captureState() and diffState():
+ * All UI changes are detected in captureState() and diffState():
  *
  * ## 1. Container-level Changes
  * - [x] Application change (focused app switched)
@@ -20,14 +20,14 @@
  * ## 2. Tab/Navigation Changes
  * - [x] Tab changes (AXTabGroup, AXRadioButton tabs)
  * - [x] Active tab change detection
- * - [ ] Browser column changes (AXBrowser, AXColumns) - Low priority, Finder specific
+ * - [x] Browser column changes (AXBrowser, AXColumns) - Finder column view
  *
  * ## 3. Focus/Selection Changes
  * - [x] Focused element change (AXFocusedUIElement)
  * - [x] Element at click point change
  * - [x] Selected children change (AXSelectedChildren)
  * - [x] Selected rows change (AXSelectedRows)
- * - [ ] Selected cells change (AXSelectedCells) - Low priority
+ * - [x] Selected cells change (AXSelectedCells)
  *
  * ## 4. State Changes
  * - [x] Expanded/Collapsed state (AXExpanded)
@@ -39,17 +39,21 @@
  *
  * ## 5. Value Changes
  * - [x] Value change (AXValue)
- * - [ ] Selected text change (AXSelectedText) - Low priority
+ * - [x] Selected text change (AXSelectedText, AXSelectedTextRange)
  *
  * ## macOS AX Attributes Reference
  * - AXTabs: Array of tab elements in AXTabGroup
  * - AXSelectedChildren: Currently selected child elements
  * - AXSelectedRows: Currently selected rows in tables/outlines
+ * - AXSelectedCells: Currently selected cells in tables
+ * - AXColumns: Columns in AXBrowser (Finder column view)
  * - AXExpanded: Boolean for disclosure state
  * - AXElementBusy: Boolean for loading state
  * - AXModal: Boolean for modal dialogs
  * - AXSheet: Role for sheet dialogs
  * - AXPopover: Role for popover windows
+ * - AXSelectedText: Currently selected text in text fields
+ * - AXSelectedTextRange: Range of selected text [location, length]
  *
  * Reference: /Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/
  *            System/Library/Frameworks/ApplicationServices.framework/
