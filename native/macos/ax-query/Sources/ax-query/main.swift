@@ -51,6 +51,8 @@ struct SnapshotElementInfo: Codable {
     let expanded: Bool?
     let disclosing: Bool?
     let busy: Bool?
+    let selectedText: String?
+    let selectedTextRange: [Int]?
     let x: Double?
     let y: Double?
     let width: Double?
@@ -109,6 +111,12 @@ struct SelectionInfo: Codable {
     let selectedTitles: [String]
 }
 
+struct BrowserColumnInfo: Codable {
+    let title: String?
+    let index: Int
+    let selectedItem: String?
+}
+
 struct ApplicationInfo: Codable {
     let title: String?
     let bundleIdentifier: String?
@@ -130,6 +138,7 @@ struct SnapshotResponse: Codable {
     let tabs: [TabInfo]?
     let sheets: [SheetInfo]?
     let selections: [SelectionInfo]?
+    let browserColumns: [BrowserColumnInfo]?
     let queryTimeMs: Double
 }
 
@@ -475,6 +484,20 @@ func getSnapshotElementInfo(_ element: AXUIElement) -> SnapshotElementInfo {
     let size = getSizeAttribute(element, kAXSizeAttribute)
     let actions = getActions(element)
 
+    // Get selected text (for text fields/areas)
+    let selectedText = getStringAttribute(element, kAXSelectedTextAttribute as String)
+
+    // Get selected text range
+    var selectedTextRange: [Int]? = nil
+    var rangeRef: AnyObject?
+    if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+       let rangeValue = rangeRef {
+        var cfRange = CFRange(location: 0, length: 0)
+        if AXValueGetValue(rangeValue as! AXValue, .cfRange, &cfRange) {
+            selectedTextRange = [cfRange.location, cfRange.length]
+        }
+    }
+
     return SnapshotElementInfo(
         role: role,
         subrole: subrole,
@@ -488,6 +511,8 @@ func getSnapshotElementInfo(_ element: AXUIElement) -> SnapshotElementInfo {
         expanded: expanded,
         disclosing: disclosing,
         busy: busy,
+        selectedText: selectedText,
+        selectedTextRange: selectedTextRange,
         x: position.map { Double($0.x) },
         y: position.map { Double($0.y) },
         width: size.map { Double($0.width) },
@@ -727,7 +752,7 @@ func findSelections(_ window: AXUIElement) -> [SelectionInfo] {
         let role = getStringAttribute(element, kAXRoleAttribute) ?? ""
 
         // Check for elements that can have selections
-        // AXTable, AXList, AXOutline, AXBrowser can have selected rows/children
+        // AXTable, AXList, AXOutline, AXBrowser can have selected rows/children/cells
         if role == "AXTable" || role == "AXList" || role == "AXOutline" || role == "AXBrowser" {
             // Try AXSelectedRows first (for tables/outlines)
             var selectedTitles: [String] = []
@@ -742,13 +767,24 @@ func findSelections(_ window: AXUIElement) -> [SelectionInfo] {
                     }
                 }
             } else {
-                // Try AXSelectedChildren (for lists)
-                let selectedChildren = getElementArrayAttribute(element, kAXSelectedChildrenAttribute as String)
-                if !selectedChildren.isEmpty {
-                    selectedCount = selectedChildren.count
-                    for child in selectedChildren.prefix(10) {
-                        if let title = getStringAttribute(child, kAXTitleAttribute) ?? getStringAttribute(child, kAXDescriptionAttribute) {
+                // Try AXSelectedCells (for tables with cell selection)
+                let selectedCells = getElementArrayAttribute(element, kAXSelectedCellsAttribute as String)
+                if !selectedCells.isEmpty {
+                    selectedCount = selectedCells.count
+                    for cell in selectedCells.prefix(10) {
+                        if let title = getStringAttribute(cell, kAXTitleAttribute) ?? getStringAttribute(cell, kAXValueAttribute) {
                             selectedTitles.append(title)
+                        }
+                    }
+                } else {
+                    // Try AXSelectedChildren (for lists)
+                    let selectedChildren = getElementArrayAttribute(element, kAXSelectedChildrenAttribute as String)
+                    if !selectedChildren.isEmpty {
+                        selectedCount = selectedChildren.count
+                        for child in selectedChildren.prefix(10) {
+                            if let title = getStringAttribute(child, kAXTitleAttribute) ?? getStringAttribute(child, kAXDescriptionAttribute) {
+                                selectedTitles.append(title)
+                            }
                         }
                     }
                 }
@@ -775,6 +811,47 @@ func findSelections(_ window: AXUIElement) -> [SelectionInfo] {
     return selections
 }
 
+func findBrowserColumns(_ window: AXUIElement) -> [BrowserColumnInfo] {
+    var columns: [BrowserColumnInfo] = []
+
+    func findBrowserRecursive(_ element: AXUIElement, depth: Int) {
+        guard depth < 10 else { return }
+
+        let role = getStringAttribute(element, kAXRoleAttribute) ?? ""
+
+        // AXBrowser is used in Finder column view
+        if role == "AXBrowser" {
+            // Get columns from AXColumns attribute
+            let columnElements = getElementArrayAttribute(element, kAXColumnsAttribute as String)
+            for (index, column) in columnElements.enumerated() {
+                let title = getStringAttribute(column, kAXTitleAttribute)
+
+                // Get selected item in this column
+                var selectedItem: String? = nil
+                let selectedChildren = getElementArrayAttribute(column, kAXSelectedChildrenAttribute as String)
+                if let firstSelected = selectedChildren.first {
+                    selectedItem = getStringAttribute(firstSelected, kAXTitleAttribute)
+                }
+
+                columns.append(BrowserColumnInfo(
+                    title: title,
+                    index: index,
+                    selectedItem: selectedItem
+                ))
+            }
+            return // Don't recurse into browser children
+        }
+
+        // Continue searching in children
+        for child in getChildren(element) {
+            findBrowserRecursive(child, depth: depth + 1)
+        }
+    }
+
+    findBrowserRecursive(window, depth: 0)
+    return columns
+}
+
 func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> SnapshotResponse {
     let startTime = Date()
     let systemWide = AXUIElementCreateSystemWide()
@@ -797,6 +874,7 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
             tabs: nil,
             sheets: nil,
             selections: nil,
+            browserColumns: nil,
             queryTimeMs: Date().timeIntervalSince(startTime) * 1000
         )
     }
@@ -857,6 +935,12 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
         selections = findSelections(focusedWindow)
     }
 
+    // Find browser columns in focused window (Finder column view)
+    var browserColumns: [BrowserColumnInfo] = []
+    if let focusedWindow = focusedWindowRef {
+        browserColumns = findBrowserColumns(focusedWindow)
+    }
+
     return SnapshotResponse(
         success: true,
         error: nil,
@@ -870,6 +954,7 @@ func captureSnapshot(queryX: Double?, queryY: Double?, screenBounds: CGRect) -> 
         tabs: tabs,
         sheets: sheets.isEmpty ? nil : sheets,
         selections: selections.isEmpty ? nil : selections,
+        browserColumns: browserColumns.isEmpty ? nil : browserColumns,
         queryTimeMs: Date().timeIntervalSince(startTime) * 1000
     )
 }

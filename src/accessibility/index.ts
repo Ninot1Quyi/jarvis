@@ -656,6 +656,52 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     }
   }
 
+  // Selected text change detection
+  let selectedTextChanged = false
+  let selectedTextBefore: string | undefined
+  let selectedTextAfter: string | undefined
+
+  if (before.focusedElement && after.focusedElement) {
+    const beforeText = before.focusedElement.selectedText
+    const afterText = after.focusedElement.selectedText
+
+    if (beforeText !== afterText) {
+      selectedTextChanged = true
+      selectedTextBefore = beforeText
+      selectedTextAfter = afterText
+
+      const beforeShort = beforeText ? (beforeText.length > 20 ? beforeText.slice(0, 20) + '...' : beforeText) : 'none'
+      const afterShort = afterText ? (afterText.length > 20 ? afterText.slice(0, 20) + '...' : afterText) : 'none'
+      summary.push(`Selected text: "${beforeShort}" -> "${afterShort}"`)
+    }
+  }
+
+  // Browser columns change detection (Finder column view)
+  let browserColumnsChanged = false
+  let browserColumnCountBefore: number | undefined
+  let browserColumnCountAfter: number | undefined
+
+  const beforeColumns = before.browserColumns || []
+  const afterColumns = after.browserColumns || []
+
+  if (beforeColumns.length !== afterColumns.length) {
+    browserColumnsChanged = true
+    browserColumnCountBefore = beforeColumns.length
+    browserColumnCountAfter = afterColumns.length
+    summary.push(`Browser columns: ${beforeColumns.length} -> ${afterColumns.length}`)
+  } else if (beforeColumns.length > 0) {
+    // Check if selected items changed
+    const beforeSelected = beforeColumns.map(c => c.selectedItem).join('/')
+    const afterSelected = afterColumns.map(c => c.selectedItem).join('/')
+    if (beforeSelected !== afterSelected) {
+      browserColumnsChanged = true
+      browserColumnCountBefore = beforeColumns.length
+      browserColumnCountAfter = afterColumns.length
+      const lastAfter = afterColumns[afterColumns.length - 1]
+      summary.push(`Browser navigation: ${lastAfter?.selectedItem || 'none'}`)
+    }
+  }
+
   // If nothing changed, note that
   if (summary.length === 0) {
     summary.push('No significant UI changes detected')
@@ -704,6 +750,12 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     selectionCountAfter: selectionChanged ? selectionCountAfter : undefined,
     selectionTitlesBefore: selectionChanged ? selectionTitlesBefore : undefined,
     selectionTitlesAfter: selectionChanged ? selectionTitlesAfter : undefined,
+    selectedTextChanged,
+    selectedTextBefore: selectedTextChanged ? selectedTextBefore : undefined,
+    selectedTextAfter: selectedTextChanged ? selectedTextAfter : undefined,
+    browserColumnsChanged,
+    browserColumnCountBefore: browserColumnsChanged ? browserColumnCountBefore : undefined,
+    browserColumnCountAfter: browserColumnsChanged ? browserColumnCountAfter : undefined,
     summary,
   }
 }

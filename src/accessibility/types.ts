@@ -287,6 +287,16 @@ export interface SnapshotSelection {
   selectedTitles: string[]
 }
 
+/** Browser column information (Finder column view) */
+export interface BrowserColumn {
+  /** Column title */
+  title?: string
+  /** Column index (0-based) */
+  index: number
+  /** Currently selected item in this column */
+  selectedItem?: string
+}
+
 /** Detailed element state for snapshots */
 export interface SnapshotElement {
   /** Element role (e.g., AXButton, AXTextField) */
@@ -313,6 +323,10 @@ export interface SnapshotElement {
   disclosing?: boolean
   /** Whether the element is busy (loading, processing) */
   busy?: boolean
+  /** Selected text in text fields/areas */
+  selectedText?: string
+  /** Selected text range [location, length] */
+  selectedTextRange?: [number, number]
   /** Position X in screen pixels */
   x?: number
   /** Position Y in screen pixels */
@@ -413,6 +427,8 @@ export interface StateSnapshot {
   sheets?: SnapshotSheet[]
   /** Current selections in the UI */
   selections?: SnapshotSelection[]
+  /** Browser columns (Finder column view) */
+  browserColumns?: BrowserColumn[]
   /** Time taken to capture the snapshot in milliseconds */
   queryTimeMs: number
 }
@@ -578,6 +594,20 @@ export interface StateDiff {
   selectionTitlesBefore?: string[]
   /** Selected titles after */
   selectionTitlesAfter?: string[]
+
+  /** Whether selected text changed */
+  selectedTextChanged: boolean
+  /** Selected text before */
+  selectedTextBefore?: string
+  /** Selected text after */
+  selectedTextAfter?: string
+
+  /** Whether browser columns changed (Finder column view) */
+  browserColumnsChanged: boolean
+  /** Number of columns before */
+  browserColumnCountBefore?: number
+  /** Number of columns after */
+  browserColumnCountAfter?: number
 
   /** Summary of what changed (human-readable) */
   summary: string[]

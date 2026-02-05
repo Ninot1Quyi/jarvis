@@ -78,6 +78,7 @@ import type {
   SnapshotTab,
   SnapshotSheet,
   SnapshotSelection,
+  BrowserColumn,
 } from '../types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -164,6 +165,8 @@ interface RawSnapshotElement {
   expanded?: boolean
   disclosing?: boolean
   busy?: boolean
+  selectedText?: string
+  selectedTextRange?: number[]
   x?: number
   y?: number
   width?: number
@@ -227,6 +230,13 @@ interface RawSelectionInfo {
   selectedTitles: string[]
 }
 
+/** Raw browser column info from Swift CLI */
+interface RawBrowserColumnInfo {
+  title?: string
+  index: number
+  selectedItem?: string
+}
+
 /** Raw application info from Swift CLI */
 interface RawApplicationInfo {
   title?: string
@@ -250,6 +260,7 @@ interface RawSnapshotResponse {
   tabs?: RawTabInfo[]
   sheets?: RawSheetInfo[]
   selections?: RawSelectionInfo[]
+  browserColumns?: RawBrowserColumnInfo[]
   queryTimeMs: number
 }
 
@@ -294,6 +305,8 @@ function transformSnapshotElement(raw: RawSnapshotElement): SnapshotElement {
     expanded: raw.expanded,
     disclosing: raw.disclosing,
     busy: raw.busy,
+    selectedText: raw.selectedText,
+    selectedTextRange: raw.selectedTextRange ? [raw.selectedTextRange[0], raw.selectedTextRange[1]] : undefined,
     x: raw.x,
     y: raw.y,
     width: raw.width,
@@ -372,6 +385,14 @@ function transformSelection(raw: RawSelectionInfo): SnapshotSelection {
     elementTitle: raw.elementTitle,
     selectedCount: raw.selectedCount,
     selectedTitles: raw.selectedTitles,
+  }
+}
+
+function transformBrowserColumn(raw: RawBrowserColumnInfo): BrowserColumn {
+  return {
+    title: raw.title,
+    index: raw.index,
+    selectedItem: raw.selectedItem,
   }
 }
 
@@ -629,6 +650,7 @@ export class MacOSAccessibilityProvider implements AccessibilityProvider {
             tabs: raw.tabs ? raw.tabs.map(transformTab) : undefined,
             sheets: raw.sheets ? raw.sheets.map(transformSheet) : undefined,
             selections: raw.selections ? raw.selections.map(transformSelection) : undefined,
+            browserColumns: raw.browserColumns ? raw.browserColumns.map(transformBrowserColumn) : undefined,
             queryTimeMs,
           }
 
