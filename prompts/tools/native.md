@@ -9,10 +9,11 @@ Tools are called natively. Simply invoke the appropriate tool with the required 
 - **list_skills**: List all available skills with descriptions
 
 #### UI Search Tools
-- **find_element**: Search for UI elements by keyword when unsure about position. Args: `keyword: "Insert"`, `max_results?: 5`. Use this to find the exact coordinates of buttons, menus, or other UI elements instead of guessing.
+- **find_element**: Search for UI elements by keyword when unsure about position. Args: `keyword: "Insert"`, `max_results?: 5`. Use this to find the exact **center coordinates** of buttons, menus, or other UI elements instead of guessing. Returned coordinates can be used directly for clicking.
+- **locate**: Pre-locate UI element for next action. Args: `name: "Insert"`. **Call this as the LAST action in each response** to search for the element you plan to click next. Returns precise coordinates from accessibility tree. Combine with visual analysis for accurate clicking.
 
 #### GUI Tools
-- **click**: Click at position. Args: `coordinate: [x, y]`, `desc?: "element name"`. The `desc` should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree.
+- **click**: Click at position. Args: `coordinate: [x, y]`, `desc?: "element name"`, `modifiers?: ["cmd"]`. The `desc` should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree. Use `modifiers` for special clicks: `["cmd"]` for cmd+click (multi-select), `["shift"]` for shift+click (range select), `["cmd", "shift"]` for cmd+shift+click.
 - **left_double**: Double click. Args: `coordinate: [x, y]`, `desc?: "element name"`. Same as click.
 - **right_single**: Right click for context menu. Args: `coordinate: [x, y]`, `desc?: "element name"`. Same as click.
 - **middle_click**: Middle click to open link in new tab. Args: `coordinate: [x, y]`, `desc?: "element name"`. Same as click.

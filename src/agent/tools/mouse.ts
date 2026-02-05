@@ -112,7 +112,7 @@ async function appendNearbyElements(
       const elTitle = el.title || el.description || el.value || '(no title)'
       const elRole = el.role?.replace('AX', '') || 'Unknown'
 
-      // Calculate normalized coordinates for the element
+      // Snapshot returns top-left coordinates, calculate center for display
       let coordStr = ''
       if (el.x !== undefined && el.y !== undefined && el.width !== undefined && el.height !== undefined) {
         const centerX = el.x + el.width / 2
@@ -191,7 +191,7 @@ async function appendNearbyElements(
 export const clickTool: Tool = {
   definition: {
     name: 'click',
-    description: 'Click at the specified position. Coordinates are in range [0, 1000].',
+    description: 'Click at the specified position. Coordinates are in range [0, 1000]. Supports modifier keys for special clicks (e.g., cmd+click for multi-select).',
     parameters: {
       type: 'object',
       properties: {
@@ -204,31 +204,69 @@ export const clickTool: Tool = {
           type: 'string',
           description: 'The exact name/label of the target element (e.g., "Save", "Insert", "Microsoft PowerPoint"). This will be searched in the accessibility tree. Keep it short and match the actual UI text.',
         },
+        modifiers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Modifier keys to hold during click: "cmd", "ctrl", "shift", "alt/option". Example: ["cmd"] for cmd+click, ["cmd", "shift"] for cmd+shift+click.',
+        },
       },
       required: ['coordinate'],
     },
   },
   async execute(args, context) {
-    const { mouse } = await import('@computer-use/nut-js')
+    const { mouse, keyboard, Key } = await import('@computer-use/nut-js')
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
+    const modifiers = args.modifiers as string[] | undefined
     const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
     const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
+    const modifierStr = modifiers?.length ? ` +[${modifiers.join('+')}]` : ''
+    logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${modifierStr}${desc ? ` (target: ${desc})` : ''}`)
+
+    // Map modifier names to Key enum
+    const modifierKeyMap: Record<string, number> = {
+      cmd: Key.LeftCmd,
+      command: Key.LeftCmd,
+      ctrl: Key.LeftControl,
+      control: Key.LeftControl,
+      shift: Key.LeftShift,
+      alt: Key.LeftAlt,
+      option: Key.LeftAlt,
+    }
+
+    // Get modifier keys to press
+    const modifierKeys: number[] = []
+    if (modifiers) {
+      for (const mod of modifiers) {
+        const key = modifierKeyMap[mod.toLowerCase()]
+        if (key) modifierKeys.push(key)
+      }
+    }
 
     // Execute click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
       await moveMouse(x, y)
+
+      // Press modifier keys
+      if (modifierKeys.length > 0) {
+        await keyboard.pressKey(...modifierKeys)
+      }
+
       await mouse.leftClick()
+
+      // Release modifier keys
+      if (modifierKeys.length > 0) {
+        await keyboard.releaseKey(...modifierKeys)
+      }
     })
 
     const result: ToolResult = {
       success: true,
-      data: { coordinate: coord },
+      data: { coordinate: coord, modifiers },
     }
 
     return appendNearbyElements(result, x, y, screenWidth, screenHeight, desc, stateDiffResult)

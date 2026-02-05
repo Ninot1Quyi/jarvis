@@ -327,8 +327,9 @@ func searchUITree(keyword: String, maxCount: Int, screenBounds: CGRect) -> [Elem
                     maxSim = max(maxSim, calculateSimilarity(keyword, val) * 0.8)  // Lower weight for value
                 }
 
-                // Only include elements with some similarity
-                if maxSim > 0.1 && info.width >= 5 && info.height >= 5 {
+                // Only include elements with meaningful similarity
+                // 0.5 threshold filters out unrelated matches from Levenshtein distance
+                if maxSim > 0.5 && info.width >= 5 && info.height >= 5 {
                     let infoWithSim = ElementInfo(
                         role: info.role,
                         subrole: info.subrole,

@@ -374,7 +374,12 @@ export class Agent {
         const dy = Math.abs(coord1[1] - coord2[1])
 
         if (dx <= threshold && dy <= threshold) {
-          return 'You have clicked the same position for two consecutive rounds. If single click does not work, try double-click (left_double). The click position may also be slightly off - observe carefully and make fine adjustments.'
+          return `⚠ You have clicked the same position [${coord1[0]}, ${coord1[1]}] for two consecutive rounds. Please try a different approach:
+1. If single click doesn't work, try double-click (left_double) or right-click (right_single)
+2. The click position may be slightly off - use find_element to locate the exact coordinates
+3. The element may require a different interaction method (e.g., hotkey, type)
+4. Check if the element is actually clickable or if it's disabled
+Do NOT repeat the same click - change your strategy.`
         }
       }
     }
@@ -402,33 +407,46 @@ export class Agent {
       const { stdout } = await execAsync(`osascript -e '
         tell application "System Events"
           set frontApp to name of first application process whose frontmost is true
-        end tell
 
-        -- 检查 Spotlight 是否打开
-        set spotlightOpen to false
-        try
-          tell application "System Events"
+          -- 检查 Spotlight 是否打开
+          set spotlightOpen to false
+          try
             if exists (window 1 of process "Spotlight") then
               set spotlightOpen to true
             end if
-          end tell
-        end try
-
-        if spotlightOpen then
-          return "Spotlight | Search (system-level, has focus, just type and press enter)"
-        end if
-
-        tell application frontApp
-          try
-            set windowTitle to name of front window
-          on error
-            set windowTitle to "N/A"
           end try
+
+          if spotlightOpen then
+            return "Spotlight | Search"
+          end if
+
+          -- 获取窗口标题（通过 System Events 更可靠）
+          set windowTitle to "N/A"
+          try
+            tell process frontApp
+              if exists (window 1) then
+                set windowTitle to name of window 1
+              end if
+            end tell
+          end try
+
+          return frontApp & " | " & windowTitle
         end tell
-        return frontApp & " | " & windowTitle
       '`)
       return stdout.trim()
-    } catch {
+    } catch (e) {
+      // 如果 AppleScript 失败，尝试使用 accessibility API
+      try {
+        const { captureState } = await import('../accessibility/index.js')
+        const state = await captureState()
+        if (state.success && state.focusedApplication) {
+          const appName = state.focusedApplication.title || 'Unknown App'
+          const windowTitle = state.focusedWindow?.title || 'N/A'
+          return `${appName} | ${windowTitle}`
+        }
+      } catch {
+        // ignore
+      }
       return 'Unknown'
     }
   }

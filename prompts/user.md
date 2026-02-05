@@ -26,4 +26,4 @@ Note: If target window != focused window, first click activates window, second c
 
 ---
 
-请分析屏幕并调用合适的工具执行下一步操作。
+First, evaluate whether the previous action met expectations (respond "Action succeeded" or "Action failed: reason"). Then analyze the screen and call appropriate tools for the next step.

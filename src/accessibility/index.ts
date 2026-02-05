@@ -461,7 +461,14 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
  */
 export function formatDiffForAgent(diff: StateDiff): string {
   if (diff.summary.length === 1 && diff.summary[0] === 'No significant UI changes detected') {
-    return '⚠ No UI changes detected after action'
+    return `<reminder>
+⚠ The previous action did NOT produce any GUI changes. Please analyze:
+1. Did you click the correct position? Check if the target element exists at that coordinate.
+2. Was the click type correct? (single click vs double click vs right click)
+3. Is the element clickable? Some elements may be disabled or non-interactive.
+4. Should you try a different approach? (e.g., use hotkey instead of click, or find_element to locate the correct position)
+Avoid repeating the same action - try a different method to prevent getting stuck in a loop.
+</reminder>`
   }
 
   const lines: string[] = ['UI Changes:']

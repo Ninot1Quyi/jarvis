@@ -163,6 +163,7 @@ interface RawSnapshotResponse {
 }
 
 function transformElement(raw: RawElement): AccessibilityElement {
+  // Swift returns top-left coordinates, calculate center here
   const centerX = raw.x + raw.width / 2
   const centerY = raw.y + raw.height / 2
   const role = normalizeRole(raw.role)

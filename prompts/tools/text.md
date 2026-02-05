@@ -22,10 +22,11 @@
 - list_skills: List all available skills with descriptions. Args: {}
 
 ### UI Search Tools
-- find_element: Search for UI elements by keyword when unsure about position. Args: {"keyword": "Insert", "max_results": 5}. Use this to find exact coordinates instead of guessing.
+- find_element: Search for UI elements by keyword when unsure about position. Args: {"keyword": "Insert", "max_results": 5}. Use this to find exact **center coordinates** instead of guessing. Returned coordinates can be used directly for clicking.
+- locate: Pre-locate UI element for next action. Args: {"name": "Insert"}. **Call this as the LAST action in each response** to search for the element you plan to click next. Returns precise coordinates from accessibility tree.
 
 ### GUI Tools
-- click: Click at position. Args: {"coordinate": [x, y], "desc": "element name"}. The `desc` should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree.
+- click: Click at position. Args: {"coordinate": [x, y], "desc": "element name", "modifiers": ["cmd"]}. The `desc` should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree. Use `modifiers` for special clicks: ["cmd"] for cmd+click (multi-select), ["shift"] for shift+click.
 - left_double: Double click. Args: {"coordinate": [x, y], "desc": "element name"}
 - right_single: Right click. Args: {"coordinate": [x, y], "desc": "element name"}
 - middle_click: Middle click to open link in new tab. Args: {"coordinate": [x, y], "desc": "element name"}

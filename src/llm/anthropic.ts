@@ -162,12 +162,12 @@ export class AnthropicProvider implements LLMProvider {
     })
 
     // Log only new messages since last call
-    // ANSI colors: green for ASSISTANT, blue for USER, gray for others
+    // ANSI colors: orange for ASSISTANT, green for USER, gray for others
     const roleColors: Record<string, string> = {
-      assistant: '\x1b[32m',  // green
-      user: '\x1b[34m',       // blue
-      system: '\x1b[90m',     // gray
-      tool: '\x1b[90m',       // gray
+      assistant: '\x1b[38;5;208m',  // orange
+      user: '\x1b[32m',             // green
+      system: '\x1b[90m',           // gray
+      tool: '\x1b[90m',             // gray
     }
     const RESET = '\x1b[0m'
 
@@ -194,7 +194,7 @@ export class AnthropicProvider implements LLMProvider {
 
       if (typeof msg.content === 'string') {
         const content = formatContent(msg.content)
-        logger.debug(`${color}[MSG ${i}] ${role}:${RESET}\n${content}`)
+        logger.debug(`${color}[MSG ${i}] ${role}:\n${content}${RESET}`)
       } else if (Array.isArray(msg.content)) {
         const textParts = msg.content
           .filter((p): p is Anthropic.TextBlockParam => p.type === 'text')
@@ -209,16 +209,16 @@ export class AnthropicProvider implements LLMProvider {
         if (toolResultCount > 0) suffix += ` [+${toolResultCount} tool_result]`
 
         const content = formatContent(textParts)
-        logger.debug(`${color}[MSG ${i}] ${role}:${RESET}\n${content}${suffix}`)
+        logger.debug(`${color}[MSG ${i}] ${role}:\n${content}${suffix}${RESET}`)
 
         // Log each image attachment
         for (let j = 0; j < imageParts.length; j++) {
           const img = imageParts[j]
           if (img.source.type === 'base64') {
             const sizeKB = Math.round(img.source.data.length * 0.75 / 1024)
-            logger.debug(`  [ATTACHMENT ${j}] ${img.source.media_type}, ~${sizeKB}KB`)
+            logger.debug(`${color}  [ATTACHMENT ${j}] ${img.source.media_type}, ~${sizeKB}KB${RESET}`)
           } else if (img.source.type === 'url') {
-            logger.debug(`  [ATTACHMENT ${j}] URL: ${(img.source as any).url}`)
+            logger.debug(`${color}  [ATTACHMENT ${j}] URL: ${(img.source as any).url}${RESET}`)
           }
         }
       }
@@ -254,6 +254,23 @@ export class AnthropicProvider implements LLMProvider {
           arguments: block.input as Record<string, unknown>,
         })
       }
+    }
+
+    // Log ASSISTANT response
+    {
+      const ORANGE = '\x1b[38;5;208m'
+      const RESET = '\x1b[0m'
+      let assistantLog = `${ORANGE}[MSG ${this.lastMessageCount}] ASSISTANT:\n`
+      if (content) {
+        assistantLog += content
+      }
+      // Only show [Tools: ...] for native tool call mode (text mode already has <Action> in content)
+      if (this.nativeToolCall && toolCalls.length > 0) {
+        const toolsStr = toolCalls.map(tc => `${tc.name}(${JSON.stringify(tc.arguments)})`).join(', ')
+        assistantLog += `${content ? '\n' : ''}[Tools: ${toolsStr}]`
+      }
+      assistantLog += RESET
+      logger.debug(assistantLog)
     }
 
     // If not using native tool call, parse tool calls from text
