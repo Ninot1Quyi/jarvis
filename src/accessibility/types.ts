@@ -358,6 +358,19 @@ export interface SnapshotMenu {
   /** Menu item titles */
   items?: string[]
 }
+/** Tab information for snapshots (browser tabs, etc.) */
+export interface SnapshotTab {
+  /** Tab title */
+  title?: string
+  /** Whether this tab is currently active/selected */
+  isActive: boolean
+  /** Tab URL (if available) */
+  url?: string
+  /** Tab index in the tab bar */
+  index?: number
+}
+
+
 
 /** Application information for snapshots */
 export interface SnapshotApplication {
@@ -454,6 +467,16 @@ export interface MenuChange {
   /** Menu position (for opened) */
   position?: [number, number]
 }
+/** Represents a tab change */
+export interface TabChange {
+  /** Type of change */
+  type: 'opened' | 'closed' | 'activated'
+  /** Tab title */
+  title?: string
+  /** Tab URL (if available) */
+  url?: string
+}
+
 
 /** Difference between two state snapshots */
 export interface StateDiff {
@@ -499,6 +522,18 @@ export interface StateDiff {
   menusOpened: MenuChange[]
   /** Menus that were closed */
   menusClosed: MenuChange[]
+
+  /** Tabs that were opened */
+  tabsOpened: TabChange[]
+  /** Tabs that were closed */
+  tabsClosed: TabChange[]
+  /** Whether the active tab changed */
+  activeTabChanged: boolean
+  /** Active tab title before (if changed) */
+  activeTabBefore?: string
+  /** Active tab title after (if changed) */
+  activeTabAfter?: string
+
 
   /** Summary of what changed (human-readable) */
   summary: string[]
