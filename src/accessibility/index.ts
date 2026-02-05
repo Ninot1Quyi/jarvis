@@ -516,8 +516,8 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
   }
 
   // Active tab change
-  const beforeActiveTab = beforeTabs.find(t => t.isActive)
-  const afterActiveTab = afterTabs.find(t => t.isActive)
+  const beforeActiveTab = beforeTabs.find(t => t.isSelected || t.isActive)
+  const afterActiveTab = afterTabs.find(t => t.isSelected || t.isActive)
   const activeTabChanged = beforeActiveTab?.title !== afterActiveTab?.title
 
   if (activeTabChanged && beforeActiveTab && afterActiveTab) {

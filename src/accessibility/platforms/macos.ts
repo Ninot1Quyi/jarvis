@@ -160,6 +160,8 @@ interface RawSnapshotElement {
   focused?: boolean
   selected?: boolean
   expanded?: boolean
+  disclosing?: boolean
+  busy?: boolean
   x?: number
   y?: number
   width?: number
@@ -175,6 +177,7 @@ interface RawWindowInfo {
   isMain: boolean
   isMinimized: boolean
   isFocused: boolean
+  modal?: boolean
   x?: number
   y?: number
   width?: number
@@ -278,6 +281,8 @@ function transformSnapshotElement(raw: RawSnapshotElement): SnapshotElement {
     focused: raw.focused,
     selected: raw.selected,
     expanded: raw.expanded,
+    disclosing: raw.disclosing,
+    busy: raw.busy,
     x: raw.x,
     y: raw.y,
     width: raw.width,
@@ -294,6 +299,8 @@ function transformWindow(raw: RawWindowInfo): SnapshotWindow {
     isMain: raw.isMain,
     isMinimized: raw.isMinimized,
     isFocused: raw.isFocused,
+    modal: raw.modal,
+    isModal: raw.modal,
     x: raw.x,
     y: raw.y,
     width: raw.width,
