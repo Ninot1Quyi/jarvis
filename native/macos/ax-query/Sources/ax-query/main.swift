@@ -49,6 +49,7 @@ struct SnapshotElementInfo: Codable {
     let focused: Bool?
     let selected: Bool?
     let expanded: Bool?
+    let disclosing: Bool?
     let x: Double?
     let y: Double?
     let width: Double?
@@ -437,6 +438,7 @@ func getSnapshotElementInfo(_ element: AXUIElement) -> SnapshotElementInfo {
     let focused = getBoolAttribute(element, kAXFocusedAttribute)
     let selected = getBoolAttribute(element, kAXSelectedAttribute)
     let expanded = getBoolAttribute(element, kAXExpandedAttribute)
+    let disclosing = getBoolAttribute(element, kAXDisclosingAttribute)
     let position = getPointAttribute(element, kAXPositionAttribute)
     let size = getSizeAttribute(element, kAXSizeAttribute)
     let actions = getActions(element)
@@ -452,6 +454,7 @@ func getSnapshotElementInfo(_ element: AXUIElement) -> SnapshotElementInfo {
         focused: focused,
         selected: selected,
         expanded: expanded,
+        disclosing: disclosing,
         x: position.map { Double($0.x) },
         y: position.map { Double($0.y) },
         width: size.map { Double($0.width) },
