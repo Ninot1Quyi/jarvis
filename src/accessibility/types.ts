@@ -239,6 +239,40 @@ export interface AccessibilitySearchOptions {
 // Snapshot Types - For capturing and comparing UI state
 // ============================================================================
 
+/** Tab information for snapshots */
+export interface SnapshotTab {
+  /** Tab title */
+  title: string
+  /** Whether this tab is currently selected */
+  isSelected: boolean
+  /** Tab index (0-based) */
+  index: number
+}
+
+/** Sheet (modal dialog) information for snapshots */
+export interface SnapshotSheet {
+  /** Sheet title */
+  title: string
+  /** Sheet role (e.g., AXSheet) */
+  role: string
+  /** Sheet subrole */
+  subrole?: string
+  /** Whether the sheet is modal */
+  isModal: boolean
+}
+
+/** Selection state information for snapshots */
+export interface SnapshotSelection {
+  /** Role of the element containing the selection */
+  elementRole: string
+  /** Title of the element containing the selection */
+  elementTitle?: string
+  /** Number of selected items */
+  selectedCount: number
+  /** Titles of selected items */
+  selectedTitles: string[]
+}
+
 /** Detailed element state for snapshots */
 export interface SnapshotElement {
   /** Element role (e.g., AXButton, AXTextField) */
@@ -259,8 +293,12 @@ export interface SnapshotElement {
   focused?: boolean
   /** Whether the element is selected */
   selected?: boolean
-  /** Whether the element is expanded (for disclosure triangles, etc.) */
+  /** Whether the element is expanded (for disclosure triangles, outlines, etc.) */
   expanded?: boolean
+  /** Whether the element is disclosing content */
+  disclosing?: boolean
+  /** Whether the element is busy (loading, processing) */
+  busy?: boolean
   /** Position X in screen pixels */
   x?: number
   /** Position Y in screen pixels */
@@ -287,6 +325,10 @@ export interface SnapshotWindow {
   isMinimized: boolean
   /** Whether the window has focus */
   isFocused: boolean
+  /** Whether the window is modal */
+  modal?: boolean
+  /** Whether the window is minimized (alias for isMinimized) */
+  minimized?: boolean
   /** Position X */
   x?: number
   /** Position Y */
@@ -351,6 +393,12 @@ export interface StateSnapshot {
   windows: SnapshotWindow[]
   /** Currently open menus (context menus, dropdowns, etc.) */
   openMenus: SnapshotMenu[]
+  /** Tabs in the focused window (if applicable) */
+  tabs?: SnapshotTab[]
+  /** Sheets (modal dialogs) attached to windows */
+  sheets?: SnapshotSheet[]
+  /** Current selections in the UI */
+  selections?: SnapshotSelection[]
   /** Time taken to capture the snapshot in milliseconds */
   queryTimeMs: number
 }
