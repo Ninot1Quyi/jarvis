@@ -23,6 +23,8 @@ import type {
   SnapshotApplication,
   WindowChange,
   MenuChange,
+  TabChange,
+  SnapshotTab,
 } from './types.js'
 
 // Re-export types
@@ -44,6 +46,8 @@ export type {
   SnapshotApplication,
   WindowChange,
   MenuChange,
+  TabChange,
+  SnapshotTab,
 }
 
 // Platform providers (lazy loaded)
@@ -425,6 +429,50 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     }
   }
 
+  // Tab changes
+  const beforeTabs = before.tabs || []
+  const afterTabs = after.tabs || []
+
+  const beforeTabTitles = new Set(beforeTabs.map(t => t.title || ''))
+  const afterTabTitles = new Set(afterTabs.map(t => t.title || ''))
+
+  const tabsOpened: TabChange[] = []
+  const tabsClosed: TabChange[] = []
+
+  for (const t of afterTabs) {
+    const key = t.title || ''
+    if (key && !beforeTabTitles.has(key)) {
+      tabsOpened.push({
+        type: 'opened',
+        title: t.title,
+        url: t.url,
+      })
+      summary.push(`Tab opened: ${t.title || 'untitled'}`)
+    }
+  }
+
+  for (const t of beforeTabs) {
+    const key = t.title || ''
+    if (key && !afterTabTitles.has(key)) {
+      tabsClosed.push({
+        type: 'closed',
+        title: t.title,
+        url: t.url,
+      })
+      summary.push(`Tab closed: ${t.title || 'untitled'}`)
+    }
+  }
+
+  // Active tab change
+  const beforeActiveTab = beforeTabs.find(t => t.isActive)
+  const afterActiveTab = afterTabs.find(t => t.isActive)
+  const activeTabChanged = beforeActiveTab?.title !== afterActiveTab?.title
+
+  if (activeTabChanged && beforeActiveTab && afterActiveTab) {
+    summary.push(`Active tab: ${beforeActiveTab.title || 'none'} -> ${afterActiveTab.title || 'none'}`)
+  }
+
+
   // If nothing changed, note that
   if (summary.length === 0) {
     summary.push('No significant UI changes detected')
@@ -449,6 +497,11 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
     windowChanges,
     menusOpened,
     menusClosed,
+    tabsOpened,
+    tabsClosed,
+    activeTabChanged,
+    activeTabBefore: activeTabChanged ? beforeActiveTab?.title : undefined,
+    activeTabAfter: activeTabChanged ? afterActiveTab?.title : undefined,
     summary,
   }
 }
