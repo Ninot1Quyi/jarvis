@@ -50,6 +50,7 @@ struct SnapshotElementInfo: Codable {
     let selected: Bool?
     let expanded: Bool?
     let disclosing: Bool?
+    let busy: Bool?
     let x: Double?
     let y: Double?
     let width: Double?
@@ -64,6 +65,7 @@ struct WindowInfo: Codable {
     let isMain: Bool
     let isMinimized: Bool
     let isFocused: Bool
+    let modal: Bool?
     let x: Double?
     let y: Double?
     let width: Double?
@@ -439,6 +441,7 @@ func getSnapshotElementInfo(_ element: AXUIElement) -> SnapshotElementInfo {
     let selected = getBoolAttribute(element, kAXSelectedAttribute)
     let expanded = getBoolAttribute(element, kAXExpandedAttribute)
     let disclosing = getBoolAttribute(element, kAXDisclosingAttribute)
+    let busy = getBoolAttribute(element, "AXElementBusy")
     let position = getPointAttribute(element, kAXPositionAttribute)
     let size = getSizeAttribute(element, kAXSizeAttribute)
     let actions = getActions(element)
@@ -455,6 +458,7 @@ func getSnapshotElementInfo(_ element: AXUIElement) -> SnapshotElementInfo {
         selected: selected,
         expanded: expanded,
         disclosing: disclosing,
+        busy: busy,
         x: position.map { Double($0.x) },
         y: position.map { Double($0.y) },
         width: size.map { Double($0.width) },
@@ -469,6 +473,7 @@ func getWindowInfo(_ window: AXUIElement, focusedWindow: AXUIElement?) -> Window
     let subrole = getStringAttribute(window, kAXSubroleAttribute)
     let isMain = getBoolAttribute(window, kAXMainAttribute) ?? false
     let isMinimized = getBoolAttribute(window, kAXMinimizedAttribute) ?? false
+    let modal = getBoolAttribute(window, "AXModal")
     let position = getPointAttribute(window, kAXPositionAttribute)
     let size = getSizeAttribute(window, kAXSizeAttribute)
     let identifier = getStringAttribute(window, kAXIdentifierAttribute)
@@ -486,6 +491,7 @@ func getWindowInfo(_ window: AXUIElement, focusedWindow: AXUIElement?) -> Window
         isMain: isMain,
         isMinimized: isMinimized,
         isFocused: isFocused,
+        modal: modal,
         x: position.map { Double($0.x) },
         y: position.map { Double($0.y) },
         width: size.map { Double($0.width) },
