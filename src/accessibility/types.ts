@@ -351,6 +351,8 @@ export interface StateSnapshot {
   windows: SnapshotWindow[]
   /** Currently open menus (context menus, dropdowns, etc.) */
   openMenus: SnapshotMenu[]
+  /** Currently open sheets/dialogs */
+  sheets?: SnapshotWindow[]
   /** Time taken to capture the snapshot in milliseconds */
   queryTimeMs: number
 }
@@ -451,6 +453,20 @@ export interface StateDiff {
   menusOpened: MenuChange[]
   /** Menus that were closed */
   menusClosed: MenuChange[]
+
+  /** Sheets/dialogs that were opened */
+  sheetsOpened: WindowChange[]
+  /** Sheets/dialogs that were closed */
+  sheetsClosed: WindowChange[]
+
+  /** Whether focused element expanded state changed */
+  expandedChanged: boolean
+  /** Expanded state before (if changed) */
+  expandedBefore?: boolean
+  /** Expanded state after (if changed) */
+  expandedAfter?: boolean
+  /** Element whose expanded state changed */
+  expandedElement?: SnapshotElement
 
   /** Summary of what changed (human-readable) */
   summary: string[]
