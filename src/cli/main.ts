@@ -4,6 +4,8 @@ import { Agent } from '../agent/Agent.js'
 import { logger } from '../utils/logger.js'
 import { traceLogger } from '../utils/trace.js'
 import { overlayClient } from '../utils/overlay.js'
+import { messageLayer } from '../message/index.js'
+import * as readline from 'readline'
 
 async function main() {
   const args = process.argv.slice(2)
@@ -11,6 +13,7 @@ async function main() {
   // Parse arguments
   let verbose = false
   let overlay = false
+  let interactive = false
   let provider: 'anthropic' | 'openai' | 'doubao' | undefined
   let task = ''
 
@@ -21,6 +24,8 @@ async function main() {
       verbose = true
     } else if (arg === '--overlay' || arg === '-o') {
       overlay = true
+    } else if (arg === '--interactive' || arg === '-i') {
+      interactive = true
     } else if (arg === '--help' || arg === '-h') {
       printHelp()
       process.exit(0)
@@ -47,11 +52,13 @@ async function main() {
     logger.setLevel('debug')
   }
 
-  if (!task) {
+  // 如果没有任务且没有 -i 标志，显示帮助
+  if (!task && !interactive) {
     console.log('Jarvis - Digital Employee Agent\n')
     console.log('Usage: jarvis "<task description>"\n')
     console.log('Example: jarvis "open Chrome and search for weather"\n')
     console.log('Options:')
+    console.log('  -i, --interactive      Interactive mode (wait for messages)')
     console.log('  -p, --provider <name>  Use specific provider (anthropic/openai/doubao)')
     console.log('  --anthropic            Use Anthropic Claude')
     console.log('  --openai               Use OpenAI')
@@ -76,10 +83,18 @@ async function main() {
   if (provider) {
     console.log(`[CONFIG] Provider: ${provider}\n`)
   }
+  if (interactive) {
+    console.log('[MODE] Interactive mode - type messages to send to agent\n')
+  }
+
+  // 启动终端输入监听（交互模式或有 overlay 时）
+  if (interactive || overlay) {
+    startTerminalInput()
+  }
 
   try {
-    const agent = new Agent({ provider, overlay })
-    await agent.run(task)
+    const agent = new Agent({ provider, overlay, interactive })
+    await agent.run(task || undefined)
   } catch (error) {
     logger.error('Agent error:', error)
     if (overlay) {
@@ -93,12 +108,36 @@ async function main() {
   }
 }
 
+/**
+ * 启动终端输入监听
+ * 用户输入的内容会被推送到消息队列
+ */
+function startTerminalInput() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  })
+
+  rl.on('line', (line) => {
+    const trimmed = line.trim()
+    if (trimmed) {
+      messageLayer.push('terminal', trimmed)
+      console.log(`[QUEUED] Message added to queue: ${trimmed}\n`)
+    }
+  })
+
+  rl.on('close', () => {
+    console.log('\n[JARVIS] Terminal input closed\n')
+  })
+}
+
 function printHelp() {
   console.log(`
 Jarvis - Digital Employee Agent
 
 Usage:
   jarvis "<task description>"
+  jarvis -i                          # Interactive mode
   jarvis --anthropic "<task description>"
   jarvis --openai "<task description>"
   jarvis --doubao "<task description>"
@@ -108,8 +147,10 @@ Examples:
   jarvis --anthropic "open WeChat and send a message"
   jarvis --doubao -o "search Minecraft in Chrome"
   jarvis -p openai "organize files on desktop"
+  jarvis -i -o -v                    # Interactive mode with overlay and verbose
 
 Options:
+  -i, --interactive      Interactive mode (no initial task, wait for messages)
   -p, --provider <name>  Use specific provider (anthropic/openai/doubao)
   --anthropic            Use Anthropic Claude
   --openai               Use OpenAI
@@ -117,6 +158,14 @@ Options:
   -o, --overlay          Enable overlay UI (connect to ws://127.0.0.1:19823)
   -v, --verbose          Show debug output
   -h, --help             Show this help
+
+Message Sources:
+  In interactive mode, you can send messages from:
+  - Terminal: Type directly in the console
+  - Overlay UI: Send via the GUI (requires -o flag)
+  - Email: (coming soon)
+
+  Messages are queued in data/messages.md and processed by the agent.
 
 Overlay UI:
   Start the overlay app first, then use -o flag to send messages to it.

@@ -38,10 +38,10 @@ export class OpenAIProvider extends BaseLLMProvider {
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = []
     const toolsPrompt = !this.nativeToolCall && tools ? buildToolsPrompt(tools) : ''
 
-    // Find the last user message (not tool result converted to user)
+    // Find the last user/computer message (not tool result converted to user)
     let lastUserMsgIndex = -1
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
+      if (messages[i].role === 'user' || messages[i].role === 'computer') {
         lastUserMsgIndex = i
         break
       }
@@ -53,14 +53,20 @@ export class OpenAIProvider extends BaseLLMProvider {
       if (msg.role === 'system') {
         const content = toolsPrompt ? msg.content + '\n' + toolsPrompt : msg.content
         openaiMessages.push({ role: 'system', content })
-      } else if (msg.role === 'user') {
+      } else if (msg.role === 'user' || msg.role === 'computer') {
+        // 'computer' role is treated as 'user' for API, but semantically different
         const content: OpenAI.ChatCompletionContentPart[] = []
+
+        // Add role indicator for computer messages
+        if (msg.role === 'computer') {
+          content.push({ type: 'text', text: '[COMPUTER FEEDBACK]' })
+        }
 
         if (msg.content) {
           content.push({ type: 'text', text: msg.content })
         }
 
-        // Add images to the last user message
+        // Add images to the last user/computer message
         if (i === lastUserMsgIndex && images.length > 0) {
           for (const img of images) {
             // Add image name/label as text before the image

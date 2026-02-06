@@ -3,7 +3,7 @@
 // ============ LLM Types ============
 
 export interface Message {
-  role: 'system' | 'user' | 'assistant' | 'tool'
+  role: 'system' | 'user' | 'assistant' | 'tool' | 'computer'
   content: string
   toolCallId?: string
   toolCalls?: ToolCall[]

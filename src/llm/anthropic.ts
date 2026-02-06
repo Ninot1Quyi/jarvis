@@ -41,10 +41,10 @@ export class AnthropicProvider extends BaseLLMProvider {
 
     const anthropicMessages: Anthropic.MessageParam[] = []
 
-    // Find the last user message index to add images only to it
+    // Find the last user/computer message index to add images only to it
     let lastUserIndex = -1
     for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
-      if (nonSystemMessages[i].role === 'user') {
+      if (nonSystemMessages[i].role === 'user' || nonSystemMessages[i].role === 'computer') {
         lastUserIndex = i
         break
       }
@@ -52,15 +52,21 @@ export class AnthropicProvider extends BaseLLMProvider {
 
     for (let i = 0; i < nonSystemMessages.length; i++) {
       const msg = nonSystemMessages[i]
-      if (msg.role === 'user') {
+      if (msg.role === 'user' || msg.role === 'computer') {
+        // 'computer' role is treated as 'user' for API, but semantically different
         const content: Anthropic.MessageParam['content'] = []
+
+        // Add role indicator for computer messages
+        if (msg.role === 'computer') {
+          (content as Anthropic.TextBlockParam[]).push({ type: 'text', text: '[COMPUTER FEEDBACK]' })
+        }
 
         // Add text content
         if (msg.content) {
           (content as Anthropic.TextBlockParam[]).push({ type: 'text', text: msg.content })
         }
 
-        // Add images only to the last user message
+        // Add images only to the last user/computer message
         if (i === lastUserIndex && images.length > 0) {
           for (const img of images) {
             // Add image name/label as text before the image

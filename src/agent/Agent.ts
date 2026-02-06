@@ -14,6 +14,7 @@ import { createProvider } from '../llm/index.js'
 import { screenshotTool } from './tools/system.js'
 import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry as SkillRegistryType } from '../skills/index.js'
 import { overlayClient } from '../utils/overlay.js'
+import { messageLayer, MessageLayer } from '../message/index.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -21,6 +22,7 @@ export interface AgentOptions {
   maxSteps?: number
   provider?: string
   overlay?: boolean
+  interactive?: boolean  // 交互模式：无初始任务，等待消息
 }
 
 interface ScreenContext {
@@ -53,10 +55,13 @@ export class Agent {
   private skillComposer: PromptComposer | null = null  // Skills系统
   private noToolCallCount: number = 0  // Track consecutive no-tool-call rounds
   private overlay: boolean = false  // 是否启用 overlay UI
+  private interactive: boolean = false  // 交互模式
+  private lastHadToolCall: boolean = false  // 上一轮是否有工具调用
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
     this.overlay = options.overlay || false
+    this.interactive = options.interactive || false
     const providerName = options.provider || config.defaultProvider
     this.llm = createProvider(providerName, config.keys)
     this.tools = toolRegistry
@@ -66,21 +71,13 @@ export class Agent {
     this.nativeToolCall = providerConfig?.nativeToolCall !== false
   }
 
-  async run(taskDescription: string): Promise<void> {
-    logger.info(`Starting task: ${taskDescription}`)
-
-    // Send task to overlay
-    if (this.overlay) {
-      overlayClient.sendUser(taskDescription)
-    }
-
-    const task: Task = {
-      id: Date.now().toString(),
-      description: taskDescription,
-      status: 'in_progress',
-      priority: 'medium',
-      createdAt: new Date(),
-      source: 'tui',
+  async run(taskDescription?: string): Promise<void> {
+    // 如果有初始任务，写入消息队列
+    if (taskDescription) {
+      messageLayer.push('terminal', taskDescription)
+      logger.info(`Starting with task: ${taskDescription}`)
+    } else {
+      logger.info('Starting in interactive mode, waiting for messages...')
     }
 
     ensureDir(config.screenshotDir)
@@ -101,29 +98,88 @@ export class Agent {
     const platform = getCurrentPlatform()
     let systemPrompt = getSystemPrompt(this.nativeToolCall, platform)
 
+    // 添加消息来源说明到 system prompt
+    systemPrompt += `
+
+## Message Sources
+
+You receive messages from multiple sources via <chat> tags:
+- <terminal>: Command line interface
+- <gui>: Overlay UI
+- <mail>: Email
+
+When replying to users, wrap your response in <chat> tags to specify which channel(s) to send to:
+
+<chat>
+<terminal>Your reply to terminal user</terminal>
+<gui>Your reply to GUI user</gui>
+</chat>
+
+Messages without <chat> tags are internal thoughts and won't be forwarded to users.
+The "computer" role messages contain system feedback (screenshots, tool results) - these are NOT from users.
+`
+
     // 使用Skills系统增强system prompt（追加用户自定义skills）
     if (this.skillComposer) {
       systemPrompt = this.skillComposer.compose(systemPrompt, platform)
     }
 
-    const userTemplate = getPrompt('user')
+    const computerTemplate = getPrompt('user')  // 复用 user template 作为 computer template
 
     // 消息历史
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
     ]
 
-    // 上一轮的工具执行结果（用于合并到下一轮的 user prompt）
+    // 上一轮的工具执行结果（用于合并到下一轮的 computer prompt）
     let lastToolResults: { toolCall: ToolCall; result: string }[] = []
+
+    // 当前任务描述（从消息队列获取）
+    let currentTask = '(waiting for user messages)'
 
     let stepCount = 0
     let finished = false
 
     while (stepCount < this.maxSteps && !finished) {
+      // 1. 检查消息队列，获取新的用户消息
+      const pendingMessages = messageLayer.getPending()
+
+      if (pendingMessages.length > 0) {
+        // 有新消息，注入到对话中
+        const chatContent = messageLayer.formatPendingAsChat()
+        if (chatContent) {
+          messages.push({ role: 'user', content: chatContent })
+
+          // 更新当前任务描述（用最新的消息）
+          currentTask = pendingMessages.map(m => m.content).join('; ')
+
+          // 标记消息为已消费
+          messageLayer.consumeAll(pendingMessages.map(m => m.id))
+
+          // Send to overlay
+          if (this.overlay) {
+            for (const msg of pendingMessages) {
+              overlayClient.sendUser(`[${msg.source}] ${msg.content}`)
+            }
+          }
+
+          logger.info(`Received ${pendingMessages.length} new message(s)`)
+        }
+
+        // 重置无工具调用计数
+        this.noToolCallCount = 0
+        this.lastHadToolCall = true  // 有新消息时视为需要继续
+      } else if (!this.lastHadToolCall && this.noToolCallCount >= 2) {
+        // 没有新消息，且上一轮没有工具调用，等待新消息
+        logger.info('Waiting for new messages...')
+        await this.waitForMessages(5000)  // 等待5秒
+        continue
+      }
+
       stepCount++
       logger.info(`Step ${stepCount}/${this.maxSteps}`)
 
-      // 截图
+      // 2. 截图
       const screenshotResult = await screenshotTool.execute(
         {},
         { screenshotDir: config.screenshotDir }
@@ -160,13 +216,13 @@ export class Agent {
       // 检测是否连续点击同一位置
       const reminder = this.checkRepeatedClicks()
 
-      // 构建 user 消息
+      // 3. 构建 computer 消息（系统反馈）
       const recentStepsText = this.steps.slice(-5).map((s, i) => {
         return `${i + 1}. [${s.toolCall.name}] ${JSON.stringify(s.toolCall.arguments)} -> ${s.result}`
       }).join('\n') || '(none)'
 
-      let userContent = fillTemplate(userTemplate, {
-        task: task.description,
+      let computerContent = fillTemplate(computerTemplate, {
+        task: currentTask,
         todos: '(none)',
         recentSteps: recentStepsText,
         relevantMemories: '(none)',
@@ -177,35 +233,35 @@ export class Agent {
 
       // 添加上一轮的工具执行结果
       if (lastToolResults.length > 0) {
-        userContent += '\n\n---\n\n## Tool Execution Results\n'
+        computerContent += '\n\n---\n\n## Tool Execution Results\n'
         for (const { toolCall, result } of lastToolResults) {
           // 简化参数显示
           const argsStr = Object.entries(toolCall.arguments)
             .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
             .join(', ')
-          userContent += `\n### ${toolCall.name}(${argsStr})\n\n`
+          computerContent += `\n### ${toolCall.name}(${argsStr})\n\n`
 
           // Parse and format the result for better readability
           try {
             const parsed = JSON.parse(result)
             if (parsed.message) {
               // message 字段包含格式化的反馈，直接显示
-              userContent += parsed.message.trim()
+              computerContent += parsed.message.trim()
               // 如果有 error，显示
               if (parsed.error) {
-                userContent += `\n\n**Error:** ${parsed.error}`
+                computerContent += `\n\n**Error:** ${parsed.error}`
               }
             } else if (parsed.error) {
-              userContent += `**Error:** ${parsed.error}`
+              computerContent += `**Error:** ${parsed.error}`
             } else if (parsed.data) {
-              userContent += JSON.stringify(parsed.data, null, 2)
+              computerContent += JSON.stringify(parsed.data, null, 2)
             } else {
-              userContent += result
+              computerContent += result
             }
           } catch {
-            userContent += result
+            computerContent += result
           }
-          userContent += '\n'
+          computerContent += '\n'
         }
         // 清空，准备下一轮
         lastToolResults = []
@@ -213,11 +269,11 @@ export class Agent {
 
       // 添加提醒
       if (reminder) {
-        userContent += `\n\n<reminder>${reminder}</reminder>`
+        computerContent += `\n\n<reminder>${reminder}</reminder>`
       }
 
-      // 添加 user 消息
-      messages.push({ role: 'user', content: userContent })
+      // 添加 computer 消息（系统反馈）
+      messages.push({ role: 'computer', content: computerContent })
 
       // 当前截图 - 主屏幕
       const images: ImageInput[] = [
@@ -225,7 +281,7 @@ export class Agent {
           type: 'path',
           data: screenshotData.path,
           mediaType: (screenshotData.mediaType || 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-          name: '主屏幕',
+          name: 'screen',
         },
       ]
 
@@ -241,7 +297,7 @@ export class Agent {
       // 清空待处理的工具截图
       this.pendingToolScreenshots = []
 
-      // 调用 LLM
+      // 4. 调用 LLM
       const response = await this.llm.chatWithVisionAndTools(
         messages,
         images,
@@ -255,9 +311,22 @@ export class Agent {
         logger.thought(response.content)
       }
 
-      // Send assistant response to overlay
+      // 5. 解析 <chat> 标签，分发回复
+      const chatReply = MessageLayer.parseReply(response.content || '')
+
       if (this.overlay) {
-        overlayClient.sendAssistant(response.content || '', response.toolCalls)
+        // 发送到 overlay
+        if (chatReply.gui) {
+          overlayClient.sendAssistant(chatReply.gui, response.toolCalls)
+        } else if (chatReply.terminal || response.content) {
+          // 如果没有 gui 回复，发送 terminal 或原始内容
+          overlayClient.sendAssistant(chatReply.terminal || response.content || '', response.toolCalls)
+        }
+      }
+
+      // 输出到终端
+      if (chatReply.terminal) {
+        console.log(`\n[ASSISTANT -> terminal] ${chatReply.terminal}\n`)
       }
 
       // 添加 assistant 消息
@@ -267,16 +336,18 @@ export class Agent {
         toolCalls: response.toolCalls,
       })
 
-      // 判断是否有工具调用
+      // 6. 判断是否有工具调用
       if (!response.toolCalls || response.toolCalls.length === 0) {
         this.noToolCallCount++
+        this.lastHadToolCall = false
 
         if (this.noToolCallCount >= 2) {
-          // Two consecutive no-tool-call rounds, stop
-          logger.info('No tool call for 2 consecutive rounds, stopping')
-          break
+          // 连续两轮没有工具调用，进入等待模式
+          logger.info('No tool call for 2 consecutive rounds, waiting for new messages...')
+          // 不退出，继续循环等待新消息
+          continue
         } else {
-          // First no-tool-call, add reminder and continue
+          // 第一次没有工具调用，添加提醒
           logger.info('No tool call (1st time), adding reminder and continuing')
           lastToolResults.push({
             toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
@@ -296,11 +367,12 @@ DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder
 
       // Reset counter when tools are called
       this.noToolCallCount = 0
+      this.lastHadToolCall = true
 
       // 记录本轮的点击坐标
       const currentRoundClicks: number[][] = []
 
-      // 执行工具调用
+      // 7. 执行工具调用
       for (const toolCall of response.toolCalls) {
         const result = await this.tools.execute(toolCall, {
           screenshotDir: config.screenshotDir,
@@ -348,7 +420,7 @@ DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder
         this.steps.push(step)
         await this.saveStep(step)
 
-        // 收集 tool 结果，下一轮合并到 user prompt
+        // 收集 tool 结果，下一轮合并到 computer prompt
         // 过滤掉 success 字段，避免误导 agent（实际成功与否需要看截图）
         const { success: _success, ...resultForAgent } = result
         const hasContent = resultForAgent.data || resultForAgent.message || resultForAgent.error
@@ -369,8 +441,7 @@ DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder
 
           if (data.needUserInput) {
             logger.info(`User input needed: ${data.message}`)
-            finished = true
-            break
+            // 不退出，等待用户输入
           }
         }
       }
@@ -387,6 +458,24 @@ DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder
     }
 
     logger.info(`Task completed in ${stepCount} steps`)
+  }
+
+  /**
+   * 等待新消息到达
+   */
+  private async waitForMessages(timeoutMs: number): Promise<boolean> {
+    const startTime = Date.now()
+    const checkInterval = 500  // 每500ms检查一次
+
+    while (Date.now() - startTime < timeoutMs) {
+      const pending = messageLayer.getPending()
+      if (pending.length > 0) {
+        return true
+      }
+      await new Promise(resolve => setTimeout(resolve, checkInterval))
+    }
+
+    return false
   }
 
   private async saveStep(step: Step): Promise<void> {
