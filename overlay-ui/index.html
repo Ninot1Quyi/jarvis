@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jarvis Overlay</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div id="app">
+      <div id="titlebar" data-tauri-drag-region>
+        <span class="title">Jarvis</span>
+        <div class="controls">
+          <button id="btn-minimize" title="Minimize">-</button>
+          <button id="btn-close" title="Close">x</button>
+        </div>
+      </div>
+      <div id="messages"></div>
+      <div id="status">
+        <span id="status-text">Waiting for agent...</span>
+      </div>
+    </div>
+  </body>
+</html>

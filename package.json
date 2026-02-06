@@ -26,10 +26,12 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@computer-use/nut-js": "^4.2.0",
-    "openai": "^4.77.0"
+    "openai": "^4.77.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.7.0"
   },
   "engines": {

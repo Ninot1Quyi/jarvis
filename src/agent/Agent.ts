@@ -13,12 +13,14 @@ import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
 import { screenshotTool } from './tools/system.js'
 import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry as SkillRegistryType } from '../skills/index.js'
+import { overlayClient } from '../utils/overlay.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
 export interface AgentOptions {
   maxSteps?: number
   provider?: string
+  overlay?: boolean
 }
 
 interface ScreenContext {
@@ -50,9 +52,11 @@ export class Agent {
   private nativeToolCall: boolean = true  // 是否使用原生工具调用
   private skillComposer: PromptComposer | null = null  // Skills系统
   private noToolCallCount: number = 0  // Track consecutive no-tool-call rounds
+  private overlay: boolean = false  // 是否启用 overlay UI
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
+    this.overlay = options.overlay || false
     const providerName = options.provider || config.defaultProvider
     this.llm = createProvider(providerName, config.keys)
     this.tools = toolRegistry
@@ -64,6 +68,11 @@ export class Agent {
 
   async run(taskDescription: string): Promise<void> {
     logger.info(`Starting task: ${taskDescription}`)
+
+    // Send task to overlay
+    if (this.overlay) {
+      overlayClient.sendUser(taskDescription)
+    }
 
     const task: Task = {
       id: Date.now().toString(),
@@ -246,6 +255,11 @@ export class Agent {
         logger.thought(response.content)
       }
 
+      // Send assistant response to overlay
+      if (this.overlay) {
+        overlayClient.sendAssistant(response.content || '', response.toolCalls)
+      }
+
       // 添加 assistant 消息
       messages.push({
         role: 'assistant',
@@ -294,6 +308,14 @@ DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder
           screenWidth: this.screenContext.screenWidth,
           screenHeight: this.screenContext.screenHeight,
         })
+
+        // Send tool result to overlay
+        if (this.overlay) {
+          const resultStr = result.success
+            ? (result.message || 'done')
+            : (result.error || 'failed')
+          overlayClient.sendTool(toolCall.name, resultStr)
+        }
 
         // 记录点击坐标
         if (toolCall.name === 'click') {

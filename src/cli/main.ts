@@ -3,12 +3,14 @@
 import { Agent } from '../agent/Agent.js'
 import { logger } from '../utils/logger.js'
 import { traceLogger } from '../utils/trace.js'
+import { overlayClient } from '../utils/overlay.js'
 
 async function main() {
   const args = process.argv.slice(2)
 
   // Parse arguments
   let verbose = false
+  let overlay = false
   let provider: 'anthropic' | 'openai' | 'doubao' | undefined
   let task = ''
 
@@ -17,6 +19,8 @@ async function main() {
 
     if (arg === '--verbose' || arg === '-v') {
       verbose = true
+    } else if (arg === '--overlay' || arg === '-o') {
+      overlay = true
     } else if (arg === '--help' || arg === '-h') {
       printHelp()
       process.exit(0)
@@ -46,12 +50,13 @@ async function main() {
   if (!task) {
     console.log('Jarvis - Digital Employee Agent\n')
     console.log('Usage: jarvis "<task description>"\n')
-    console.log('Example: jarvis "打开 Chrome 搜索今天的天气"\n')
+    console.log('Example: jarvis "open Chrome and search for weather"\n')
     console.log('Options:')
     console.log('  -p, --provider <name>  Use specific provider (anthropic/openai/doubao)')
     console.log('  --anthropic            Use Anthropic Claude')
     console.log('  --openai               Use OpenAI')
     console.log('  --doubao               Use Doubao')
+    console.log('  -o, --overlay          Enable overlay UI (connect to ws://127.0.0.1:19823)')
     console.log('  -v, --verbose          Show debug output')
     console.log('  -h, --help             Show this help')
     process.exit(0)
@@ -60,6 +65,12 @@ async function main() {
   // Always enable trace logging
   traceLogger.enable()
 
+  // Enable overlay if requested
+  if (overlay) {
+    overlayClient.enable()
+    console.log('[OVERLAY] Connecting to overlay UI...\n')
+  }
+
   console.log('[JARVIS] Starting...\n')
   console.log(`[TRACE] ${traceLogger.getTracePath()}\n`)
   if (provider) {
@@ -67,11 +78,18 @@ async function main() {
   }
 
   try {
-    const agent = new Agent({ provider })
+    const agent = new Agent({ provider, overlay })
     await agent.run(task)
   } catch (error) {
     logger.error('Agent error:', error)
+    if (overlay) {
+      overlayClient.sendError(`Agent error: ${error}`)
+    }
     process.exit(1)
+  } finally {
+    if (overlay) {
+      overlayClient.disable()
+    }
   }
 }
 
@@ -86,18 +104,23 @@ Usage:
   jarvis --doubao "<task description>"
 
 Examples:
-  jarvis "打开 Chrome 搜索今天的天气"
-  jarvis --anthropic "打开微信发送消息给张三"
-  jarvis --doubao "用 Chrome 搜索我的世界"
-  jarvis -p openai "整理桌面上的文件"
+  jarvis "open Chrome and search for weather"
+  jarvis --anthropic "open WeChat and send a message"
+  jarvis --doubao -o "search Minecraft in Chrome"
+  jarvis -p openai "organize files on desktop"
 
 Options:
   -p, --provider <name>  Use specific provider (anthropic/openai/doubao)
   --anthropic            Use Anthropic Claude
   --openai               Use OpenAI
   --doubao               Use Doubao
+  -o, --overlay          Enable overlay UI (connect to ws://127.0.0.1:19823)
   -v, --verbose          Show debug output
   -h, --help             Show this help
+
+Overlay UI:
+  Start the overlay app first, then use -o flag to send messages to it.
+  The overlay listens on ws://127.0.0.1:19823
 
 Trace:
   Conversation traces are automatically saved to data/traces/
