@@ -135,9 +135,6 @@ The "computer" role messages contain system feedback (screenshots, tool results)
     // 上一轮的工具执行结果（用于合并到下一轮的 computer prompt）
     let lastToolResults: { toolCall: ToolCall; result: string }[] = []
 
-    // 当前任务描述（从消息队列获取）
-    let currentTask = '(waiting for user messages)'
-
     let stepCount = 0
     let finished = false
 
@@ -150,9 +147,6 @@ The "computer" role messages contain system feedback (screenshots, tool results)
         const chatContent = messageLayer.formatPendingAsChat()
         if (chatContent) {
           messages.push({ role: 'user', content: chatContent })
-
-          // 更新当前任务描述（用最新的消息）
-          currentTask = pendingMessages.map(m => m.content).join('; ')
 
           // 标记消息为已消费
           messageLayer.consumeAll(pendingMessages.map(m => m.id))
@@ -232,8 +226,6 @@ The "computer" role messages contain system feedback (screenshots, tool results)
       }).join('\n') || '(none)'
 
       let computerContent = fillTemplate(computerTemplate, {
-        task: currentTask,
-        todos: '(none)',
         recentSteps: recentStepsText,
         relevantMemories: '(none)',
         mouseX: mouseX.toString(),
