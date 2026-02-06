@@ -5,46 +5,66 @@
 }
 
 :root {
-  --bg-color: rgba(30, 30, 30, 0.95);
-  --titlebar-bg: rgba(40, 40, 40, 0.98);
-  --text-color: #e0e0e0;
-  --text-muted: #888;
-  --border-color: rgba(255, 255, 255, 0.1);
-  --user-color: #4a9eff;
-  --assistant-color: #10b981;
-  --system-color: #f59e0b;
-  --error-color: #ef4444;
-  --tool-color: #8b5cf6;
+  /* Liquid Glass Colors */
+  --glass-bg: rgba(255, 255, 255, 0.12);
+  --glass-bg-hover: rgba(255, 255, 255, 0.18);
+  --glass-border: rgba(255, 255, 255, 0.25);
+  --glass-shadow: rgba(0, 0, 0, 0.3);
+  --glass-blur: 40px;
+
+  /* Text */
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-muted: rgba(255, 255, 255, 0.4);
+
+  /* Accent Colors - Vibrant for glass */
+  --user-color: #64b5f6;
+  --assistant-color: #81c784;
+  --system-color: #ffb74d;
+  --error-color: #e57373;
+  --tool-color: #b39ddb;
+
+  /* Traffic Light Buttons */
+  --btn-close: #ff5f57;
+  --btn-minimize: #febc2e;
+  --btn-maximize: #28c840;
 }
 
 html, body {
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  font-size: 12px;
-  color: var(--text-color);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 13px;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-color);
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 8px 32px var(--glass-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
-/* Titlebar */
+/* Titlebar - macOS Style */
 #titlebar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  height: 32px;
-  padding: 0 10px;
-  background: var(--titlebar-bg);
-  border-bottom: 1px solid var(--border-color);
+  height: 36px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   user-select: none;
   -webkit-user-select: none;
   cursor: grab;
@@ -55,39 +75,71 @@ html, body {
 }
 
 #titlebar .title {
-  font-weight: 600;
+  font-weight: 500;
   font-size: 13px;
-  color: var(--text-color);
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
+/* Traffic Light Buttons */
 #titlebar .controls {
   display: flex;
-  gap: 6px;
+  gap: 8px;
+  order: -1;
 }
 
 #titlebar .controls button {
-  width: 20px;
-  height: 20px;
+  width: 12px;
+  height: 12px;
   border: none;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text-muted);
-  font-size: 12px;
+  border-radius: 50%;
+  font-size: 0;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   transition: all 0.15s ease;
+  position: relative;
 }
 
-#titlebar .controls button:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: var(--text-color);
+#titlebar .controls button::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
 
-#btn-close:hover {
-  background: var(--error-color) !important;
-  color: white !important;
+#btn-close {
+  background: var(--btn-close);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+#btn-minimize {
+  background: var(--btn-minimize);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+#titlebar:hover #btn-close::before {
+  content: '\00d7';
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.5);
+  opacity: 1;
+}
+
+#titlebar:hover #btn-minimize::before {
+  content: '\2212';
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.5);
+  opacity: 1;
+}
+
+#titlebar .controls button:active {
+  transform: scale(0.9);
 }
 
 /* Messages container */
@@ -95,10 +147,10 @@ html, body {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 8px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 #messages::-webkit-scrollbar {
@@ -110,69 +162,86 @@ html, body {
 }
 
 #messages::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 3px;
 }
 
 #messages::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.25);
 }
 
-/* Message item */
+/* Message item - Glass Card */
 .message {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  border-left: 3px solid var(--border-color);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   word-wrap: break-word;
-  animation: fadeIn 0.2s ease;
+  animation: slideIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
-@keyframes fadeIn {
+.message::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+}
+
+@keyframes slideIn {
   from {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(8px) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
 .message.user {
-  border-left-color: var(--user-color);
+  border-color: rgba(100, 181, 246, 0.3);
+  background: linear-gradient(135deg, rgba(100, 181, 246, 0.15), rgba(100, 181, 246, 0.05));
 }
 
 .message.assistant {
-  border-left-color: var(--assistant-color);
+  border-color: rgba(129, 199, 132, 0.3);
+  background: linear-gradient(135deg, rgba(129, 199, 132, 0.15), rgba(129, 199, 132, 0.05));
 }
 
 .message.system {
-  border-left-color: var(--system-color);
+  border-color: rgba(255, 183, 77, 0.3);
+  background: linear-gradient(135deg, rgba(255, 183, 77, 0.15), rgba(255, 183, 77, 0.05));
 }
 
 .message.error {
-  border-left-color: var(--error-color);
-  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(229, 115, 115, 0.4);
+  background: linear-gradient(135deg, rgba(229, 115, 115, 0.2), rgba(229, 115, 115, 0.08));
 }
 
 .message.tool {
-  border-left-color: var(--tool-color);
-  background: rgba(139, 92, 246, 0.1);
+  border-color: rgba(179, 157, 219, 0.3);
+  background: linear-gradient(135deg, rgba(179, 157, 219, 0.15), rgba(179, 157, 219, 0.05));
 }
 
 .message-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .message-role {
   font-weight: 600;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
 }
 
 .message.user .message-role {
@@ -198,45 +267,49 @@ html, body {
 .message-time {
   font-size: 10px;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .message-content {
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
   white-space: pre-wrap;
-  color: var(--text-color);
+  color: var(--text-primary);
 }
 
 .message-content code {
-  background: rgba(255, 255, 255, 0.1);
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', Monaco, 'Fira Code', monospace;
   font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* Tool calls */
 .tool-calls {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-color);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .tool-call {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px;
+  padding: 6px 8px;
   margin-top: 4px;
-  background: rgba(139, 92, 246, 0.15);
-  border-radius: 4px;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  background: rgba(179, 157, 219, 0.12);
+  border-radius: 6px;
+  font-family: 'SF Mono', Monaco, 'Fira Code', monospace;
   font-size: 11px;
   color: var(--tool-color);
+  border: 1px solid rgba(179, 157, 219, 0.2);
 }
 
 .tool-call-icon {
   font-size: 10px;
+  opacity: 0.8;
 }
 
 /* Status bar */
@@ -244,15 +317,16 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 24px;
-  padding: 0 10px;
-  background: var(--titlebar-bg);
-  border-top: 1px solid var(--border-color);
+  height: 28px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 #status-text {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-muted);
+  font-weight: 500;
 }
 
 #status.connected #status-text {
@@ -263,12 +337,24 @@ html, body {
   color: var(--error-color);
 }
 
-/* Resize handle */
-.resize-handle {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 16px;
-  height: 16px;
-  cursor: se-resize;
+/* Pulse animation for connected status */
+#status.connected::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: var(--assistant-color);
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
 }
