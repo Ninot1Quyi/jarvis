@@ -2,7 +2,7 @@
  * Message Layer - 消息队列核心
  *
  * 负责：
- * 1. 接收来自多个来源的消息（terminal/gui/mail）
+ * 1. 接收来自多个来源的消息（tui/gui/mail）
  * 2. 持久化到 md 文件
  * 3. 提供给 Agent 消费
  */
@@ -10,7 +10,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-export type MessageSource = 'terminal' | 'gui' | 'mail'
+export type MessageSource = 'tui' | 'gui' | 'mail'
 
 export interface QueuedMessage {
   id: string
@@ -24,7 +24,7 @@ export interface QueuedMessage {
  * 解析 Assistant 回复中的 <chat> 标签
  */
 export interface ChatReply {
-  terminal?: string
+  tui?: string
   gui?: string
   mail?: string
 }
@@ -95,7 +95,7 @@ export class MessageLayer {
     if (pending.length === 0) return null
 
     const bySource: Record<MessageSource, string[]> = {
-      terminal: [],
+      tui: [],
       gui: [],
       mail: [],
     }
@@ -105,7 +105,7 @@ export class MessageLayer {
     }
 
     let chat = '<chat>\n'
-    for (const source of ['terminal', 'gui', 'mail'] as MessageSource[]) {
+    for (const source of ['tui', 'gui', 'mail'] as MessageSource[]) {
       if (bySource[source].length > 0) {
         const combined = bySource[source].join('\n---\n')
         chat += `<${source}>${combined}</${source}>\n`
@@ -127,8 +127,8 @@ export class MessageLayer {
 
     const chatContent = chatMatch[1]
 
-    const terminalMatch = chatContent.match(/<terminal>([\s\S]*?)<\/terminal>/)
-    if (terminalMatch) reply.terminal = terminalMatch[1].trim()
+    const tuiMatch = chatContent.match(/<tui>([\s\S]*?)<\/tui>/)
+    if (tuiMatch) reply.tui = tuiMatch[1].trim()
 
     const guiMatch = chatContent.match(/<gui>([\s\S]*?)<\/gui>/)
     if (guiMatch) reply.gui = guiMatch[1].trim()

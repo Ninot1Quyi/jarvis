@@ -6,13 +6,102 @@ import { traceLogger } from '../utils/trace.js'
 import { overlayClient } from '../utils/overlay.js'
 import { messageLayer } from '../message/index.js'
 import * as readline from 'readline'
+import { spawn, execSync, ChildProcess } from 'child_process'
+import * as path from 'path'
+import * as net from 'net'
+import { fileURLToPath } from 'url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const OVERLAY_UI_DIR = path.resolve(__dirname, '../../overlay-ui')
+const WS_PORT = 19823
+const VITE_PORT = 1420
+
+// ── UI process management ────────────────────────────────────────
+
+let uiProcess: ChildProcess | null = null
+
+function probePort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect(port, '127.0.0.1')
+    sock.on('connect', () => { sock.destroy(); resolve(true) })
+    sock.on('error', () => resolve(false))
+    sock.setTimeout(1000, () => { sock.destroy(); resolve(false) })
+  })
+}
+
+/** Kill stale processes left over from a previous run. */
+async function cleanStalePorts(): Promise<void> {
+  // WS port open means UI is fully alive -- nothing to clean
+  if (await probePort(WS_PORT)) return
+
+  // Vite port occupied without WS = orphaned Vite from last run
+  if (await probePort(VITE_PORT)) {
+    console.log('[JARVIS] Killing stale Vite process on port 1420...')
+    try { execSync(`lsof -ti:${VITE_PORT} | xargs kill -9`, { stdio: 'ignore' }) } catch {}
+    await new Promise(r => setTimeout(r, 500))
+  }
+}
+
+async function waitForUi(timeoutMs = 120_000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (await probePort(WS_PORT)) return
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  throw new Error(`Overlay UI did not start within ${timeoutMs / 1000}s`)
+}
+
+function spawnUi(): ChildProcess {
+  const child = spawn('npm', ['run', 'tauri', 'dev'], {
+    cwd: OVERLAY_UI_DIR,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: true,
+    detached: true,  // own process group so we can kill the whole tree
+  })
+
+  child.stdout?.on('data', (data: Buffer) => {
+    const text = data.toString().trim()
+    if (text) console.log(`[UI] ${text}`)
+  })
+  child.stderr?.on('data', (data: Buffer) => {
+    const text = data.toString().trim()
+    if (text && !text.includes('warning:')) console.error(`[UI] ${text}`)
+  })
+
+  child.on('exit', (code) => {
+    if (code !== null && code !== 0) {
+      console.error(`[UI] Process exited with code ${code}`)
+    }
+    uiProcess = null
+  })
+
+  // detached + unref so the child doesn't keep the parent alive on its own
+  child.unref()
+
+  return child
+}
+
+function killUi(): void {
+  if (!uiProcess || uiProcess.killed) { uiProcess = null; return }
+
+  const pid = uiProcess.pid
+  uiProcess = null
+
+  if (!pid) return
+
+  // Kill the entire process group (shell + npm + vite + cargo + tauri)
+  try { process.kill(-pid, 'SIGTERM') } catch {}
+  // Belt-and-suspenders: also nuke the ports directly
+  try { execSync(`lsof -ti:${VITE_PORT},${WS_PORT} | xargs kill -9 2>/dev/null`, { stdio: 'ignore' }) } catch {}
+}
+
+// ── Main ─────────────────────────────────────────────────────────
 
 async function main() {
   const args = process.argv.slice(2)
 
-  // Parse arguments
   let verbose = false
-  let overlay = false
+  let noUi = false
   let interactive = false
   let provider: 'anthropic' | 'openai' | 'doubao' | undefined
   let task = ''
@@ -22,8 +111,8 @@ async function main() {
 
     if (arg === '--verbose' || arg === '-v') {
       verbose = true
-    } else if (arg === '--overlay' || arg === '-o') {
-      overlay = true
+    } else if (arg === '--no-ui') {
+      noUi = true
     } else if (arg === '--interactive' || arg === '-i') {
       interactive = true
     } else if (arg === '--help' || arg === '-h') {
@@ -52,31 +141,45 @@ async function main() {
     logger.setLevel('debug')
   }
 
-  // 如果没有任务且没有 -i 标志，显示帮助
+  // No task and no interactive flag -> default to interactive
   if (!task && !interactive) {
-    console.log('Jarvis - Digital Employee Agent\n')
-    console.log('Usage: jarvis "<task description>"\n')
-    console.log('Example: jarvis "open Chrome and search for weather"\n')
-    console.log('Options:')
-    console.log('  -i, --interactive      Interactive mode (wait for messages)')
-    console.log('  -p, --provider <name>  Use specific provider (anthropic/openai/doubao)')
-    console.log('  --anthropic            Use Anthropic Claude')
-    console.log('  --openai               Use OpenAI')
-    console.log('  --doubao               Use Doubao')
-    console.log('  -o, --overlay          Enable overlay UI (connect to ws://127.0.0.1:19823)')
-    console.log('  -v, --verbose          Show debug output')
-    console.log('  -h, --help             Show this help')
-    process.exit(0)
+    interactive = true
   }
 
-  // Always enable trace logging
-  traceLogger.enable()
+  // ── Start overlay UI ───────────────────────────────────────────
 
-  // Enable overlay if requested
-  if (overlay) {
+  let overlay = false
+
+  if (!noUi) {
+    const alreadyRunning = await probePort(WS_PORT)
+
+    if (alreadyRunning) {
+      console.log('[JARVIS] Overlay UI already running\n')
+    } else {
+      await cleanStalePorts()
+      console.log('[JARVIS] Starting overlay UI...\n')
+      uiProcess = spawnUi()
+      await waitForUi()
+      console.log('[JARVIS] Overlay UI ready\n')
+    }
+
+    overlay = true
     overlayClient.enable()
-    console.log('[OVERLAY] Connecting to overlay UI...\n')
   }
+
+  // ── Cleanup handlers ───────────────────────────────────────────
+
+  const cleanup = () => {
+    killUi()
+    if (overlay) overlayClient.disable()
+  }
+  process.on('exit', cleanup)
+  process.on('SIGINT', () => { cleanup(); process.exit(0) })
+  process.on('SIGTERM', () => { cleanup(); process.exit(0) })
+
+  // ── Start agent ────────────────────────────────────────────────
+
+  traceLogger.enable()
 
   console.log('[JARVIS] Starting...\n')
   console.log(`[TRACE] ${traceLogger.getTracePath()}\n`)
@@ -84,10 +187,10 @@ async function main() {
     console.log(`[CONFIG] Provider: ${provider}\n`)
   }
   if (interactive) {
-    console.log('[MODE] Interactive mode - type messages to send to agent\n')
+    console.log('[MODE] Interactive - type messages or use overlay UI\n')
   }
 
-  // 启动终端输入监听（交互模式或有 overlay 时）
+  // Terminal input for interactive / overlay mode
   if (interactive || overlay) {
     startTerminalInput()
   }
@@ -101,17 +204,11 @@ async function main() {
       overlayClient.sendError(`Agent error: ${error}`)
     }
     process.exit(1)
-  } finally {
-    if (overlay) {
-      overlayClient.disable()
-    }
   }
 }
 
-/**
- * 启动终端输入监听
- * 用户输入的内容会被推送到消息队列
- */
+// ── Terminal input ───────────────────────────────────────────────
+
 function startTerminalInput() {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -121,8 +218,8 @@ function startTerminalInput() {
   rl.on('line', (line) => {
     const trimmed = line.trim()
     if (trimmed) {
-      messageLayer.push('terminal', trimmed)
-      console.log(`[QUEUED] Message added to queue: ${trimmed}\n`)
+      messageLayer.push('tui', trimmed)
+      console.log(`[QUEUED] ${trimmed}\n`)
     }
   })
 
@@ -131,53 +228,36 @@ function startTerminalInput() {
   })
 }
 
+// ── Help ─────────────────────────────────────────────────────────
+
 function printHelp() {
   console.log(`
 Jarvis - Digital Employee Agent
 
 Usage:
-  jarvis "<task description>"
-  jarvis -i                          # Interactive mode
-  jarvis --anthropic "<task description>"
-  jarvis --openai "<task description>"
-  jarvis --doubao "<task description>"
+  jarvis                               # Start UI + interactive mode
+  jarvis "<task>"                      # Start UI + run task
+  jarvis --no-ui "<task>"              # CLI only, no overlay UI
 
 Examples:
+  jarvis                               # Interactive with overlay UI
   jarvis "open Chrome and search for weather"
-  jarvis --anthropic "open WeChat and send a message"
-  jarvis --doubao -o "search Minecraft in Chrome"
-  jarvis -p openai "organize files on desktop"
-  jarvis -i -o -v                    # Interactive mode with overlay and verbose
+  jarvis --anthropic "send an email"
+  jarvis --no-ui -v "organize files"   # CLI only, verbose
 
 Options:
-  -i, --interactive      Interactive mode (no initial task, wait for messages)
+  -i, --interactive      Interactive mode (default when no task given)
+  --no-ui                Skip overlay UI, CLI only
   -p, --provider <name>  Use specific provider (anthropic/openai/doubao)
   --anthropic            Use Anthropic Claude
   --openai               Use OpenAI
   --doubao               Use Doubao
-  -o, --overlay          Enable overlay UI (connect to ws://127.0.0.1:19823)
   -v, --verbose          Show debug output
   -h, --help             Show this help
 
-Message Sources:
-  In interactive mode, you can send messages from:
-  - Terminal: Type directly in the console
-  - Overlay UI: Send via the GUI (requires -o flag)
-  - Email: (coming soon)
-
-  Messages are queued in data/messages.md and processed by the agent.
-
-Overlay UI:
-  Start the overlay app first, then use -o flag to send messages to it.
-  The overlay listens on ws://127.0.0.1:19823
-
-Trace:
-  Conversation traces are automatically saved to data/traces/
-
-Configuration:
-  Edit config/key.json to set API keys and model names.
-
-For more information, see REQUIREMENTS.md
+The overlay UI starts automatically. Use --no-ui to disable.
+Traces are saved to data/traces/
+Configuration: config/key.json
 `)
 }
 

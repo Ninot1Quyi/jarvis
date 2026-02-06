@@ -112,6 +112,26 @@ export interface ProviderConfig {
   apiType?: 'openai' | 'anthropic'
 }
 
+export interface MailConfig {
+  smtp: {
+    host: string
+    port: number
+    secure: boolean
+  }
+  pop3: {
+    host: string
+    port: number
+  }
+  imap: {
+    host: string
+    port: number
+  }
+  user: string
+  pass: string
+  pollInterval: number
+  whitelist: string[]
+}
+
 export interface KeyConfig {
   defaultProvider?: string
   mouseSpeed?: number
@@ -119,7 +139,8 @@ export interface KeyConfig {
   anthropic?: ProviderConfig
   openai?: ProviderConfig
   doubao?: ProviderConfig
-  [key: string]: ProviderConfig | string | number | undefined
+  mail?: MailConfig
+  [key: string]: ProviderConfig | MailConfig | string | number | undefined
 }
 
 export interface JarvisConfig {

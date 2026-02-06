@@ -15,6 +15,7 @@ import { screenshotTool } from './tools/system.js'
 import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry as SkillRegistryType } from '../skills/index.js'
 import { overlayClient } from '../utils/overlay.js'
 import { messageLayer, MessageLayer } from '../message/index.js'
+import { MailService, type MailConfig } from '../message/mail.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -60,6 +61,7 @@ export class Agent {
   private screenEnabled: boolean = true  // 屏幕截图开关，默认开启
   private currentTask: string = ''  // 当前任务
   private todoSummary: string = '(none)'  // TODO 摘要
+  private mailService: MailService | null = null  // 邮件服务
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -77,7 +79,7 @@ export class Agent {
   async run(taskDescription?: string): Promise<void> {
     // 如果有初始任务，写入消息队列
     if (taskDescription) {
-      messageLayer.push('terminal', taskDescription)
+      messageLayer.push('tui', taskDescription)
       logger.info(`Starting with task: ${taskDescription}`)
     } else {
       logger.info('Starting in interactive mode, waiting for messages...')
@@ -97,6 +99,14 @@ export class Agent {
       logger.warn('Failed to initialize skills system:', error)
     }
 
+    // 初始化邮件服务
+    const mailConfig = config.keys.mail as MailConfig | undefined
+    if (mailConfig && mailConfig.user && mailConfig.pass) {
+      this.mailService = new MailService(mailConfig)
+      this.mailService.start()
+      logger.info('Mail service started')
+    }
+
     // 获取组合后的系统提示（根据nativeToolCall和平台自动选择）
     const platform = getCurrentPlatform()
     let systemPrompt = getSystemPrompt(this.nativeToolCall, platform)
@@ -107,18 +117,51 @@ export class Agent {
 ## Message Sources
 
 You receive messages from multiple sources via <chat> tags:
-- <terminal>: Command line interface
+- <tui>: Terminal user interface (command line)
 - <gui>: Overlay UI
-- <mail>: Email
+- <mail>: Email (format: "[From: sender@example.com] [Subject: xxx]\nbody text")
 
-When replying to users, wrap your response in <chat> tags to specify which channel(s) to send to:
+When recording tasks to TODO, ALWAYS include the source. For mail, include the sender:
+- tui task: [P2][tui] do something
+- gui task: [P2][gui] do something
+- mail task: [P1][mail:sender@example.com] reply about Q4 report
+
+When replying, write <chat> tags directly in your text (NOT as a tool call):
 
 <chat>
-<terminal>Your reply to terminal user</terminal>
+<tui>Your reply to terminal user</tui>
 <gui>Your reply to GUI user</gui>
+<mail>
+<recipient>recipient@example.com</recipient>
+<title>Re: original subject</title>
+<content>
+Your reply content here
+</content>
+</mail>
 </chat>
 
-Messages without <chat> tags are internal thoughts and won't be forwarded to users.
+For mail replies: extract the sender's email from the [From: ...] field in the incoming mail message and put it in <recipient>.
+
+## Progress Reporting
+
+When working on a complex, long-running task, you SHOULD proactively report progress to the task source at key milestones. Do NOT wait until the task is fully complete -- send intermediate updates so the user knows you are making progress.
+
+Example: A mail task from boss@company.com to "research and summarize competitor products"
+- After finding the first batch of data:
+  <chat><mail><recipient>boss@company.com</recipient><title>Progress: Competitor Research</title><content>Found 5 competitor products so far. Analyzing pricing and features. Will send full report when done.</content></mail></chat>
+- After completing:
+  <chat><mail><recipient>boss@company.com</recipient><title>Complete: Competitor Research</title><content>Full report attached...</content></mail></chat>
+
+Example: A tui task to "set up the development environment"
+- After installing dependencies:
+  <chat><tui>Dependencies installed. Now configuring database connection...</tui></chat>
+- After completing:
+  <chat><tui>Development environment is ready. All services running.</tui></chat>
+
+Report progress at natural breakpoints: after each sub-step completes, when encountering blockers, or when significant time has passed.
+
+REMEMBER: <chat> is plain text markup, NOT a tool. Never call chat() as a function.
+Messages outside <chat> tags are your internal thoughts and will NOT be forwarded.
 The "computer" role messages contain system feedback (screenshots, tool results) - these are NOT from users.
 `
 
@@ -167,8 +210,7 @@ The "computer" role messages contain system feedback (screenshots, tool results)
         this.noToolCallCount = 0
         this.lastHadToolCall = true  // 有新消息时视为需要继续
       } else if (!this.lastHadToolCall && this.noToolCallCount >= 2) {
-        // 没有新消息，且上一轮没有工具调用，等待新消息
-        logger.info('Waiting for new messages...')
+        // 没有新消息，且上一轮没有工具调用，静默等待
         await this.waitForMessages(5000)  // 等待5秒
         continue
       }
@@ -335,15 +377,34 @@ Note: Screenshot is attached. If target window != focused window, first click ac
         // 发送到 overlay
         if (chatReply.gui) {
           overlayClient.sendAssistant(chatReply.gui, response.toolCalls)
-        } else if (chatReply.terminal || response.content) {
-          // 如果没有 gui 回复，发送 terminal 或原始内容
-          overlayClient.sendAssistant(chatReply.terminal || response.content || '', response.toolCalls)
+        } else if (chatReply.tui || response.content) {
+          // 如果没有 gui 回复，发送 tui 或原始内容
+          overlayClient.sendAssistant(chatReply.tui || response.content || '', response.toolCalls)
         }
       }
 
       // 输出到终端
-      if (chatReply.terminal) {
-        console.log(`\n[ASSISTANT -> terminal] ${chatReply.terminal}\n`)
+      if (chatReply.tui) {
+        console.log(`\n[ASSISTANT -> tui] ${chatReply.tui}\n`)
+      }
+
+      // 发送邮件回复
+      if (chatReply.mail && this.mailService) {
+        // 解析新格式: <recipient>...</recipient> <title>...</title> <content>...</content>
+        const recipientMatch = chatReply.mail.match(/<recipient>([\s\S]*?)<\/recipient>/)
+        const titleMatch = chatReply.mail.match(/<title>([\s\S]*?)<\/title>/)
+        const contentMatch = chatReply.mail.match(/<content>([\s\S]*?)<\/content>/)
+        if (recipientMatch) {
+          const to = recipientMatch[1].trim()
+          const subject = titleMatch ? titleMatch[1].trim() : 'Reply from Jarvis'
+          const body = contentMatch ? contentMatch[1].trim() : ''
+          this.mailService.send(to, subject, body).catch(err => {
+            logger.error('Failed to send mail reply:', err)
+          })
+          console.log(`\n[ASSISTANT -> mail] To: ${to}, Subject: ${subject}\n`)
+        } else {
+          console.log(`\n[ASSISTANT -> mail] (no recipient specified, skipped)\n`)
+        }
       }
 
       // 添加 assistant 消息
@@ -360,7 +421,7 @@ Note: Screenshot is attached. If target window != focused window, first click ac
 
         if (this.noToolCallCount >= 2) {
           // 连续两轮没有工具调用，进入等待模式
-          logger.info('No tool call for 2 consecutive rounds, waiting for new messages...')
+          logger.debug('No tool call for 2 consecutive rounds, waiting for new messages...')
           // 不退出，继续循环等待新消息
           continue
         } else {
@@ -369,13 +430,13 @@ Note: Screenshot is attached. If target window != focused window, first click ac
           lastToolResults.push({
             toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
             result: JSON.stringify({
-              message: `<reminder>[CRITICAL] No tool was called in your previous response!
+              message: `<reminder>No tool was called in your previous response.
+
+If you just replied to a user via <chat> tags (simple conversation), this is fine - no tool call needed.
 
 If the task is COMPLETE: You may skip tools again to confirm completion.
 
-If the task is NOT COMPLETE: You MUST call at least one tool NOW. Failure to do so will TERMINATE the task and cause CATASTROPHIC FAILURE.
-
-DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder>`
+If the task is NOT COMPLETE and requires GUI/file operations: You MUST call tools to make progress. Do not just describe what you plan to do - EXECUTE it with tool calls.</reminder>`
             })
           })
           continue

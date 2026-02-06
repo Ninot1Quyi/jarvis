@@ -1,17 +1,21 @@
 # Jarvis
 
-GUI automation agent powered by LLM.
+GUI automation agent powered by LLM. Unified entry point: starts the overlay UI and agent in one command.
 
 ## Quick Start
 
 ```bash
 # Install dependencies
 npm install
+cd overlay-ui && npm install && cd ..
 
-# Build
-npm run build
+# Overlay UI requires Rust
+# https://rustup.rs
 
-# Run
+# Build and run (interactive mode with overlay UI)
+npm run build && npm start
+
+# Run with a task
 npm start -- "打开 Chrome 搜索今天的天气"
 ```
 
@@ -31,28 +35,34 @@ npm start -- "用ppt给我画个房子，添加新的页面，合理排版，介
 ## Options
 
 ```bash
+-i, --interactive      # Interactive mode (default when no task given)
+--no-ui                # CLI only, skip overlay UI
 -p, --provider <name>  # Use specific provider (anthropic/openai/doubao)
 --anthropic            # Use Anthropic Claude
 --openai               # Use OpenAI
 --doubao               # Use Doubao
--o, --overlay          # Enable overlay UI (real-time message display)
 -v, --verbose          # Show debug output
+-h, --help             # Show help
 ```
 
-## Overlay UI
+## Startup Flow
 
-Real-time floating window displaying agent messages. Requires [Rust](https://rustup.rs/).
+`npm start` does the following automatically:
 
-```bash
-# Build (first time)
-cd overlay-ui && npm install && npm run tauri build
+1. Probes port 19823 -- if the overlay UI is already running, connects directly
+2. Otherwise cleans stale processes, spawns `tauri dev` in `overlay-ui/`, waits for the WebSocket server
+3. Enables overlay communication and starts the agent
+4. On exit (Ctrl+C), kills the entire UI process tree
 
-# Run overlay, then agent with -o flag
-open ./overlay-ui/src-tauri/target/release/bundle/macos/Jarvis.app  # macOS
-# .\overlay-ui\src-tauri\target\release\Jarvis.exe                  # Windows
+Use `--no-ui` to skip the overlay and run as a pure CLI agent.
 
-npm start -- "your task" -o
-```
+## Message Sources
+
+In interactive mode the agent accepts messages from multiple channels:
+
+- **Terminal** -- type directly in the console
+- **Overlay UI** -- send via the floating window
+- **Email** -- configure IMAP/SMTP in `config/key.json`, incoming mail is queued automatically
 
 ## Skills System
 
@@ -97,18 +107,16 @@ description: What this skill does and when to use it.
 Your instructions here...
 ```
 
-### Using Community Skills
-
-You can use any skill from the [Anthropic Skills Repository](https://github.com/anthropics/skills):
-
-```bash
-# Clone a skill to your project
-cp -r /path/to/anthropic-skills/skills/pdf ./skills/
-```
-
 ## Development
 
 ```bash
-npm run dev
+npm run dev   # tsc --watch
+npm start     # starts UI + agent
 ```
+
+## Configuration
+
+Edit `config/key.json` to set API keys, provider settings, and mail credentials.
+
+Traces are saved to `data/traces/`.
 
