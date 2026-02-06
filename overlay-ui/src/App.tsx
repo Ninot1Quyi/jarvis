@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 
 interface Message {
@@ -17,11 +18,6 @@ function formatTime(date: Date): string {
     minute: '2-digit',
     second: '2-digit',
   })
-}
-
-function truncateContent(content: string, maxLength: number = 500): string {
-  if (content.length <= maxLength) return content
-  return content.slice(0, maxLength) + '...'
 }
 
 function MessageItem({ msg, index, isNew = false }: { msg: Message; index: number; isNew?: boolean }) {
@@ -53,7 +49,7 @@ function MessageItem({ msg, index, isNew = false }: { msg: Message; index: numbe
       <div className="message-header">
         <span className="message-role">
           {msg.role}
-          {shouldShowExpand && <span className="expand-hint">{isExpanded ? ' −' : ' +'}</span>}
+          {shouldShowExpand && <span className="expand-hint">{isExpanded ? ' -' : ' +'}</span>}
         </span>
         <span className="message-time">{msg.timestamp}</span>
       </div>
@@ -76,8 +72,44 @@ function MessageItem({ msg, index, isNew = false }: { msg: Message; index: numbe
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [status, setStatus] = useState({ text: 'Waiting for agent...', type: 'normal' as 'normal' | 'connected' })
+  const [inputValue, setInputValue] = useState('')
+  const [isConnected, setIsConnected] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const initialLoadDone = useRef(false)
+
+  // Send message to agent
+  const sendMessage = async () => {
+    const content = inputValue.trim()
+    if (!content) return
+
+    try {
+      await invoke('send_to_agent', { content })
+
+      // Add to local messages
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: content,
+        timestamp: formatTime(new Date()),
+      }])
+
+      setInputValue('')
+    } catch (e) {
+      console.error('Failed to send message:', e)
+      setMessages(prev => [...prev, {
+        role: 'status',
+        content: `Failed to send: ${e}`,
+        timestamp: formatTime(new Date()),
+      }])
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
+    }
+  }
 
   // Handle context menu for window controls
   const handleContextMenu = async (e: React.MouseEvent) => {
@@ -137,11 +169,19 @@ function App() {
     const unlistenMessage = listen<Message>('agent-message', (event) => {
       setMessages(prev => [...prev, event.payload])
       setStatus({ text: 'Connected', type: 'connected' })
+      setIsConnected(true)
     })
 
     const unlistenStatus = listen<string>('agent-status', (event) => {
       const content = event.payload
       const lowerContent = content.toLowerCase()
+
+      // Check connection status
+      if (lowerContent.includes('connected') && !lowerContent.includes('disconnected')) {
+        setIsConnected(true)
+      } else if (lowerContent.includes('disconnected')) {
+        setIsConnected(false)
+      }
 
       // Check if it's an error message (STATUS) or normal system message
       const isError = lowerContent.includes('error') ||
@@ -167,6 +207,7 @@ function App() {
         timestamp: formatTime(new Date()),
       }])
       setStatus({ text: event.payload, type: 'normal' })
+      setIsConnected(false)
     })
 
     // Welcome message
@@ -206,6 +247,26 @@ function App() {
           const isNew = initialLoadDone.current && i >= messages.length - 3
           return <MessageItem key={i} msg={msg} index={i} isNew={isNew} />
         })}
+      </div>
+
+      <div id="input-area">
+        <input
+          ref={inputRef}
+          type="text"
+          id="message-input"
+          placeholder={isConnected ? "Type a message..." : "Waiting for agent..."}
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={!isConnected}
+        />
+        <button
+          id="send-button"
+          onClick={sendMessage}
+          disabled={!isConnected || !inputValue.trim()}
+        >
+          Send
+        </button>
       </div>
 
       <div id="status" className={status.type}>

@@ -6,6 +6,7 @@
  */
 
 import WebSocket from 'ws'
+import { messageLayer } from '../message/index.js'
 
 const WS_URL = 'ws://127.0.0.1:19823'
 const RECONNECT_INTERVAL = 3000
@@ -15,6 +16,12 @@ export interface OverlayMessage {
   content: string
   timestamp: string
   toolCalls?: string[]
+}
+
+// Message from UI to Agent
+interface UiMessage {
+  type: string  // "user_input"
+  content: string
 }
 
 class OverlayClient {
@@ -68,6 +75,20 @@ class OverlayClient {
         while (this.messageQueue.length > 0) {
           const msg = this.messageQueue.shift()
           if (msg) this.sendMessage(msg)
+        }
+      })
+
+      this.ws.on('message', (data) => {
+        // Handle messages from UI
+        try {
+          const msg: UiMessage = JSON.parse(data.toString())
+          if (msg.type === 'user_input' && msg.content) {
+            // Add to message queue with 'gui' source
+            messageLayer.push('gui', msg.content)
+            console.log(`[Overlay] Received from UI: ${msg.content}`)
+          }
+        } catch (e) {
+          console.error('[Overlay] Failed to parse UI message:', e)
         }
       })
 
