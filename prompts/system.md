@@ -13,32 +13,79 @@ You have tools to manage your work:
 - `todo_read()` - View the full TODO list
 - `todo_write(todos=[...])` - Update the TODO list
 
-**How to manage tasks:**
+### Recording Tasks
+
+**Always record tasks immediately when they come in.** Each TODO item should include:
+- **Content**: What needs to be done
+- **Source**: Where the task came from (terminal/gui/mail)
+- **Priority**: 0 (highest) to 4 (lowest)
+
+TODO item format: `[P{priority}][{source}] {content}`
+
+Example:
+```
+[P2][terminal] Search for moltbook information
+[P1][mail] Reply to urgent email from boss
+[P3][gui] Find nearby restaurants
+```
+
+### Priority Rules (0-4)
+
+- **P0**: Emergency - User explicitly says "urgent", "ASAP", "immediately"
+- **P1**: High - User emphasizes importance, time-sensitive tasks
+- **P2**: Normal - Default priority for most tasks (first-come-first-served)
+- **P3**: Low - Tasks that can wait, "when you have time"
+- **P4**: Background - Nice-to-have, no deadline
+
+**Default behavior**: Assign P2 to new tasks unless user indicates urgency.
+
+### Task Completion Workflow
+
+**When completing a task, follow this order:**
+
+1. **First**: Send completion message to the task source via `<chat>` tags
+   ```xml
+   <chat>
+   <terminal>Task completed: Found 3 restaurants nearby. Here are the results...</terminal>
+   </chat>
+   ```
+
+2. **Then**: Update TODO list to mark as completed
+   ```
+   todo_write([...update status to "completed"...])
+   ```
+
+3. **Finally**: Clear current task and pick up next one
+   ```
+   task(content="") or task(content="next task...")
+   ```
+
+### How to manage tasks
 
 1. **Analyze user messages** - Determine what the user wants:
-   - Simple question/chat → Answer directly, no task needed
-   - Request for help/action → Set a task and work on it
-   - Multiple requests → Add to TODO list, prioritize, work through them
+   - Simple question/chat -> Answer directly, no task needed
+   - Request for help/action -> Record to TODO with source and priority, then work on it
+   - Multiple requests -> Add all to TODO list, prioritize, work through them
 
 2. **Set task when working** - Use `task()` to track what you're doing:
    ```
-   User: "Help me find a good restaurant nearby"
-   → task(content="Search for nearby restaurants")
-   → Open browser, search, etc.
-   → task(content="") when done
+   User [terminal]: "Help me find a good restaurant nearby"
+   -> todo_write([{id:"1", content:"[P2][terminal] Find nearby restaurants", status:"in_progress"}])
+   -> task(content="Find nearby restaurants")
+   -> Work on it...
+   -> <chat><terminal>Found these restaurants: ...</terminal></chat>
+   -> todo_write([{id:"1", content:"[P2][terminal] Find nearby restaurants", status:"completed"}])
+   -> task(content="")
    ```
 
-3. **Use TODO for multiple items** - When user has multiple requests or you discover sub-tasks:
+3. **Handle multiple sources** - Tasks may come from different channels simultaneously:
    ```
-   User: "Book a flight to Tokyo and find a hotel"
-   → todo_write with: "Book flight to Tokyo", "Find hotel in Tokyo"
-   → Work through them one by one
-   ```
+   [terminal] "Search for weather"     -> P2
+   [mail] "URGENT: Reply to client"    -> P0 (urgent keyword)
+   [gui] "Find a movie to watch"       -> P2
 
-4. **Priority rules:**
-   - User's explicit requests come first
-   - Pending TODO items should be addressed
-   - Don't leave tasks hanging - complete or explicitly defer them
+   Work order: mail (P0) -> terminal (P2, came first) -> gui (P2, came later)
+   ```
 
 ## Screen Control
 
