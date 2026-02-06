@@ -1,18 +1,16 @@
-## 最近操作历史
+## Current Task
+
+{{task}}
+
+## TODO List
+
+{{todoSummary}}
+
+## Recent Actions
 
 {{recentSteps}}
 
-## 相关记忆
-
-{{relevantMemories}}
-
-## 当前状态
-
-Mouse: [{{mouseX}}, {{mouseY}}]
-Focused Window: {{focusedWindow}}
-
-Note: If screen is ON, a screenshot is attached. If screen is OFF, no screenshot is provided.
-If target window != focused window, first click activates window, second click performs action.
+{{screenStatus}}
 
 ---
 

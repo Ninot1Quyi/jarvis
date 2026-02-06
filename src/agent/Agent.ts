@@ -58,6 +58,8 @@ export class Agent {
   private interactive: boolean = false  // 交互模式
   private lastHadToolCall: boolean = false  // 上一轮是否有工具调用
   private screenEnabled: boolean = true  // 屏幕截图开关，默认开启
+  private currentTask: string = ''  // 当前任务
+  private todoSummary: string = '(none)'  // TODO 摘要
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -225,12 +227,22 @@ The "computer" role messages contain system feedback (screenshots, tool results)
         return `${i + 1}. [${s.toolCall.name}] ${JSON.stringify(s.toolCall.arguments)} -> ${s.result}`
       }).join('\n') || '(none)'
 
+      // 构建屏幕状态信息（仅当屏幕开启时显示）
+      let screenStatus = ''
+      if (this.screenEnabled) {
+        screenStatus = `## Screen Status
+
+Mouse: [${mouseX}, ${mouseY}]
+Focused Window: ${focusedWindow}
+
+Note: Screenshot is attached. If target window != focused window, first click activates window.`
+      }
+
       let computerContent = fillTemplate(computerTemplate, {
+        task: this.currentTask || '(none)',
+        todoSummary: this.todoSummary,
         recentSteps: recentStepsText,
-        relevantMemories: '(none)',
-        mouseX: mouseX.toString(),
-        mouseY: mouseY.toString(),
-        focusedWindow,
+        screenStatus,
       })
 
       // 添加上一轮的工具执行结果
@@ -417,6 +429,18 @@ DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder
           if (typeof data.screenEnabled === 'boolean') {
             this.screenEnabled = data.screenEnabled
             logger.info(`Screen capture ${this.screenEnabled ? 'enabled' : 'disabled'}`)
+          }
+
+          // 处理 task 工具的任务设置
+          if (data.taskSet) {
+            this.currentTask = (data.taskContent as string) || ''
+            logger.info(`Task ${this.currentTask ? 'set: ' + this.currentTask : 'cleared'}`)
+          }
+
+          // 处理 todo_write 工具的摘要更新
+          if (data.summary && toolCall.name === 'todo_write') {
+            this.todoSummary = data.summary as string
+            logger.info(`TODO updated: ${this.todoSummary}`)
           }
         }
 

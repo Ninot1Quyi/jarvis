@@ -183,6 +183,37 @@ export const takeScreenshotTool: Tool = {
   },
 }
 
+// Task control tool - set current task
+export const taskTool: Tool = {
+  definition: {
+    name: 'task',
+    description: 'Set your current task. This helps you stay focused on what you are doing. Set to empty string to clear the task when completed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description: 'The task description. Use empty string "" to clear the task.',
+        },
+      },
+      required: ['content'],
+    },
+  },
+  async execute(args) {
+    const content = (args.content as string).trim()
+    return {
+      success: true,
+      data: {
+        taskContent: content,
+        taskSet: true,
+      },
+      message: content
+        ? `Task set: ${content}`
+        : 'Task cleared.',
+    }
+  },
+}
+
 // Screen control tool - toggle screen capture on/off
 export const screenTool: Tool = {
   definition: {
@@ -222,4 +253,5 @@ export const systemTools: Tool[] = [
   callUserTool,
   takeScreenshotTool,
   screenTool,
+  taskTool,
 ]
