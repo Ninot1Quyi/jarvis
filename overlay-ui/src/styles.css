@@ -85,11 +85,10 @@ html, body, #root {
 
 #app::after {
   bottom: 0;
-  height: 80px;
+  height: 40px;
   background: linear-gradient(
     to top,
-    rgba(0, 0, 0, 0.1) 0%,
-    rgba(0, 0, 0, 0.03) 40%,
+    rgba(0, 0, 0, 0.03) 0%,
     transparent 100%
   );
 }
@@ -165,87 +164,174 @@ html, body, #root {
   background: rgba(255, 255, 255, 0.35);
 }
 
-/* Message item - Ultra transparent glass bubbles */
+/* Message item - Liquid glass bubbles with backdrop blur */
 .message {
   padding: 10px 14px;
-  border-radius: 11px;
+  border-radius: 14px;
   word-wrap: break-word;
-  animation: messageSlideIn 0.5s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  animation: messageFloatIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   position: relative;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow:
-    0 1px 4px rgba(0, 0, 0, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  transition: box-shadow 0.2s var(--ease-out),
-              border-color 0.2s var(--ease-out);
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
   margin-bottom: 10px;
-  flex-shrink: 0; /* Prevent flex items from shrinking */
+  flex-shrink: 0;
+  transform-origin: center bottom;
+  overflow: hidden;
 }
 
-/* Clickable messages - show cursor */
+/* Mouse follow edge refraction for message bubbles */
+.message-edge-refraction {
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.message.hovered .message-edge-refraction {
+  opacity: 1;
+}
+
+/* Clickable messages */
 .message.clickable {
   cursor: pointer;
-  transition: transform 0.2s var(--ease-out);
 }
 
 .message.clickable:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px) scale(1.005);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
-/* Ultra subtle highlight */
+/* Liquid glass highlight - soft inner glow */
 .message::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 40%;
-  border-radius: 11px 11px 0 0;
+  height: 50%;
+  border-radius: 14px 14px 0 0;
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.05) 0%,
     transparent 100%
   );
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* Edge shimmer effect */
+.message::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    transparent 30%,
+    transparent 70%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
   pointer-events: none;
   opacity: 0.6;
 }
 
-@keyframes messageSlideIn {
+/* Smooth spring animation for new messages */
+@keyframes messageFloatIn {
   0% {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(20px) scale(0.96);
+  }
+  60% {
+    transform: translateY(-4px) scale(1.01);
   }
   100% {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
-/* Message type tints - Middle brightness */
+/* Message type tints - Liquid glass with subtle color accents */
 .message.user {
-  background: rgba(255, 195, 125, 0.10);
-  border-color: rgba(255, 195, 125, 0.18);
+  background: rgba(255, 195, 125, 0.06);
+  border-color: rgba(255, 195, 125, 0.15);
+}
+
+.message.user:hover {
+  background: rgba(255, 195, 125, 0.09);
+  border-color: rgba(255, 195, 125, 0.22);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.1),
+    0 0 30px rgba(255, 195, 125, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .message.assistant {
-  background: rgba(145, 215, 145, 0.10);
-  border-color: rgba(145, 215, 145, 0.18);
+  background: rgba(145, 215, 145, 0.06);
+  border-color: rgba(145, 215, 145, 0.15);
+}
+
+.message.assistant:hover {
+  background: rgba(145, 215, 145, 0.09);
+  border-color: rgba(145, 215, 145, 0.22);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.1),
+    0 0 30px rgba(145, 215, 145, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .message.system {
-  background: rgba(255, 195, 125, 0.10);
+  background: rgba(255, 195, 125, 0.05);
+  border-color: rgba(255, 195, 125, 0.12);
+}
+
+.message.system:hover {
+  background: rgba(255, 195, 125, 0.08);
   border-color: rgba(255, 195, 125, 0.18);
 }
 
 .message.status {
+  background: rgba(255, 130, 130, 0.08);
+  border-color: rgba(255, 130, 130, 0.18);
+}
+
+.message.status:hover {
   background: rgba(255, 130, 130, 0.12);
-  border-color: rgba(255, 130, 130, 0.22);
+  border-color: rgba(255, 130, 130, 0.25);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.1),
+    0 0 25px rgba(255, 130, 130, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .message.tool {
+  background: rgba(205, 205, 205, 0.04);
+  border-color: rgba(205, 205, 205, 0.1);
+}
+
+.message.tool:hover {
   background: rgba(205, 205, 205, 0.07);
-  border-color: rgba(205, 205, 205, 0.14);
+  border-color: rgba(205, 205, 205, 0.15);
 }
 
 .message-header {
@@ -267,21 +353,22 @@ html, body, #root {
 
 .expand-hint {
   font-size: 10px;
-  opacity: 0.4;
+  opacity: 0.35;
   margin-left: 4px;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   font-weight: normal;
   display: inline-block;
-  transform: scale(1) rotate(0deg);
+  transform: scale(1);
 }
 
 .message.clickable:hover .expand-hint {
-  opacity: 0.7;
-  transform: scale(1.15) rotate(5deg);
+  opacity: 0.8;
+  transform: scale(1.1);
 }
 
 .message.clickable:active .expand-hint {
-  transform: scale(0.95) rotate(-5deg);
+  transform: scale(0.97);
+  transition: all 0.15s ease;
 }
 
 .message.user .message-role { color: rgba(255, 190, 120, 0.95); }
@@ -304,8 +391,8 @@ html, body, #root {
   position: relative;
   z-index: 1;
   overflow: hidden;
-  transition: max-height 0.6s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: max-height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   max-height: 80px;
   opacity: 0.95;
   padding-bottom: 4px;
@@ -357,38 +444,126 @@ html, body, #root {
   color: var(--text-primary);
 }
 
-/* Tool calls - Ultra transparent pills */
-.tool-calls {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--glass-border);
-  position: relative;
-  z-index: 1;
+/* Tool bubble - unified morphing component, fixed width */
+.tool-bubble {
+  margin-top: 6px;
+  display: inline-flex;
+  flex-direction: column;
+  width: 86px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.25s ease-out;
+  font-size: 8.5px;
+  color: rgba(200, 230, 200, 0.6);
+  overflow: hidden;
+  transform-origin: left top;
 }
 
-.tool-call {
+.tool-bubble:hover {
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(200, 230, 200, 0.8);
+}
+
+.tool-bubble.expanded {
+  border-radius: 10px;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.tool-bubble.expanded .tool-bubble-header {
+  width: auto;
+}
+
+/* Header - compact, fit content tightly */
+.tool-bubble-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  white-space: nowrap;
+  line-height: 1;
+  min-width: max-content;
+}
+
+.tool-bubble-icon {
+  font-size: 10px;
+  font-weight: 400;
+  color: rgba(140, 210, 140, 0.6);
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 10px;
+  line-height: 1;
+  margin-top: -1px;
+  flex-shrink: 0;
+}
+
+.tool-bubble:hover .tool-bubble-icon {
+  color: rgba(140, 210, 140, 0.9);
+}
+
+.tool-bubble-text {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Content - expands with the bubble from top-left, sync with width */
+.tool-bubble-content {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: all 0.25s ease-out;
+  padding: 0 8px;
+}
+
+.tool-bubble.expanded .tool-bubble-content {
+  max-height: 200px;
+  opacity: 1;
+  padding: 2px 8px 8px;
+}
+
+.tool-bubble.expanded .tool-item {
+  display: block;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-all;
+  padding-left: 12px;
+  position: relative;
+}
+
+.tool-bubble.expanded .tool-item::before {
+  position: absolute;
+  left: 0;
+  top: 2px;
+}
+
+/* Tool items - compact, no wrap */
+.tool-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
-  margin-top: 4px;
-  background: rgba(200, 200, 200, 0.04);
-  border-radius: 6px;
+  padding: 2px 0;
   font-family: 'SF Mono', Monaco, monospace;
+  font-size: 9px;
+  color: rgba(200, 230, 200, 0.65);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-item::before {
+  content: '›';
+  color: rgba(140, 210, 140, 0.45);
   font-size: 10px;
-  color: var(--tool-color);
-  border: 1px solid rgba(200, 200, 200, 0.08);
+  line-height: 1;
 }
 
-/* In assistant messages, tool calls use green tint */
-.message.assistant .tool-call {
-  background: rgba(140, 210, 140, 0.04);
-  border-color: rgba(140, 210, 140, 0.10);
-  color: rgba(140, 210, 140, 0.95);
-}
-
-.tool-call-icon {
-  opacity: 0.7;
+.tool-bubble:hover .tool-item {
+  color: rgba(200, 230, 200, 0.75);
 }
 
 /* Input area - Transparent to show messages behind */
@@ -495,7 +670,7 @@ html, body, #root {
     0 0 30px rgba(140, 210, 140, 0.1);
 }
 
-/* Inner glow - soft organic pulse */
+/* Inner glow - static soft highlight */
 .liquid-glass-backdrop::after {
   content: '';
   position: absolute;
@@ -503,7 +678,7 @@ html, body, #root {
   border-radius: 19px;
   background: radial-gradient(
     ellipse at 30% 20%,
-    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.06) 0%,
     transparent 50%
   );
   opacity: 0;
@@ -512,36 +687,11 @@ html, body, #root {
 }
 
 .liquid-glass-input-container.hovered .liquid-glass-backdrop::after {
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 .liquid-glass-input-container.focused .liquid-glass-backdrop::after {
-  opacity: 1;
-  animation: softGlow 4s ease-in-out infinite;
-}
-
-@keyframes softGlow {
-  0%, 100% {
-    background: radial-gradient(
-      ellipse at 30% 20%,
-      rgba(255, 255, 255, 0.06) 0%,
-      transparent 50%
-    );
-  }
-  33% {
-    background: radial-gradient(
-      ellipse at 70% 40%,
-      rgba(255, 255, 255, 0.08) 0%,
-      transparent 45%
-    );
-  }
-  66% {
-    background: radial-gradient(
-      ellipse at 40% 60%,
-      rgba(140, 210, 140, 0.06) 0%,
-      transparent 50%
-    );
-  }
+  opacity: 0.8;
 }
 
 /* Shimmer effect - subtle edge reflection */
@@ -561,27 +711,43 @@ html, body, #root {
   opacity: 1;
 }
 
-/* Top edge highlight */
+/* Mouse follow edge refraction - like light bending at glass edge */
+.edge-refraction {
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.liquid-glass-input-container.hovered .edge-refraction,
+.liquid-glass-input-container.focused .edge-refraction {
+  opacity: 1;
+}
+
+/* Top edge highlight - static */
 .liquid-glass-shimmer::before {
   content: '';
   position: absolute;
   top: 0;
-  left: 10%;
-  right: 10%;
+  left: 15%;
+  right: 15%;
   height: 1px;
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.2) 20%,
-    rgba(255, 255, 255, 0.35) 50%,
-    rgba(255, 255, 255, 0.2) 80%,
+    rgba(255, 255, 255, 0.15) 30%,
+    rgba(255, 255, 255, 0.25) 50%,
+    rgba(255, 255, 255, 0.15) 70%,
     transparent 100%
   );
-  animation: edgeShimmer 5s ease-in-out infinite;
+  opacity: 0.6;
   filter: blur(0.5px);
 }
 
-/* Soft internal reflection */
+/* Soft internal reflection - static */
 .liquid-glass-shimmer::after {
   content: '';
   position: absolute;
@@ -591,29 +757,7 @@ html, body, #root {
     rgba(255, 255, 255, 0.03) 0%,
     transparent 60%
   );
-  animation: reflectionDrift 6s ease-in-out infinite;
-}
-
-@keyframes edgeShimmer {
-  0%, 100% {
-    opacity: 0.4;
-    transform: translateX(-5%);
-  }
-  50% {
-    opacity: 0.8;
-    transform: translateX(5%);
-  }
-}
-
-@keyframes reflectionDrift {
-  0%, 100% {
-    opacity: 0.3;
-    transform: translateY(0);
-  }
-  50% {
-    opacity: 0.6;
-    transform: translateY(2px);
-  }
+  opacity: 0.4;
 }
 
 /* Textarea - Collapsed line style */
@@ -722,38 +866,6 @@ html, body, #root {
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.12),
     inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
-}
-
-/* Hover effects - Enhance color brightness */
-.message:hover {
-  box-shadow:
-    0 3px 12px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
-}
-
-.message.user:hover {
-  background: rgba(255, 195, 125, 0.14);
-  border-color: rgba(255, 195, 125, 0.24);
-}
-
-.message.assistant:hover {
-  background: rgba(145, 215, 145, 0.14);
-  border-color: rgba(145, 215, 145, 0.24);
-}
-
-.message.system:hover {
-  background: rgba(255, 195, 125, 0.14);
-  border-color: rgba(255, 195, 125, 0.24);
-}
-
-.message.status:hover {
-  background: rgba(255, 130, 130, 0.16);
-  border-color: rgba(255, 130, 130, 0.28);
-}
-
-.message.tool:hover {
-  background: rgba(205, 205, 205, 0.10);
-  border-color: rgba(205, 205, 205, 0.20);
 }
 
 /* Accessibility */

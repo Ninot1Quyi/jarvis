@@ -17,7 +17,9 @@ interface LiquidGlassInputProps {
 function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, isConnected = true }: LiquidGlassInputProps) {
   const [isFocused, setIsFocused] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
+  const [mousePos, setMousePos] = useState({ x: 50, y: 50 })
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -34,18 +36,39 @@ function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, is
     }
   }
 
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    const x = ((e.clientX - rect.left) / rect.width) * 100
+    const y = ((e.clientY - rect.top) / rect.height) * 100
+    setMousePos({ x, y })
+  }
+
   return (
     <div
+      ref={containerRef}
       className={`liquid-glass-input-container ${isFocused ? 'focused' : ''} ${isHovered ? 'hovered' : ''} ${disabled ? 'disabled' : ''} ${isConnected ? 'connected' : 'disconnected'}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={handleContainerClick}
+      onMouseMove={handleMouseMove}
     >
       {/* Backdrop blur layer */}
       <div className="liquid-glass-backdrop" />
       
       {/* Glass shimmer effect */}
       <div className="liquid-glass-shimmer" />
+
+      {/* Mouse follow edge refraction */}
+      <div 
+        className="edge-refraction"
+        style={{
+          background: `
+            radial-gradient(ellipse 120% 40% at ${mousePos.x}% -10%, rgba(255, 255, 255, 0.15) 0%, transparent 60%),
+            radial-gradient(ellipse 120% 40% at ${100 - mousePos.x}% 110%, rgba(255, 255, 255, 0.08) 0%, transparent 50%)
+          `,
+        }}
+      />
 
       {/* Connection status indicator */}
       <div className="connection-indicator" />
@@ -83,49 +106,101 @@ function formatTime(date: Date): string {
   })
 }
 
-function MessageItem({ msg, index, isNew = false }: { msg: Message; index: number; isNew?: boolean }) {
+function MessageItem({ msg }: { msg: Message }) {
   const [isExpanded, setIsExpanded] = useState(() => {
     // Tool messages default collapsed, assistant and status always expanded
     if (msg.role === 'tool') return false
     if (msg.role === 'assistant' || msg.role === 'status') return true
     return msg.content.length <= 150
   })
+  const [toolsExpanded, setToolsExpanded] = useState(false)
+  const [mousePos, setMousePos] = useState({ x: 50, y: 50 })
+  const [isHovered, setIsHovered] = useState(false)
+  const messageRef = useRef<HTMLDivElement>(null)
 
   const isLong = msg.content.length > 100
   const shouldShowExpand = isLong && msg.role === 'tool'
+  const hasToolCalls = msg.toolCalls && msg.toolCalls.length > 0
+  const isClickable = shouldShowExpand || (msg.role === 'assistant' && hasToolCalls)
 
   const handleClick = () => {
     if (shouldShowExpand) {
       setIsExpanded(!isExpanded)
+    } else if (msg.role === 'assistant' && hasToolCalls) {
+      setToolsExpanded(!toolsExpanded)
     }
   }
 
-  // Only apply animation delay for initial messages, not new ones
-  const animationStyle = isNew ? {} : { animationDelay: `${index * 0.06}s` }
+  const handleToolsClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setToolsExpanded(!toolsExpanded)
+  }
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!messageRef.current) return
+    const rect = messageRef.current.getBoundingClientRect()
+    const x = ((e.clientX - rect.left) / rect.width) * 100
+    const y = ((e.clientY - rect.top) / rect.height) * 100
+    setMousePos({ x, y })
+  }
+
+  // No animation delay - all messages render immediately
+  const animationStyle = {}
 
   return (
     <div
-      className={`message ${msg.role} ${shouldShowExpand ? 'clickable' : ''}`}
+      ref={messageRef}
+      className={`message ${msg.role} ${isClickable ? 'clickable' : ''} ${isHovered ? 'hovered' : ''}`}
       style={animationStyle}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onMouseMove={handleMouseMove}
       onClick={handleClick}
     >
+      {/* Mouse follow edge refraction for message bubble */}
+      <div 
+        className="message-edge-refraction"
+        style={{
+          background: `
+            radial-gradient(ellipse 100% 30% at ${mousePos.x}% -5%, rgba(255, 255, 255, 0.12) 0%, transparent 55%),
+            radial-gradient(ellipse 100% 30% at ${100 - mousePos.x}% 105%, rgba(255, 255, 255, 0.06) 0%, transparent 45%)
+          `,
+        }}
+      />
       <div className="message-header">
         <span className="message-role">
           {msg.role}
-          {shouldShowExpand && <span className="expand-hint">{isExpanded ? ' -' : ' +'}</span>}
+          {isClickable && (
+            <span className="expand-hint">
+              {msg.role === 'assistant' && hasToolCalls 
+                ? (toolsExpanded ? ' −' : ' +')
+                : (isExpanded ? ' −' : ' +')}
+            </span>
+          )}
         </span>
         <span className="message-time">{msg.timestamp}</span>
       </div>
       <div className={`message-content ${isExpanded ? 'expanded' : ''} ${msg.role === 'tool' ? 'tool-content' : ''}`}>
         {msg.content}
       </div>
-      {msg.toolCalls && msg.toolCalls.length > 0 && (
-        <div className="tool-calls">
-          {msg.toolCalls.map((tc, i) => (
-            <div key={i} className="tool-call">
-              <span className="tool-call-icon">&gt;</span> {tc}
-            </div>
-          ))}
+      {hasToolCalls && (
+        <div 
+          className={`tool-bubble ${toolsExpanded ? 'expanded' : ''}`}
+          onClick={handleToolsClick}
+        >
+          <div className="tool-bubble-header">
+            <span className="tool-bubble-icon">{toolsExpanded ? '−' : '+'}</span>
+            <span className="tool-bubble-text">
+              {msg.toolCalls!.length} tool{msg.toolCalls!.length > 1 ? 's' : ''} used
+            </span>
+          </div>
+          <div className="tool-bubble-content">
+            {msg.toolCalls!.map((tc, i) => (
+              <div key={i} className="tool-item">
+                {tc}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -298,10 +373,9 @@ function App() {
       </div>
 
       <div id="messages" ref={messagesRef}>
-        {messages.map((msg, i) => {
-          const isNew = initialLoadDone.current && i >= messages.length - 3
-          return <MessageItem key={i} msg={msg} index={i} isNew={isNew} />
-        })}
+        {messages.map((msg, i) => (
+          <MessageItem key={i} msg={msg} />
+        ))}
       </div>
 
       <div id="input-area">
