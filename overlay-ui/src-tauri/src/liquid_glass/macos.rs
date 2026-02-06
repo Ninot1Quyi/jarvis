@@ -97,6 +97,7 @@ fn set_window_appearance_active(window: &WebviewWindow) {
 }
 
 /// Remove the vibrancy effect from the window
+#[allow(dead_code)]
 pub fn remove_effect(window: &WebviewWindow) {
     use window_vibrancy::clear_vibrancy;
 

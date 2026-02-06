@@ -31,6 +31,7 @@ pub fn apply(window: &WebviewWindow) {
 }
 
 /// Remove liquid glass effect from a window.
+#[allow(dead_code)]
 pub fn remove(window: &WebviewWindow) {
     #[cfg(target_os = "macos")]
     macos::remove_effect(window);
