@@ -183,10 +183,43 @@ export const takeScreenshotTool: Tool = {
   },
 }
 
+// Screen control tool - toggle screen capture on/off
+export const screenTool: Tool = {
+  definition: {
+    name: 'screen',
+    description: 'Control screen capture. Use "open" to start receiving screenshots each turn, "close" to stop. Screenshots are NOT sent by default - you must open the screen first to see the desktop.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['open', 'close'],
+          description: 'Action to perform: "open" to start screen capture, "close" to stop',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  async execute(args) {
+    const action = args.action as 'open' | 'close'
+    return {
+      success: true,
+      data: {
+        screenEnabled: action === 'open',
+        action,
+      },
+      message: action === 'open'
+        ? 'Screen capture enabled. You will now receive screenshots each turn.'
+        : 'Screen capture disabled. You will no longer receive screenshots.',
+    }
+  },
+}
+
 // Export all system tools
 export const systemTools: Tool[] = [
   waitTool,
   finishedTool,
   callUserTool,
   takeScreenshotTool,
+  screenTool,
 ]

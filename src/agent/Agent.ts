@@ -57,6 +57,7 @@ export class Agent {
   private overlay: boolean = false  // 是否启用 overlay UI
   private interactive: boolean = false  // 交互模式
   private lastHadToolCall: boolean = false  // 上一轮是否有工具调用
+  private screenEnabled: boolean = false  // 屏幕截图开关，默认关闭
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -117,6 +118,16 @@ When replying to users, wrap your response in <chat> tags to specify which chann
 
 Messages without <chat> tags are internal thoughts and won't be forwarded to users.
 The "computer" role messages contain system feedback (screenshots, tool results) - these are NOT from users.
+
+## Screen Control
+
+By default, screen capture is DISABLED to save resources. You will NOT receive screenshots until you explicitly enable it.
+
+To see the screen, use the "screen" tool:
+- screen(action="open") - Start receiving screenshots each turn
+- screen(action="close") - Stop receiving screenshots
+
+IMPORTANT: If your task requires interacting with the GUI (clicking, typing, etc.), you MUST first call screen(action="open") to see what's on screen.
 `
 
     // 使用Skills系统增强system prompt（追加用户自定义skills）
@@ -179,31 +190,40 @@ The "computer" role messages contain system feedback (screenshots, tool results)
       stepCount++
       logger.info(`Step ${stepCount}/${this.maxSteps}`)
 
-      // 2. 截图
-      const screenshotResult = await screenshotTool.execute(
-        {},
-        { screenshotDir: config.screenshotDir }
-      )
-
-      if (!screenshotResult.success) {
-        logger.error('Failed to take screenshot')
-        break
-      }
-
-      const screenshotData = screenshotResult.data as {
+      // 2. 截图（仅当屏幕开启时）
+      let screenshotData: {
         path: string
         screenWidth: number
         screenHeight: number
         mediaType: string
-      }
+      } | null = null
 
-      this.screenContext = {
-        screenWidth: screenshotData.screenWidth,
-        screenHeight: screenshotData.screenHeight,
-      }
+      if (this.screenEnabled) {
+        const screenshotResult = await screenshotTool.execute(
+          {},
+          { screenshotDir: config.screenshotDir }
+        )
 
-      logger.debug(`Screenshot: ${screenshotData.path}`)
-      logger.debug(`Screen: ${this.screenContext.screenWidth}x${this.screenContext.screenHeight}`)
+        if (!screenshotResult.success) {
+          logger.error('Failed to take screenshot')
+          break
+        }
+
+        screenshotData = screenshotResult.data as {
+          path: string
+          screenWidth: number
+          screenHeight: number
+          mediaType: string
+        }
+
+        this.screenContext = {
+          screenWidth: screenshotData.screenWidth,
+          screenHeight: screenshotData.screenHeight,
+        }
+
+        logger.debug(`Screenshot: ${screenshotData.path}`)
+        logger.debug(`Screen: ${this.screenContext.screenWidth}x${this.screenContext.screenHeight}`)
+      }
 
       // 获取当前鼠标位置并转换为 [0, 1000] 坐标系
       const mousePos = await this.getMousePosition()
@@ -275,15 +295,18 @@ The "computer" role messages contain system feedback (screenshots, tool results)
       // 添加 computer 消息（系统反馈）
       messages.push({ role: 'computer', content: computerContent })
 
-      // 当前截图 - 主屏幕
-      const images: ImageInput[] = [
-        {
+      // 构建图片数组
+      const images: ImageInput[] = []
+
+      // 主屏幕截图（仅当屏幕开启时）
+      if (this.screenEnabled && screenshotData) {
+        images.push({
           type: 'path',
           data: screenshotData.path,
           mediaType: (screenshotData.mediaType || 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
           name: 'screen',
-        },
-      ]
+        })
+      }
 
       // 添加工具截图（如果有）
       for (const toolScreenshot of this.pendingToolScreenshots) {
@@ -407,12 +430,18 @@ DO NOT just describe what you plan to do - EXECUTE it with tool calls!</reminder
               mediaType: data.mediaType as string,
             })
           }
+
+          // 处理 screen 工具的开关状态
+          if (typeof data.screenEnabled === 'boolean') {
+            this.screenEnabled = data.screenEnabled
+            logger.info(`Screen capture ${this.screenEnabled ? 'enabled' : 'disabled'}`)
+          }
         }
 
         // 记录步骤
         const step: Step = {
           timestamp: Date.now(),
-          screenshotPath: screenshotData.path,
+          screenshotPath: screenshotData?.path || '',
           thought: response.content,
           toolCall,
           result: result.success ? 'success' : 'failed',
