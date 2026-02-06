@@ -19,7 +19,7 @@
         "height": 500,
         "x": null,
         "y": null,
-        "resizable": true,
+        "resizable": false,
         "fullscreen": false,
         "decorations": false,
         "transparent": true,
@@ -27,7 +27,11 @@
         "skipTaskbar": true,
         "visible": true,
         "focus": true,
-        "shadow": false
+        "shadow": false,
+        "windowEffects": {
+          "effects": ["acrylic"],
+          "state": "active"
+        }
       }
     ],
     "security": {

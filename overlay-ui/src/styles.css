@@ -33,11 +33,20 @@ html, body, #root {
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
   font-size: 13px;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Windows-specific adjustments */
+@supports (-webkit-app-region: no-drag) {
+  /* Windows webview2 specific styles */
+  html, body, #root {
+    /* Ensure transparency works on Windows */
+    background: transparent !important;
+  }
 }
 
 /* SVG Filter for Liquid Glass distortion */
