@@ -1,7 +1,9 @@
+mod liquid_glass;
+
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
 
@@ -87,6 +89,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
+
+            // Apply liquid glass effect to main window
+            if let Some(window) = app.get_webview_window("main") {
+                liquid_glass::apply(&window);
+            }
 
             // Start WebSocket server in background
             tauri::async_runtime::spawn(async move {

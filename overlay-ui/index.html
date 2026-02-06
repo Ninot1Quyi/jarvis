@@ -4,22 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Jarvis Overlay</title>
-    <link rel="stylesheet" href="/src/styles.css" />
-    <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
-    <div id="app">
-      <div id="titlebar" data-tauri-drag-region>
-        <span class="title">Jarvis</span>
-        <div class="controls">
-          <button id="btn-close" title="Close"></button>
-          <button id="btn-minimize" title="Minimize"></button>
-        </div>
-      </div>
-      <div id="messages"></div>
-      <div id="status">
-        <span id="status-text">Waiting for agent...</span>
-      </div>
-    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
