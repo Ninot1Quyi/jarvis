@@ -4,6 +4,69 @@ import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 
+// Liquid Glass Input Component
+interface LiquidGlassInputProps {
+  value: string
+  onChange: (value: string) => void
+  onSubmit: () => void
+  placeholder: string
+  disabled?: boolean
+  isConnected?: boolean
+}
+
+function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, isConnected = true }: LiquidGlassInputProps) {
+  const [isFocused, setIsFocused] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      if (value.trim()) {
+        onSubmit()
+      }
+    }
+  }
+
+  const handleContainerClick = () => {
+    if (!disabled && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }
+
+  return (
+    <div
+      className={`liquid-glass-input-container ${isFocused ? 'focused' : ''} ${isHovered ? 'hovered' : ''} ${disabled ? 'disabled' : ''} ${isConnected ? 'connected' : 'disconnected'}`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={handleContainerClick}
+    >
+      {/* Backdrop blur layer */}
+      <div className="liquid-glass-backdrop" />
+      
+      {/* Glass shimmer effect */}
+      <div className="liquid-glass-shimmer" />
+
+      {/* Connection status indicator */}
+      <div className="connection-indicator" />
+      
+      {/* Input field */}
+      <textarea
+        ref={inputRef}
+        className="liquid-glass-textarea"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        placeholder={disabled ? 'Waiting for agent...' : placeholder}
+        disabled={disabled}
+        rows={1}
+      />
+    </div>
+  )
+}
+
 interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool' | 'status'
   content: string
@@ -71,11 +134,10 @@ function MessageItem({ msg, index, isNew = false }: { msg: Message; index: numbe
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
-  const [status, setStatus] = useState({ text: 'Waiting for agent...', type: 'normal' as 'normal' | 'connected' })
+  const [, setStatus] = useState({ text: 'Waiting for agent...', type: 'normal' as 'normal' | 'connected' })
   const [inputValue, setInputValue] = useState('')
   const [isConnected, setIsConnected] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
   const initialLoadDone = useRef(false)
 
   // Send message to agent
@@ -101,13 +163,6 @@ function App() {
         content: `Failed to send: ${e}`,
         timestamp: formatTime(new Date()),
       }])
-    }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
     }
   }
 
@@ -250,28 +305,17 @@ function App() {
       </div>
 
       <div id="input-area">
-        <input
-          ref={inputRef}
-          type="text"
-          id="message-input"
-          placeholder={isConnected ? "Type a message..." : "Waiting for agent..."}
+        <LiquidGlassInput
           value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={!isConnected}
-        />
-        <button
-          id="send-button"
-          onClick={sendMessage}
-          disabled={!isConnected || !inputValue.trim()}
-        >
-          Send
-        </button>
+          onChange={setInputValue}
+          onSubmit={sendMessage}
+          placeholder={isConnected ? "Type a message..." : "Disconnected"}
+          disabled={false}
+          isConnected={isConnected}
+ />
       </div>
 
-      <div id="status" className={status.type}>
-        <span id="status-text">{status.text}</span>
-      </div>
+
     </div>
   )
 }
