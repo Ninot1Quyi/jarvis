@@ -41,83 +41,18 @@ npm start -- "用ppt给我画个房子，添加新的页面，合理排版，介
 
 ## Overlay UI
 
-Real-time floating window that displays agent messages during execution.
-
-### Features
-
-- Transparent, always-on-top window in bottom-right corner
-- Displays all message types: user, assistant, tool, system, error
-- Draggable titlebar, minimize/close buttons
-- WebSocket communication (decoupled architecture)
-
-### Build Overlay UI
-
-#### macOS
+Real-time floating window displaying agent messages. Requires [Rust](https://rustup.rs/).
 
 ```bash
-# Prerequisites: Xcode Command Line Tools
-xcode-select --install
+# Build (first time)
+cd overlay-ui && npm install && npm run tauri build
 
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Run overlay, then agent with -o flag
+open ./overlay-ui/src-tauri/target/release/bundle/macos/Jarvis.app  # macOS
+# .\overlay-ui\src-tauri\target\release\Jarvis.exe                  # Windows
 
-# Build overlay UI
-cd overlay-ui
-npm install
-npm run tauri build
-
-# Binary location
-# ./overlay-ui/src-tauri/target/release/bundle/macos/Jarvis.app
+npm start -- "your task" -o
 ```
-
-#### Windows
-
-```powershell
-# Prerequisites: Visual Studio Build Tools with C++ workload
-# Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-
-# Install Rust
-# Download and run: https://win.rustup.rs/
-
-# Build overlay UI
-cd overlay-ui
-npm install
-npm run tauri build
-
-# Binary location
-# .\overlay-ui\src-tauri\target\release\bundle\msi\Jarvis_*.msi
-```
-
-### Usage
-
-**Terminal 1: Start Overlay UI**
-
-```bash
-# macOS - run the built app
-open ./overlay-ui/src-tauri/target/release/bundle/macos/Jarvis.app
-
-# Or development mode
-cd overlay-ui && npm run tauri dev
-```
-
-```powershell
-# Windows - run the built app
-.\overlay-ui\src-tauri\target\release\Jarvis.exe
-
-# Or development mode
-cd overlay-ui; npm run tauri dev
-```
-
-**Terminal 2: Run Agent with Overlay**
-
-```bash
-npm start -- "your task here" -o
-
-# Example
-npm start -- "open Chrome and search for weather" -o -v
-```
-
-The overlay UI listens on `ws://127.0.0.1:19823`. The agent connects when `-o` flag is used.
 
 ## Skills System
 
