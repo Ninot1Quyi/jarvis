@@ -313,16 +313,10 @@ function App() {
         setIsConnected(false)
       }
 
-      // Check if it's an error message (STATUS) or normal system message
-      const isError = lowerContent.includes('error') ||
-                      lowerContent.includes('disconnected') ||
-                      lowerContent.includes('connection reset') ||
-                      lowerContent.includes('connection') && lowerContent.includes('reset') ||
-                      lowerContent.includes('failed') ||
-                      lowerContent.includes('timeout')
-
+      // All connection-related status messages should use 'status' role
+      // This includes "Agent connected", "disconnected", errors, etc.
       setMessages(prev => [...prev, {
-        role: isError ? 'status' : 'system',
+        role: 'status',
         content: content,
         timestamp: formatTime(new Date()),
       }])
