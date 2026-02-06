@@ -187,7 +187,7 @@ export const takeScreenshotTool: Tool = {
 export const screenTool: Tool = {
   definition: {
     name: 'screen',
-    description: 'Control screen capture. Use "open" to start receiving screenshots each turn, "close" to stop. Screenshots are NOT sent by default - you must open the screen first to see the desktop.',
+    description: 'Control screen capture. Screen is ON by default. Use "close" to stop receiving screenshots (for pure conversation), "open" to resume (for GUI tasks). Turning off screen when not needed saves resources.',
     parameters: {
       type: 'object',
       properties: {

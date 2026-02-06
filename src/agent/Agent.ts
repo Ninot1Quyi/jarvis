@@ -57,7 +57,7 @@ export class Agent {
   private overlay: boolean = false  // 是否启用 overlay UI
   private interactive: boolean = false  // 交互模式
   private lastHadToolCall: boolean = false  // 上一轮是否有工具调用
-  private screenEnabled: boolean = false  // 屏幕截图开关，默认关闭
+  private screenEnabled: boolean = true  // 屏幕截图开关，默认开启
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -118,16 +118,6 @@ When replying to users, wrap your response in <chat> tags to specify which chann
 
 Messages without <chat> tags are internal thoughts and won't be forwarded to users.
 The "computer" role messages contain system feedback (screenshots, tool results) - these are NOT from users.
-
-## Screen Control
-
-By default, screen capture is DISABLED to save resources. You will NOT receive screenshots until you explicitly enable it.
-
-To see the screen, use the "screen" tool:
-- screen(action="open") - Start receiving screenshots each turn
-- screen(action="close") - Stop receiving screenshots
-
-IMPORTANT: If your task requires interacting with the GUI (clicking, typing, etc.), you MUST first call screen(action="open") to see what's on screen.
 `
 
     // 使用Skills系统增强system prompt（追加用户自定义skills）

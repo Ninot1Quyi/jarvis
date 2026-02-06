@@ -14,14 +14,16 @@
 
 {{relevantMemories}}
 
-## 当前屏幕
+## 当前状态
 
 Mouse: [{{mouseX}}, {{mouseY}}]
 Focused Window: {{focusedWindow}}
-Note: If target window != focused window, first click activates window, second click performs action.
 
-[截图将作为图片附件发送]
+Note: If screen is ON, a screenshot is attached. If screen is OFF, no screenshot is provided.
+If target window != focused window, first click activates window, second click performs action.
 
 ---
 
-First, evaluate whether the previous action met expectations (respond "Action succeeded" or "Action failed: reason"). Then analyze the screen and call appropriate tools for the next step.
+Analyze the current situation and respond appropriately:
+- For conversation/questions: Reply directly (consider turning screen OFF if not needed)
+- For GUI tasks: Evaluate previous action, analyze screen, call appropriate tools
