@@ -209,9 +209,9 @@ The "computer" role messages contain system feedback (screenshots, tool results)
         // 重置无工具调用计数
         this.noToolCallCount = 0
         this.lastHadToolCall = true  // 有新消息时视为需要继续
-      } else if (!this.lastHadToolCall && this.noToolCallCount >= 2) {
-        // 没有新消息，且上一轮没有工具调用，静默等待
-        await this.waitForMessages(5000)  // 等待5秒
+      } else if (stepCount === 0 || (!this.lastHadToolCall && this.noToolCallCount >= 2)) {
+        // No messages yet: wait instead of burning an LLM call
+        await this.waitForMessages(5000)
         continue
       }
 
