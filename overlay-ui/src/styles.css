@@ -523,6 +523,22 @@ html, body, #root {
   width: auto;
 }
 
+/* Prevent text wrapping during width animation */
+.tool-bubble .tool-bubble-text,
+.tool-bubble .tool-item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Allow text wrapping only when fully expanded */
+.tool-bubble.expanded .tool-item {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-all;
+}
+
 /* Header - compact, fit content tightly */
 .tool-bubble-header {
   display: inline-flex;
@@ -575,10 +591,6 @@ html, body, #root {
 
 .tool-bubble.expanded .tool-item {
   display: block;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  word-break: break-all;
   padding-left: 12px;
   position: relative;
 }
@@ -589,7 +601,7 @@ html, body, #root {
   top: 2px;
 }
 
-/* Tool items - compact, no wrap */
+/* Tool items - compact, no wrap during animation */
 .tool-item {
   display: flex;
   align-items: center;
@@ -598,9 +610,6 @@ html, body, #root {
   font-family: 'SF Mono', Monaco, monospace;
   font-size: 9px;
   color: rgba(200, 230, 200, 0.65);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .tool-item::before {
