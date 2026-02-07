@@ -24,22 +24,27 @@ pub fn apply_effect(window: &WebviewWindow) {
     // Ensure window is fully transparent
     set_window_transparent(window);
 
-    // Use NSVisualEffectView with state=Active
-    // This ensures the background updates even when window is not focused
-    // HudWindow provides good transparency with blur
+    // Try FullScreenUI first for maximum transparency
     let result = apply_vibrancy(
         window,
-        NSVisualEffectMaterial::HudWindow, // Transparent HUD-style material
-        Some(NSVisualEffectState::Active), // KEY: Always active, never dims
-        Some(16.0),                        // Corner radius
+        NSVisualEffectMaterial::FullScreenUI, // Most transparent material
+        Some(NSVisualEffectState::Active),
+        Some(16.0),
     );
 
     match result {
         Ok(_) => {
-            println!("[liquid_glass] Applied vibrancy with state=Active");
+            println!("[liquid_glass] Applied FullScreenUI vibrancy");
         }
-        Err(e) => {
-            eprintln!("[liquid_glass] Vibrancy failed: {:?}", e);
+        Err(_) => {
+            // Fall back to HudWindow
+            let _ = apply_vibrancy(
+                window,
+                NSVisualEffectMaterial::HudWindow,
+                Some(NSVisualEffectState::Active),
+                Some(16.0),
+            );
+            println!("[liquid_glass] Applied HudWindow vibrancy");
         }
     }
 }
