@@ -115,24 +115,43 @@ function getMediaType(filePath: string): 'image' | 'video' | 'file' {
 }
 
 function AttachmentRenderer({ attachments }: { attachments: string[] }) {
+  console.log('[AttachmentRenderer] Rendering attachments:', attachments)
+  
   return (
     <div className="attachments-container">
       {attachments.map((filePath, i) => {
         const mediaType = getMediaType(filePath)
         const src = convertFileSrc(filePath)
         const fileName = filePath.split('/').pop() || filePath
+        
+        console.log(`[AttachmentRenderer] ${i}: ${fileName} (${mediaType}) -> ${src}`)
 
         if (mediaType === 'image') {
           return (
             <div key={i} className="attachment-image">
-              <img src={src} alt={fileName} loading="lazy" />
+              <img 
+                src={src} 
+                alt={fileName} 
+                loading="lazy" 
+                onError={(e) => {
+                  console.error(`[AttachmentRenderer] Failed to load image: ${src}`, e)
+                  ;(e.target as HTMLImageElement).style.display = 'none'
+                }}
+              />
             </div>
           )
         }
         if (mediaType === 'video') {
           return (
             <div key={i} className="attachment-video">
-              <video src={src} controls preload="metadata" />
+              <video 
+                src={src} 
+                controls 
+                preload="metadata"
+                onError={(e) => {
+                  console.error(`[AttachmentRenderer] Failed to load video: ${src}`, e)
+                }}
+              />
             </div>
           )
         }
@@ -346,6 +365,7 @@ function App() {
   // Listen for agent messages
   useEffect(() => {
     const unlistenMessage = listen<Message>('agent-message', (event) => {
+      console.log('[agent-message] Received:', event.payload)
       setMessages(prev => [...prev, event.payload])
       setStatus({ text: 'Connected', type: 'connected' })
       setIsConnected(true)
