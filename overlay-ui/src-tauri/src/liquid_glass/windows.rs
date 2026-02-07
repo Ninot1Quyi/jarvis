@@ -11,16 +11,13 @@ use tauri::WebviewWindow;
 /// - transparent: true in tauri.conf.json
 /// - decorations: false (to allow custom titlebar)
 pub fn apply_effect(window: &WebviewWindow) {
-    use window_vibrancy::{apply_mica, apply_acrylic};
+    use window_vibrancy::apply_acrylic;
 
-    // Try Mica first (Windows 11), fall back to Acrylic (Windows 10)
-    // Mica with dark mode (Some(true))
-    if apply_mica(window, Some(true)).is_err() {
-        // Acrylic with dark tint (18, 18, 18) at 70% opacity (180)
-        // This provides a consistent dark glass effect
-        if let Err(e) = apply_acrylic(window, Some((18, 18, 18, 180))) {
-            eprintln!("Failed to apply Acrylic effect: {}", e);
-        }
+    // Use Acrylic with dark tint for consistent dark theme
+    // RGB: 30, 30, 30 (dark gray) with 128 opacity (~50% transparent)
+    // This ensures background stays dark regardless of Windows theme
+    if let Err(e) = apply_acrylic(window, Some((30, 30, 30, 128))) {
+        eprintln!("Failed to apply Acrylic effect: {}", e);
     }
 }
 

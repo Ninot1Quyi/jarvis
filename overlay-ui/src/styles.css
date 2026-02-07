@@ -5,28 +5,49 @@
 }
 
 :root {
-  /* Colors - Ultra subtle for Liquid Glass */
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-muted: rgba(255, 255, 255, 0.4);
+  /* Dark Theme (Default) - Dark text on light glass */
+  --text-primary: rgba(0, 0, 0, 0.85);
+  --text-secondary: rgba(0, 0, 0, 0.6);
+  --text-muted: rgba(0, 0, 0, 0.4);
 
-  /* Neutral Accent Colors - User is now orange */
-  --user-color: rgba(255, 190, 120, 0.95);
-  --assistant-color: rgba(140, 210, 140, 0.95);
-  --system-color: rgba(255, 190, 120, 0.9);
-  --error-color: rgba(255, 120, 120, 0.9);
-  --tool-color: rgba(200, 200, 200, 0.85);
+  /* Neutral Accent Colors */
+  --user-color: rgba(230, 140, 50, 0.95);
+  --assistant-color: rgba(80, 170, 80, 0.95);
+  --system-color: rgba(230, 140, 50, 0.9);
+  --error-color: rgba(220, 80, 80, 0.9);
+  --tool-color: rgba(100, 100, 100, 0.85);
 
   /* Animation - More subtle */
   --spring-bounce: cubic-bezier(0.25, 0.1, 0.25, 1);
   --ease-out: cubic-bezier(0.25, 0.1, 0.25, 1);
 
-  /* Liquid Glass - No white background, pure color tints */
-  --glass-bg: rgba(255, 255, 255, 0);
-  --glass-bg-hover: rgba(255, 255, 255, 0.04);
-  --glass-border: rgba(255, 255, 255, 0.06);
-  --glass-border-hover: rgba(255, 255, 255, 0.12);
+  /* Liquid Glass - Light tint for light backgrounds */
+  --glass-bg: rgba(255, 255, 255, 0.25);
+  --glass-bg-hover: rgba(255, 255, 255, 0.35);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-border-hover: rgba(0, 0, 0, 0.15);
   --glass-shadow: rgba(0, 0, 0, 0.08);
+}
+
+/* Dark theme - Light text on dark glass */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text-primary: rgba(255, 255, 255, 0.92);
+    --text-secondary: rgba(255, 255, 255, 0.65);
+    --text-muted: rgba(255, 255, 255, 0.4);
+
+    --user-color: rgba(255, 190, 120, 0.95);
+    --assistant-color: rgba(140, 210, 140, 0.95);
+    --system-color: rgba(255, 190, 120, 0.9);
+    --error-color: rgba(255, 120, 120, 0.9);
+    --tool-color: rgba(200, 200, 200, 0.85);
+
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-bg-hover: rgba(255, 255, 255, 0.1);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-border-hover: rgba(255, 255, 255, 0.15);
+    --glass-shadow: rgba(0, 0, 0, 0.2);
+  }
 }
 
 html, body, #root {
