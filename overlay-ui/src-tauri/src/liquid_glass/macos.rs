@@ -26,12 +26,12 @@ pub fn apply_effect(window: &WebviewWindow) {
 
     // Use NSVisualEffectView with state=Active
     // This ensures the background updates even when window is not focused
-    // UnderWindowBackground is the most transparent material
+    // HudWindow provides good transparency with blur
     let result = apply_vibrancy(
         window,
-        NSVisualEffectMaterial::UnderWindowBackground, // Most transparent
+        NSVisualEffectMaterial::HudWindow, // Transparent HUD-style material
         Some(NSVisualEffectState::Active), // KEY: Always active, never dims
-        Some(12.0),                         // Corner radius
+        Some(16.0),                        // Corner radius
     );
 
     match result {
