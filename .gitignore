@@ -34,3 +34,6 @@ config/config.json
 # Environment
 .env
 .env.local
+
+# Agent workspace
+workspace/

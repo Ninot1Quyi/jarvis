@@ -12,10 +12,11 @@ const WS_URL = 'ws://127.0.0.1:19823'
 const RECONNECT_INTERVAL = 3000
 
 export interface OverlayMessage {
-  role: 'user' | 'assistant' | 'system' | 'tool' | 'error'
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'computer' | 'error'
   content: string
   timestamp: string
   toolCalls?: string[]
+  attachments?: string[]
 }
 
 // Message from UI to Agent
@@ -179,7 +180,7 @@ class OverlayClient {
   /**
    * Send an assistant message with optional tool calls
    */
-  sendAssistant(content: string, toolCalls?: { name: string; arguments: Record<string, unknown> }[]): void {
+  sendAssistant(content: string, toolCalls?: { name: string; arguments: Record<string, unknown> }[], attachments?: string[]): void {
     if (!this.enabled) return
 
     const msg: OverlayMessage = {
@@ -187,6 +188,7 @@ class OverlayClient {
       content,
       timestamp: this.formatTime(),
       toolCalls: toolCalls?.map(tc => `${tc.name}(${JSON.stringify(tc.arguments)})`),
+      attachments,
     }
 
     if (this.isConnected()) {
@@ -224,6 +226,25 @@ class OverlayClient {
     const msg: OverlayMessage = {
       role: 'tool',
       content: `${name}: ${result}`,
+      timestamp: this.formatTime(),
+    }
+
+    if (this.isConnected()) {
+      this.sendMessage(msg)
+    } else {
+      this.messageQueue.push(msg)
+    }
+  }
+
+  /**
+   * Send a computer message (system feedback)
+   */
+  sendComputer(content: string): void {
+    if (!this.enabled) return
+
+    const msg: OverlayMessage = {
+      role: 'computer',
+      content,
       timestamp: this.formatTime(),
     }
 

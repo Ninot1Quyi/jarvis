@@ -132,6 +132,12 @@ export interface MailConfig {
   whitelist: string[]
 }
 
+export interface NotificationConfig {
+  enabled: boolean
+  appWhitelist?: string[]
+  appBlacklist?: string[]
+}
+
 export interface KeyConfig {
   defaultProvider?: string
   mouseSpeed?: number
@@ -140,7 +146,8 @@ export interface KeyConfig {
   openai?: ProviderConfig
   doubao?: ProviderConfig
   mail?: MailConfig
-  [key: string]: ProviderConfig | MailConfig | string | number | undefined
+  notification?: NotificationConfig
+  [key: string]: ProviderConfig | MailConfig | NotificationConfig | string | number | undefined
 }
 
 export interface JarvisConfig {

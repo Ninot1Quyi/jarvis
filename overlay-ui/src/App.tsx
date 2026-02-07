@@ -3,6 +3,7 @@ import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
+import { marked } from 'marked'
 
 // Liquid Glass Input Component
 interface LiquidGlassInputProps {
@@ -91,7 +92,7 @@ function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, is
 }
 
 interface Message {
-  role: 'user' | 'assistant' | 'system' | 'tool' | 'status'
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'status' | 'computer'
   content: string
   timestamp: string
   toolCalls?: string[]
@@ -165,25 +166,108 @@ function AttachmentRenderer({ attachments }: { attachments: string[] }) {
   )
 }
 
+// Component for rendering markdown content
+function MarkdownContent({ content }: { content: string }) {
+  const htmlContent = marked.parse(content, { async: false }) as string
+  
+  return (
+    <div 
+      className="markdown-content"
+      dangerouslySetInnerHTML={{ __html: htmlContent }} 
+    />
+  )
+}
+
 function MessageItem({ msg }: { msg: Message }) {
+  // Debug log for each message render
+  console.log('[MessageItem] Rendering:', msg.role, msg.content?.slice(0, 50))
+  
   const [isExpanded, setIsExpanded] = useState(() => {
-    // Tool messages default collapsed, assistant and status always expanded
-    if (msg.role === 'tool') return false
-    if (msg.role === 'assistant' || msg.role === 'status') return true
-    return msg.content.length <= 150
+    // All messages expanded by default for better visibility
+    return true
   })
+  // Computer message fold state - default folded for computer messages
+  const [isComputerFolded, setIsComputerFolded] = useState(() => msg.role === 'computer')
+  
   const [toolsExpanded, setToolsExpanded] = useState(false)
   const [mousePos, setMousePos] = useState({ x: 50, y: 50 })
   const [isHovered, setIsHovered] = useState(false)
+  // Drag interaction states
+  const [isDragging, setIsDragging] = useState(false)
+  const isDraggingRef = useRef(isDragging)
+  const dragStartPos = useRef({ x: 0, y: 0 })
+  const hasDragged = useRef(false)
   const messageRef = useRef<HTMLDivElement>(null)
+  
+  // Spring physics for smooth drag
+  const springPos = useRef({ x: 0, y: 0 }) // Current spring position
+  const targetPos = useRef({ x: 0, y: 0 }) // Target position (mouse)
+  const animationRef = useRef<number | null>(null)
+  
+  // Keep ref in sync with state to avoid closure issues
+  useEffect(() => {
+    isDraggingRef.current = isDragging
+  }, [isDragging])
+  
+  // Spring physics animation loop
+  useEffect(() => {
+    if (!isDragging) return
+    
+    const springStrength = 0.15 // How fast it follows (0-1)
+    const friction = 0.7 // Damping factor (0-1)
+    let velocityX = 0
+    let velocityY = 0
+    
+    const animate = () => {
+      if (!messageRef.current) return
+      
+      // Spring physics: F = -k*x - c*v
+      const dx = targetPos.current.x - springPos.current.x
+      const dy = targetPos.current.y - springPos.current.y
+      
+      velocityX += dx * springStrength
+      velocityY += dy * springStrength
+      velocityX *= friction
+      velocityY *= friction
+      
+      springPos.current.x += velocityX
+      springPos.current.y += velocityY
+      
+      // Apply transform with slight scale for elastic feel
+      const scale = 1 - Math.min(Math.abs(springPos.current.x) * 0.002, 0.02)
+      messageRef.current.style.transform = `translate(${springPos.current.x}px, ${springPos.current.y}px) scale(${scale})`
+      messageRef.current.style.transition = 'none'
+      
+      if (isDraggingRef.current || Math.abs(velocityX) > 0.1 || Math.abs(velocityY) > 0.1) {
+        animationRef.current = requestAnimationFrame(animate)
+      }
+    }
+    
+    animationRef.current = requestAnimationFrame(animate)
+    
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+    }
+  }, [isDragging])
 
   const isLong = msg.content.length > 100
   const shouldShowExpand = isLong && msg.role === 'tool'
   const hasToolCalls = msg.toolCalls && msg.toolCalls.length > 0
-  const isClickable = shouldShowExpand || (msg.role === 'assistant' && hasToolCalls)
+  const isClickable = shouldShowExpand || (msg.role === 'assistant' && hasToolCalls) || msg.role === 'computer'
 
   const handleClick = () => {
-    if (shouldShowExpand) {
+    // Prevent click if was actually dragging (moved more than threshold)
+    if (hasDragged.current) {
+      hasDragged.current = false
+      return
+    }
+    
+    if (msg.role === 'computer') {
+      // Computer messages: click to toggle fold/unfold
+      setIsComputerFolded(!isComputerFolded)
+    } else if (shouldShowExpand) {
       setIsExpanded(!isExpanded)
     } else if (msg.role === 'assistant' && hasToolCalls) {
       setToolsExpanded(!toolsExpanded)
@@ -197,23 +281,120 @@ function MessageItem({ msg }: { msg: Message }) {
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!messageRef.current) return
+    
+    // Handle dragging - use ref to avoid closure issues
+    if (isDraggingRef.current) {
+      const deltaX = e.clientX - dragStartPos.current.x
+      const deltaY = e.clientY - dragStartPos.current.y
+      
+      // Rubber band effect: displacement slows down as it approaches max
+      const maxDrag = 25
+      const rubberBand = (val: number, max: number) => {
+        const absVal = Math.abs(val)
+        if (absVal <= max) return val
+        const overflow = absVal - max
+        const damped = max + overflow * 0.3 // Slow down beyond max
+        return val > 0 ? damped : -damped
+      }
+      
+      targetPos.current = {
+        x: rubberBand(deltaX, maxDrag),
+        y: rubberBand(deltaY, maxDrag)
+      }
+      
+      // Mark as dragged if moved more than 3px
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+        hasDragged.current = true
+      }
+      return
+    }
+    
+    // Handle edge refraction mouse follow
     const rect = messageRef.current.getBoundingClientRect()
     const x = ((e.clientX - rect.left) / rect.width) * 100
     const y = ((e.clientY - rect.top) / rect.height) * 100
     setMousePos({ x, y })
   }
 
-  // No animation delay - all messages render immediately
-  const animationStyle = {}
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only left mouse button
+    if (e.button !== 0) return
+    
+    // Prevent text selection during drag
+    e.preventDefault()
+    
+    setIsDragging(true)
+    isDraggingRef.current = true
+    hasDragged.current = false
+    dragStartPos.current = { x: e.clientX, y: e.clientY }
+  }
+
+  const handleMouseUp = () => {
+    setIsDragging(false)
+    // Spring animation will continue briefly due to velocity
+    // Then CSS transition takes over for final snap back
+    setTimeout(() => {
+      if (messageRef.current && !isDraggingRef.current) {
+        messageRef.current.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
+        messageRef.current.style.transform = 'translate(0px, 0px) scale(1)'
+        springPos.current = { x: 0, y: 0 }
+        targetPos.current = { x: 0, y: 0 }
+      }
+    }, 50)
+  }
+
+  const handleMouseLeave = () => {
+    setIsHovered(false)
+    if (isDraggingRef.current) {
+      setIsDragging(false)
+      setTimeout(() => {
+        if (messageRef.current && !isDraggingRef.current) {
+          messageRef.current.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
+          messageRef.current.style.transform = 'translate(0px, 0px) scale(1)'
+          springPos.current = { x: 0, y: 0 }
+          targetPos.current = { x: 0, y: 0 }
+        }
+      }, 50)
+    }
+  }
+  
+  // Global mouse up handler to catch drag release outside the element
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDraggingRef.current) {
+        setIsDragging(false)
+        setTimeout(() => {
+          if (messageRef.current && !isDraggingRef.current) {
+            messageRef.current.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
+            messageRef.current.style.transform = 'translate(0px, 0px) scale(1)'
+            springPos.current = { x: 0, y: 0 }
+            targetPos.current = { x: 0, y: 0 }
+          }
+        }, 50)
+      }
+    }
+    
+    if (isDragging) {
+      window.addEventListener('mouseup', handleGlobalMouseUp)
+      return () => window.removeEventListener('mouseup', handleGlobalMouseUp)
+    }
+  }, [isDragging])
+
+  // Cursor style only - transform is handled via direct DOM manipulation for performance
+  const dragStyle: React.CSSProperties = {
+    cursor: isDragging ? 'grabbing' : 'default',
+  }
 
   return (
     <div
       ref={messageRef}
-      className={`message ${msg.role} ${isClickable ? 'clickable' : ''} ${isHovered ? 'hovered' : ''}`}
-      style={animationStyle}
+      className={`message ${msg.role} ${isClickable ? 'clickable' : ''} ${isHovered ? 'hovered' : ''} ${isDragging ? 'dragging' : ''}`}
+      style={dragStyle}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseLeave={handleMouseLeave}
       onMouseMove={handleMouseMove}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
       onClick={handleClick}
     >
       {/* Mouse follow edge refraction for message bubble */}
@@ -233,15 +414,24 @@ function MessageItem({ msg }: { msg: Message }) {
             <span className="expand-hint">
               {msg.role === 'assistant' && hasToolCalls 
                 ? (toolsExpanded ? ' −' : ' +')
-                : (isExpanded ? ' −' : ' +')}
+                : msg.role === 'computer'
+                  ? (isComputerFolded ? ' +': ' −')
+                  : (isExpanded ? ' −' : ' +')}
             </span>
           )}
         </span>
         <span className="message-time">{msg.timestamp}</span>
       </div>
-      <div className={`message-content ${isExpanded ? 'expanded' : ''} ${msg.role === 'tool' ? 'tool-content' : ''}`}>
-        {msg.content}
-      </div>
+      {/* Computer message content - only show when expanded */}
+      {!(msg.role === 'computer' && isComputerFolded) && (
+        <div className={`message-content ${isExpanded ? 'expanded' : ''} ${msg.role === 'tool' ? 'tool-content' : ''} ${msg.role === 'computer' ? 'computer-content' : ''}`}>
+          {msg.role === 'computer' ? (
+            <MarkdownContent content={msg.content} />
+          ) : (
+            msg.content
+          )}
+        </div>
+      )}
       {hasToolCalls && (
         <div
           className={`tool-bubble ${toolsExpanded ? 'expanded' : ''}`}
@@ -274,14 +464,9 @@ function App() {
   const [, setStatus] = useState({ text: 'Waiting for agent...', type: 'normal' as 'normal' | 'connected' })
   const [inputValue, setInputValue] = useState('')
   const [isConnected, setIsConnected] = useState(false)
-  const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [theme] = useState<'light' | 'dark'>('dark')
   const messagesRef = useRef<HTMLDivElement>(null)
   const initialLoadDone = useRef(false)
-
-  // Toggle theme
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light')
-  }
 
   // Send message to agent
   const sendMessage = async () => {
@@ -364,9 +549,37 @@ function App() {
 
   // Listen for agent messages
   useEffect(() => {
-    const unlistenMessage = listen<Message>('agent-message', (event) => {
-      console.log('[agent-message] Received:', event.payload)
-      setMessages(prev => [...prev, event.payload])
+    const unlistenMessage = listen<any>('agent-message', (event) => {
+      console.log('[agent-message] Raw payload:', JSON.stringify(event.payload, null, 2))
+      
+      // Validate message format
+      const payload = event.payload
+      if (!payload || typeof payload !== 'object') {
+        console.error('[agent-message] Invalid payload:', payload)
+        return
+      }
+      
+      // Check for tool-related messages
+      if (payload.role === 'tool' || payload.toolCalls || payload.tool_calls) {
+        console.log('[agent-message] Tool message detected:', {
+          role: payload.role,
+          hasToolCalls: !!payload.toolCalls,
+          hasToolCallsSnake: !!payload.tool_calls,
+          content: payload.content?.slice(0, 50)
+        })
+      }
+      
+      // Ensure message has required fields
+      const validMessage: Message = {
+        role: payload.role || 'system',
+        content: payload.content || '',
+        timestamp: payload.timestamp || formatTime(new Date()),
+        toolCalls: payload.toolCalls || payload.tool_calls,
+        attachments: payload.attachments,
+      }
+      
+      console.log('[agent-message] Adding message:', validMessage)
+      setMessages(prev => [...prev, validMessage])
       setStatus({ text: 'Connected', type: 'connected' })
       setIsConnected(true)
     })
@@ -433,9 +646,6 @@ function App() {
     <div id="app" data-theme={theme} onContextMenu={handleContextMenu}>
       <div id="titlebar" data-tauri-drag-region>
         <span className="title">Jarvis</span>
-        <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
-          {theme === 'light' ? '☀️' : '🌙'}
-        </button>
       </div>
 
       <div id="messages" ref={messagesRef}>

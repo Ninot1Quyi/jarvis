@@ -16,6 +16,7 @@
   --system-color: rgba(230, 140, 50, 0.9);
   --error-color: rgba(220, 80, 80, 0.9);
   --tool-color: rgba(100, 100, 100, 0.85);
+  --computer-color: rgba(80, 160, 230, 0.95);
 
   /* Animation - More subtle */
   --spring-bounce: cubic-bezier(0.25, 0.1, 0.25, 1);
@@ -40,6 +41,7 @@
   --system-color: rgba(255, 190, 120, 0.9);
   --error-color: rgba(255, 120, 120, 0.9);
   --tool-color: rgba(200, 200, 200, 0.85);
+  --computer-color: rgba(120, 180, 255, 0.95);
 
   --glass-bg: rgba(255, 255, 255, 0.03);
   --glass-bg-hover: rgba(255, 255, 255, 0.08);
@@ -226,11 +228,11 @@ html, body, #root {
   box-shadow:
     0 2px 8px rgba(0, 0, 0, 0.06),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
   margin-bottom: 10px;
   flex-shrink: 0;
-  transform-origin: center bottom;
+  transform-origin: center center;
   overflow: hidden;
+  will-change: transform;
 }
 
 /* Mouse follow edge refraction for message bubbles */
@@ -253,11 +255,19 @@ html, body, #root {
   cursor: pointer;
 }
 
-.message.clickable:hover {
-  transform: translateY(-2px) scale(1.005);
+.message.clickable:hover:not(.dragging) {
   box-shadow:
     0 6px 20px rgba(0, 0, 0, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Dragging state - elastic pull effect */
+.message.dragging {
+  z-index: 10;
+}
+
+.message.dragging .message-edge-refraction {
+  opacity: 0.8;
 }
 
 /* Liquid glass highlight - soft inner glow */
@@ -382,6 +392,129 @@ html, body, #root {
   border-color: rgba(205, 205, 205, 0.15);
 }
 
+/* Computer messages - system feedback with blue tint */
+.message.computer {
+  background: rgba(100, 180, 255, 0.06);
+  border-color: rgba(100, 180, 255, 0.12);
+}
+
+.message.computer:hover {
+  background: rgba(100, 180, 255, 0.09);
+  border-color: rgba(100, 180, 255, 0.18);
+}
+
+/* Markdown content rendering */
+.markdown-content {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Expanded state */
+.markdown-content.expanded {
+  max-height: none;
+  overflow: visible;
+  transition: opacity 0.3s ease-out;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin: 8px 0 6px 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.markdown-content h1 { font-size: 14px; }
+.markdown-content h2 { font-size: 13px; }
+.markdown-content h3 { font-size: 12px; }
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 { font-size: 12px; }
+
+.markdown-content p {
+  margin: 4px 0;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 4px 0;
+  padding-left: 16px;
+}
+
+.markdown-content li {
+  margin: 2px 0;
+}
+
+.markdown-content code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: 'SF Mono', Monaco, 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.markdown-content pre {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-content blockquote {
+  border-left: 3px solid rgba(100, 180, 255, 0.5);
+  margin: 6px 0;
+  padding-left: 10px;
+  color: var(--text-secondary);
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 8px 0;
+}
+
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 11px;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.markdown-content th {
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+}
+
+.markdown-content a {
+  color: rgba(100, 180, 255, 0.9);
+  text-decoration: none;
+}
+
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+
+/* Computer message content area */
+.computer-content {
+  cursor: pointer;
+}
+
 .message-header {
   display: flex;
   justify-content: space-between;
@@ -397,6 +530,8 @@ html, body, #root {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .expand-hint {
@@ -424,11 +559,14 @@ html, body, #root {
 .message.system .message-role { color: var(--system-color); }
 .message.status .message-role { color: rgba(255, 130, 130, 0.95); }
 .message.tool .message-role { color: var(--tool-color); }
+.message.computer .message-role { color: var(--computer-color); }
 
 .message-time {
   font-size: 10px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .message-content {
@@ -546,6 +684,8 @@ html, body, #root {
   gap: 3px;
   padding: 3px 6px;
   white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
   line-height: 1;
   min-width: max-content;
 }
@@ -556,6 +696,8 @@ html, body, #root {
   color: rgba(140, 210, 140, 0.6);
   transition: all 0.2s ease;
   display: inline-flex;
+  user-select: none;
+  -webkit-user-select: none;
   align-items: center;
   justify-content: center;
   width: 10px;
@@ -572,6 +714,8 @@ html, body, #root {
 .tool-bubble-text {
   font-weight: 500;
   white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Content - expands with the bubble from top-left, sync with width */
@@ -954,6 +1098,14 @@ html, body, #root {
   margin-top: 8px;
   position: relative;
   z-index: 1;
+  align-items: center; /* Center attachments horizontally */
+}
+
+.attachment-image {
+  display: flex;
+  justify-content: center; /* Center image horizontally */
+  align-items: center;
+  width: 100%;
 }
 
 .attachment-image img {
@@ -962,6 +1114,13 @@ html, body, #root {
   border-radius: 8px;
   object-fit: contain;
   display: block;
+}
+
+.attachment-video {
+  display: flex;
+  justify-content: center; /* Center video horizontally */
+  align-items: center;
+  width: 100%;
 }
 
 .attachment-video video {

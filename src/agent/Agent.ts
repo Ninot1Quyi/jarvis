@@ -13,9 +13,9 @@ import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
 import { screenshotTool } from './tools/system.js'
 import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry as SkillRegistryType } from '../skills/index.js'
-import { overlayClient } from '../utils/overlay.js'
-import { messageLayer, MessageLayer } from '../message/index.js'
-import { MailService, type MailConfig } from '../message/mail.js'
+import { messageManager } from '../message/MessageManager.js'
+import { type MailConfig } from '../message/mail.js'
+import type { NotificationConfig } from '../notification/types.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -61,7 +61,6 @@ export class Agent {
   private screenEnabled: boolean = true  // 屏幕截图开关，默认开启
   private currentTask: string = ''  // 当前任务
   private todoSummary: string = '(none)'  // TODO 摘要
-  private mailService: MailService | null = null  // 邮件服务
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -79,7 +78,7 @@ export class Agent {
   async run(taskDescription?: string): Promise<void> {
     // 如果有初始任务，写入消息队列
     if (taskDescription) {
-      messageLayer.push('tui', taskDescription)
+      messageManager.pushInbound('tui', taskDescription)
       logger.info(`Starting with task: ${taskDescription}`)
     } else {
       logger.info('Starting in interactive mode, waiting for messages...')
@@ -99,71 +98,16 @@ export class Agent {
       logger.warn('Failed to initialize skills system:', error)
     }
 
-    // 初始化邮件服务
-    const mailConfig = config.keys.mail as MailConfig | undefined
-    if (mailConfig && mailConfig.user && mailConfig.pass) {
-      this.mailService = new MailService(mailConfig)
-      this.mailService.start()
-      logger.info('Mail service started')
-    }
+    // Initialize message manager (channels + deliverers)
+    messageManager.init({
+      overlay: this.overlay,
+      mailConfig: config.keys.mail as MailConfig | undefined,
+      notificationConfig: config.keys.notification as NotificationConfig | undefined,
+    })
 
     // 获取组合后的系统提示（根据nativeToolCall和平台自动选择）
     const platform = getCurrentPlatform()
     let systemPrompt = getSystemPrompt(this.nativeToolCall, platform)
-
-    // 添加消息来源说明到 system prompt
-    systemPrompt += `
-
-## Message Sources
-
-You receive messages from multiple sources via <chat> tags:
-- <tui>: Terminal user interface (command line)
-- <gui>: Overlay UI
-- <mail>: Email (format: "[From: sender@example.com] [Subject: xxx]\nbody text")
-
-When recording tasks to TODO, ALWAYS include the source. For mail, include the sender:
-- tui task: [P2][tui] do something
-- gui task: [P2][gui] do something
-- mail task: [P1][mail:sender@example.com] reply about Q4 report
-
-When replying, write <chat> tags directly in your text (NOT as a tool call):
-
-<chat>
-<tui>Your reply to terminal user</tui>
-<gui>Your reply to GUI user</gui>
-<mail>
-<recipient>recipient@example.com</recipient>
-<title>Re: original subject</title>
-<content>
-Your reply content here
-</content>
-</mail>
-</chat>
-
-For mail replies: extract the sender's email from the [From: ...] field in the incoming mail message and put it in <recipient>.
-
-## Progress Reporting
-
-When working on a complex, long-running task, you SHOULD proactively report progress to the task source at key milestones. Do NOT wait until the task is fully complete -- send intermediate updates so the user knows you are making progress.
-
-Example: A mail task from boss@company.com to "research and summarize competitor products"
-- After finding the first batch of data:
-  <chat><mail><recipient>boss@company.com</recipient><title>Progress: Competitor Research</title><content>Found 5 competitor products so far. Analyzing pricing and features. Will send full report when done.</content></mail></chat>
-- After completing:
-  <chat><mail><recipient>boss@company.com</recipient><title>Complete: Competitor Research</title><content>Full report attached...</content></mail></chat>
-
-Example: A tui task to "set up the development environment"
-- After installing dependencies:
-  <chat><tui>Dependencies installed. Now configuring database connection...</tui></chat>
-- After completing:
-  <chat><tui>Development environment is ready. All services running.</tui></chat>
-
-Report progress at natural breakpoints: after each sub-step completes, when encountering blockers, or when significant time has passed.
-
-REMEMBER: <chat> is plain text markup, NOT a tool. Never call chat() as a function.
-Messages outside <chat> tags are your internal thoughts and will NOT be forwarded.
-The "computer" role messages contain system feedback (screenshots, tool results) - these are NOT from users.
-`
 
     // 使用Skills系统增强system prompt（追加用户自定义skills）
     if (this.skillComposer) {
@@ -185,23 +129,19 @@ The "computer" role messages contain system feedback (screenshots, tool results)
 
     while (stepCount < this.maxSteps && !finished) {
       // 1. 检查消息队列，获取新的用户消息
-      const pendingMessages = messageLayer.getPending()
+      const pendingMessages = messageManager.getInbound()
 
       if (pendingMessages.length > 0) {
         // 有新消息，注入到对话中
-        const chatContent = messageLayer.formatPendingAsChat()
+        const chatContent = messageManager.formatInboundAsChat()
         if (chatContent) {
           messages.push({ role: 'user', content: chatContent })
 
           // 标记消息为已消费
-          messageLayer.consumeAll(pendingMessages.map(m => m.id))
+          messageManager.consumeInbound(pendingMessages.map(m => m.id))
 
-          // Send to overlay
-          if (this.overlay) {
-            for (const msg of pendingMessages) {
-              overlayClient.sendUser(`[${msg.source}] ${msg.content}`)
-            }
-          }
+          // Forward to overlay UI
+          messageManager.notifyGuiInbound(pendingMessages)
 
           logger.info(`Received ${pendingMessages.length} new message(s)`)
         }
@@ -331,6 +271,9 @@ Note: Screenshot is attached. If target window != focused window, first click ac
       // 添加 computer 消息（系统反馈）
       messages.push({ role: 'computer', content: computerContent })
 
+      // 发送 computer 消息到 overlay UI
+      messageManager.notifyGuiComputer(computerContent)
+
       // 构建图片数组
       const images: ImageInput[] = []
 
@@ -370,42 +313,14 @@ Note: Screenshot is attached. If target window != focused window, first click ac
         logger.thought(response.content)
       }
 
-      // 5. 解析 <chat> 标签，分发回复
-      const chatReply = MessageLayer.parseReply(response.content || '')
+      // 5. 提交到 MessageManager（解析 <chat> 标签，路由到各通道，持久化+重试）
+      messageManager.dispatchReply(response.content || '')
 
-      if (this.overlay) {
-        // 发送到 overlay
-        if (chatReply.gui) {
-          overlayClient.sendAssistant(chatReply.gui, response.toolCalls)
-        } else if (chatReply.tui || response.content) {
-          // 如果没有 gui 回复，发送 tui 或原始内容
-          overlayClient.sendAssistant(chatReply.tui || response.content || '', response.toolCalls)
-        }
-      }
-
-      // 输出到终端
-      if (chatReply.tui) {
-        console.log(`\n[ASSISTANT -> tui] ${chatReply.tui}\n`)
-      }
-
-      // 发送邮件回复
-      if (chatReply.mail && this.mailService) {
-        // 解析新格式: <recipient>...</recipient> <title>...</title> <content>...</content>
-        const recipientMatch = chatReply.mail.match(/<recipient>([\s\S]*?)<\/recipient>/)
-        const titleMatch = chatReply.mail.match(/<title>([\s\S]*?)<\/title>/)
-        const contentMatch = chatReply.mail.match(/<content>([\s\S]*?)<\/content>/)
-        if (recipientMatch) {
-          const to = recipientMatch[1].trim()
-          const subject = titleMatch ? titleMatch[1].trim() : 'Reply from Jarvis'
-          const body = contentMatch ? contentMatch[1].trim() : ''
-          this.mailService.send(to, subject, body).catch(err => {
-            logger.error('Failed to send mail reply:', err)
-          })
-          console.log(`\n[ASSISTANT -> mail] To: ${to}, Subject: ${subject}\n`)
-        } else {
-          console.log(`\n[ASSISTANT -> mail] (no recipient specified, skipped)\n`)
-        }
-      }
+      // Forward assistant reply to overlay UI
+      messageManager.notifyGuiAssistant(
+        response.content || '',
+        response.toolCalls?.map(tc => ({ name: tc.name, arguments: tc.arguments })),
+      )
 
       // 添加 assistant 消息
       messages.push({
@@ -460,12 +375,10 @@ If the task is NOT COMPLETE and requires GUI/file operations: You MUST call tool
         })
 
         // Send tool result to overlay
-        if (this.overlay) {
-          const resultStr = result.success
-            ? (result.message || 'done')
-            : (result.error || 'failed')
-          overlayClient.sendTool(toolCall.name, resultStr)
-        }
+        const resultStr = result.success
+          ? (result.message || 'done')
+          : (result.error || 'failed')
+        messageManager.notifyGuiToolResult(toolCall.name, resultStr)
 
         // 记录点击坐标
         if (toolCall.name === 'click') {
@@ -560,18 +473,7 @@ If the task is NOT COMPLETE and requires GUI/file operations: You MUST call tool
    * 等待新消息到达
    */
   private async waitForMessages(timeoutMs: number): Promise<boolean> {
-    const startTime = Date.now()
-    const checkInterval = 500  // 每500ms检查一次
-
-    while (Date.now() - startTime < timeoutMs) {
-      const pending = messageLayer.getPending()
-      if (pending.length > 0) {
-        return true
-      }
-      await new Promise(resolve => setTimeout(resolve, checkInterval))
-    }
-
-    return false
+    return messageManager.waitForInbound(timeoutMs)
   }
 
   private async saveStep(step: Step): Promise<void> {

@@ -29,5 +29,10 @@
     "model": "your-model-name",
     "apiType": "openai",
     "nativeToolCall": false
+  },
+  "notification": {
+    "enabled": true,
+    "appWhitelist": [],
+    "appBlacklist": ["Jarvis"]
   }
 }

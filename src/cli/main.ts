@@ -103,6 +103,7 @@ async function main() {
   let verbose = false
   let noUi = false
   let interactive = false
+  let clear = false
   let provider: 'anthropic' | 'openai' | 'doubao' | undefined
   let task = ''
 
@@ -115,6 +116,8 @@ async function main() {
       noUi = true
     } else if (arg === '--interactive' || arg === '-i') {
       interactive = true
+    } else if (arg === '--clear') {
+      clear = true
     } else if (arg === '--help' || arg === '-h') {
       printHelp()
       process.exit(0)
@@ -144,6 +147,13 @@ async function main() {
   // No task and no interactive flag -> default to interactive
   if (!task && !interactive) {
     interactive = true
+  }
+
+  // ── Clear pending message queues ────────────────────────────────
+
+  if (clear) {
+    messageLayer.clearPending()
+    console.log('[JARVIS] Pending message queues cleared\n')
   }
 
   // ── Start overlay UI ───────────────────────────────────────────
@@ -253,6 +263,7 @@ Options:
   --openai               Use OpenAI
   --doubao               Use Doubao
   -v, --verbose          Show debug output
+  --clear                Clear pending inbound/outbound message queues
   -h, --help             Show this help
 
 The overlay UI starts automatically. Use --no-ui to disable.

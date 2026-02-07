@@ -1,20 +1,20 @@
 /**
- * Mail Service - IMAP IDLE (realtime) + POP3 (fallback) + SMTP (send)
+ * Mail Service - imapflow (IMAP IDLE/NOOP) + mailparser + nodemailer (SMTP)
  *
- * Two legs:
- * 1. IMAP IDLE -- main channel, server pushes new mail notifications in realtime
- * 2. POP3 poll -- fallback, every pollInterval ms, catches anything IMAP missed
+ * Receive: imapflow handles IDLE (realtime) and auto-fallback to NOOP polling.
+ * Parse:   mailparser.simpleParser for full RFC 2822 decoding.
+ * Send:    nodemailer SMTP (unchanged).
  *
- * Outbound: nodemailer SMTP.
+ * Zero custom protocol code. Let battle-tested libraries do the heavy lifting.
  */
 
 import * as fs from 'fs'
 import * as path from 'path'
 import nodemailer from 'nodemailer'
 import type SMTPTransport from 'nodemailer/lib/smtp-transport/index.js'
-import { Pop3Client, type Pop3Options } from './pop3.js'
-import { ImapClient } from './imap.js'
-import { parseMail, type ParsedMail } from './mail-parser.js'
+import { ImapFlow } from 'imapflow'
+import type { MailboxLockObject } from 'imapflow'
+import { simpleParser } from 'mailparser'
 import { messageLayer } from './MessageLayer.js'
 
 // ---------- Config ----------
@@ -25,17 +25,18 @@ export interface MailConfig {
     port: number
     secure: boolean
   }
-  pop3: {
+  imap: {
     host: string
     port: number
   }
-  imap: {
+  /** @deprecated POP3 no longer used. Kept for backward compat. */
+  pop3?: {
     host: string
     port: number
   }
   user: string
   pass: string
-  pollInterval: number  // POP3 fallback interval (ms)
+  pollInterval: number
   whitelist: string[]
 }
 
@@ -86,16 +87,11 @@ export class MailService {
   private processedUids: Set<string>
   private whitelistSet: Set<string>
 
-  // POP3 fallback
-  private pop3Timer: ReturnType<typeof setInterval> | null = null
-  private pop3Checking = false
-
-  // IMAP IDLE
-  private imap: ImapClient | null = null
-  private imapRunning = false
-  private imapReconnectTimer: ReturnType<typeof setTimeout> | null = null
-
+  private client: ImapFlow | null = null
+  private lock: MailboxLockObject | null = null
+  private running = false
   private stopped = false
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(config: MailConfig) {
     this.config = config
@@ -113,60 +109,52 @@ export class MailService {
     })
   }
 
-  /** Start both IMAP IDLE and POP3 fallback */
+  /** Start IMAP connection and monitoring */
   start(): void {
-    if (this.pop3Timer) return
+    if (this.running) return
     this.stopped = false
-
-    console.log(`[Mail] starting: IMAP IDLE (realtime) + POP3 fallback (${this.config.pollInterval}ms)`)
-
-    // Start IMAP IDLE loop
-    this.startImap()
-
-    // Start POP3 fallback polling
-    this.pop3Check().catch(err => {
-      console.error('[Mail] initial POP3 check failed:', err)
+    this.startImap().catch(err => {
+      console.error('[Mail] IMAP startup failed:', err)
     })
-
-    this.pop3Timer = setInterval(() => {
-      this.pop3Check().catch(err => {
-        console.error('[Mail] POP3 poll failed:', err)
-      })
-    }, this.config.pollInterval)
   }
 
   /** Stop everything */
   stop(): void {
     this.stopped = true
 
-    if (this.pop3Timer) {
-      clearInterval(this.pop3Timer)
-      this.pop3Timer = null
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
     }
 
-    if (this.imapReconnectTimer) {
-      clearTimeout(this.imapReconnectTimer)
-      this.imapReconnectTimer = null
+    this.releaseLock()
+
+    if (this.client) {
+      this.client.removeAllListeners()
+      this.client.logout().catch(() => {})
+      this.client = null
     }
 
-    this.imapRunning = false
-    if (this.imap) {
-      this.imap.logout().catch(() => {})
-      this.imap = null
-    }
-
+    this.running = false
     console.log('[Mail] stopped')
   }
 
   /** Send mail via SMTP */
-  async send(to: string, subject: string, body: string): Promise<boolean> {
+  async send(to: string, subject: string, body: string, attachments?: string[]): Promise<boolean> {
     try {
-      await this.transporter.sendMail({
+      const mailOpts: nodemailer.SendMailOptions = {
         from: this.config.user,
         to,
         subject,
         text: body,
-      })
+      }
+      if (attachments && attachments.length > 0) {
+        mailOpts.attachments = attachments.map(p => ({
+          filename: path.basename(p),
+          path: p,
+        }))
+      }
+      await this.transporter.sendMail(mailOpts)
       console.log(`[Mail] sent to ${to}, subject="${subject}"`)
       return true
     } catch (err) {
@@ -178,129 +166,123 @@ export class MailService {
   // ========== IMAP ==========
 
   private async startImap(): Promise<void> {
-    if (this.imapRunning || this.stopped) return
-    this.imapRunning = true
+    if (this.running || this.stopped) return
+    this.running = true
 
     try {
-      const client = new ImapClient({
+      const client = new ImapFlow({
         host: this.config.imap.host,
         port: this.config.imap.port,
-        user: this.config.user,
-        pass: this.config.pass,
+        secure: true,
+        auth: {
+          user: this.config.user,
+          pass: this.config.pass,
+        },
+        logger: false,
+        // If server doesn't support IDLE, fall back to NOOP polling
+        missingIdleCommand: 'NOOP',
       })
 
       client.on('error', (err: Error) => {
         console.error('[Mail] IMAP error:', err.message)
-        this.scheduleImapReconnect()
       })
 
       client.on('close', () => {
         console.log('[Mail] IMAP connection closed')
-        this.scheduleImapReconnect()
+        this.running = false
+        this.releaseLock()
+        this.client = null
+        this.scheduleReconnect()
+      })
+
+      // New mail notification
+      client.on('exists', (data: { path: string; count: number; prevCount: number }) => {
+        if (data.count <= data.prevCount) return
+        const newCount = data.count - data.prevCount
+        console.log(`[Mail] IMAP: ${newCount} new message(s) in ${data.path}`)
+        this.fetchUnseen().catch(err => {
+          console.error('[Mail] IMAP fetch after EXISTS failed:', err)
+        })
       })
 
       await client.connect()
-      await client.selectInbox()
-      this.imap = client
+      console.log(`[Mail] IMAP connected to ${this.config.imap.host}:${this.config.imap.port}`)
 
-      // Fetch any existing unseen mails first
-      await this.imapFetchUnseen()
+      this.client = client
 
-      // Check IDLE support
-      const caps = await client.capability()
-      if (caps.includes('IDLE')) {
-        console.log('[Mail] IMAP: IDLE supported, entering realtime mode')
-        this.imapIdleLoop()
-      } else {
-        console.log('[Mail] IMAP: IDLE not supported, falling back to NOOP polling (1s)')
-        this.imapPollLoop()
-      }
+      // Open INBOX and hold the lock -- IDLE starts automatically
+      this.lock = await client.getMailboxLock('INBOX')
+      console.log('[Mail] IMAP: INBOX opened, IDLE active')
+
+      // Fetch any existing unseen mails on startup
+      await this.fetchUnseen()
     } catch (err) {
       console.error('[Mail] IMAP startup failed:', err)
-      this.imapRunning = false
-      this.scheduleImapReconnect()
-    }
-  }
-
-  private async imapIdleLoop(): Promise<void> {
-    while (this.imap?.isAlive() && !this.stopped) {
-      try {
-        const exists = await this.imap.idle()
-        if (exists > 0) {
-          console.log(`[Mail] IMAP IDLE: new mail detected (EXISTS=${exists})`)
-          await this.imapFetchUnseen()
-        }
-        // exists === 0 means 25-min renewal, just re-enter IDLE
-      } catch (err) {
-        console.error('[Mail] IMAP IDLE error:', err)
-        break
+      this.running = false
+      this.releaseLock()
+      if (this.client) {
+        this.client.removeAllListeners()
+        this.client.logout().catch(() => {})
+        this.client = null
       }
-    }
-
-    this.imapRunning = false
-    if (!this.stopped) {
-      this.scheduleImapReconnect()
+      this.scheduleReconnect()
     }
   }
 
-  /** Fallback: NOOP polling every 30s for servers without IDLE */
-  private async imapPollLoop(): Promise<void> {
-    const POLL_MS = 1_000
-    while (this.imap?.isAlive() && !this.stopped) {
-      try {
-        await new Promise(r => setTimeout(r, POLL_MS))
-        if (!this.imap?.isAlive() || this.stopped) break
-        await this.imap.noop()
-        await this.imapFetchUnseen()
-      } catch (err) {
-        console.error('[Mail] IMAP poll error:', err)
-        break
-      }
-    }
-
-    this.imapRunning = false
-    if (!this.stopped) {
-      this.scheduleImapReconnect()
-    }
-  }
-
-  private async imapFetchUnseen(): Promise<void> {
-    if (!this.imap) return
+  private async fetchUnseen(): Promise<void> {
+    if (!this.client) return
 
     try {
-      const unseenNums = await this.imap.searchUnseen()
-      if (unseenNums.length === 0) return
+      const uids = await this.client.search({ seen: false }, { uid: true })
+      if (!uids || uids.length === 0) return
 
-      console.log(`[Mail] IMAP: ${unseenNums.length} unseen mail(s)`)
+      console.log(`[Mail] IMAP: ${uids.length} unseen message(s)`)
 
-      for (const seqNum of unseenNums) {
+      for (const uid of uids) {
+        // Deduplicate by UID
+        const uidKey = `imap:${uid}`
+        if (this.processedUids.has(uidKey)) {
+          await this.client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })
+          continue
+        }
+
         try {
-          const raw = await this.imap.fetch(seqNum)
-          const parsed = parseMail(raw)
+          const msg = await this.client.fetchOne(
+            String(uid),
+            { source: true, envelope: true },
+            { uid: true },
+          )
 
-          // Whitelist check
-          if (!this.isWhitelisted(parsed.from)) {
-            console.log(`[Mail] skipped (not whitelisted): ${parsed.from}`)
-            await this.imap.markSeen(seqNum)
+          if (!msg || !msg.source) {
+            this.processedUids.add(uidKey)
+            await this.client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })
             continue
           }
 
-          // Deduplicate: use subject+date+from as pseudo-UID for IMAP
-          const pseudoUid = `imap:${parsed.from}:${parsed.date}:${parsed.subject}`
-          if (this.processedUids.has(pseudoUid)) {
-            await this.imap.markSeen(seqNum)
+          const parsed = await simpleParser(msg.source)
+
+          const from = parsed.from?.value?.[0]?.address || ''
+          const subject = parsed.subject || ''
+          const body = parsed.text || ''
+
+          // Whitelist check
+          if (!this.isWhitelisted(from)) {
+            console.log(`[Mail] skipped (not whitelisted): ${from}`)
+            this.processedUids.add(uidKey)
+            await this.client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })
             continue
           }
 
           // Push to message layer
-          const formatted = `[From: ${parsed.from}] [Subject: ${parsed.subject || '(no subject)'}]\n${parsed.body || ''}`
+          const formatted = `[From: ${from}] [Subject: ${subject || '(no subject)'}]\n${body}`
           messageLayer.push('mail', formatted)
-          console.log(`[Mail] IMAP received from ${parsed.from}, subject="${parsed.subject}"`)
+          console.log(`[Mail] IMAP received from ${from}, subject="${subject}"`)
 
-          this.processedUids.add(pseudoUid)
-          await this.imap.markSeen(seqNum)
+          this.processedUids.add(uidKey)
+          await this.client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })
         } catch (err) {
-          console.error(`[Mail] IMAP failed to process seqNum=${seqNum}:`, err)
+          console.error(`[Mail] IMAP failed to process uid=${uid}:`, err)
+          this.processedUids.add(uidKey)
         }
       }
 
@@ -310,104 +292,30 @@ export class MailService {
     }
   }
 
-  private scheduleImapReconnect(): void {
-    if (this.stopped || this.imapReconnectTimer) return
-
-    this.imapRunning = false
-    if (this.imap) {
-      this.imap.removeAllListeners()
-      this.imap.logout().catch(() => {})
-      this.imap = null
-    }
+  private scheduleReconnect(): void {
+    if (this.stopped || this.reconnectTimer) return
 
     console.log('[Mail] IMAP reconnecting in 10s...')
-    this.imapReconnectTimer = setTimeout(() => {
-      this.imapReconnectTimer = null
-      this.startImap()
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.startImap().catch(err => {
+        console.error('[Mail] IMAP reconnect failed:', err)
+      })
     }, 10_000)
   }
 
-  // ========== POP3 Fallback ==========
-
-  private async pop3Check(): Promise<void> {
-    if (this.pop3Checking) return
-    this.pop3Checking = true
-
-    try {
-      await this.pop3FetchNewMails()
-    } finally {
-      this.pop3Checking = false
+  private releaseLock(): void {
+    if (this.lock) {
+      try { this.lock.release() } catch { /* already released */ }
+      this.lock = null
     }
-  }
-
-  private async pop3FetchNewMails(): Promise<void> {
-    const pop3Opts: Pop3Options = {
-      host: this.config.pop3.host,
-      port: this.config.pop3.port,
-      user: this.config.user,
-      pass: this.config.pass,
-    }
-
-    const client = new Pop3Client(pop3Opts)
-
-    try {
-      await client.connect()
-      const list = await client.uidl()
-
-      const newMails = list.filter(m => !this.processedUids.has(m.uid))
-
-      if (newMails.length === 0) {
-        await client.quit()
-        return
-      }
-
-      console.log(`[Mail] POP3: ${newMails.length} new mail(s) found`)
-
-      for (const mail of newMails) {
-        try {
-          const raw = await client.retr(mail.num)
-          const parsed = parseMail(raw)
-
-          if (!this.isWhitelisted(parsed.from)) {
-            this.processedUids.add(mail.uid)
-            continue
-          }
-
-          // Check if IMAP already processed this (pseudo-UID match)
-          const pseudoUid = `imap:${parsed.from}:${parsed.date}:${parsed.subject}`
-          if (this.processedUids.has(pseudoUid)) {
-            this.processedUids.add(mail.uid)
-            continue
-          }
-
-          const formatted = `[From: ${parsed.from}] [Subject: ${parsed.subject || '(no subject)'}]\n${parsed.body || ''}`
-          messageLayer.push('mail', formatted)
-          console.log(`[Mail] POP3 received from ${parsed.from}, subject="${parsed.subject}"`)
-
-          this.processedUids.add(mail.uid)
-          this.processedUids.add(pseudoUid)  // Also mark pseudo-UID to prevent IMAP duplicate
-        } catch (err) {
-          console.error(`[Mail] POP3 failed to process uid=${mail.uid}:`, err)
-          this.processedUids.add(mail.uid)
-        }
-      }
-
-      await client.quit()
-    } catch (err) {
-      console.error('[Mail] POP3 fetch failed:', err)
-      try { await client.quit() } catch { /* noop */ }
-    }
-
-    saveUids(this.processedUids)
   }
 
   // ========== Shared ==========
 
   private isWhitelisted(from: string): boolean {
-    if (this.whitelistSet.size === 0) return true  // Empty whitelist = accept all
-    const match = from.match(/<([^>]+)>/)
-    const email = (match ? match[1] : from).toLowerCase()
-    return this.whitelistSet.has(email)
+    if (this.whitelistSet.size === 0) return true
+    return this.whitelistSet.has(from.toLowerCase())
   }
 }
 

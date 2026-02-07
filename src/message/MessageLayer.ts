@@ -10,7 +10,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-export type MessageSource = 'tui' | 'gui' | 'mail'
+export type MessageSource = 'tui' | 'gui' | 'mail' | 'notification'
 
 export interface QueuedMessage {
   id: string
@@ -27,16 +27,62 @@ export interface ChatReply {
   tui?: string
   gui?: string
   mail?: string
+  attachments?: string[]
 }
+
+export interface OutboundMailTarget {
+  to: string
+  subject: string
+  body: string
+}
+
+export interface OutboundMessage {
+  id: string
+  timestamp: Date
+  tui?: string
+  gui?: string
+  mail?: OutboundMailTarget
+  attachments?: string[]
+  delivered: {
+    tui?: boolean
+    gui?: boolean
+    mail?: boolean
+  }
+  attempts: {
+    tui?: number
+    gui?: number
+    mail?: number
+  }
+}
+
+type DeliveryChannel = 'tui' | 'gui' | 'mail'
+
+/**
+ * Delivery functions registered by Agent.
+ * Each returns true on success, false on failure.
+ */
+export interface Deliverers {
+  tui: (content: string, attachments?: string[]) => boolean
+  gui: (content: string, attachments?: string[]) => boolean
+  mail: (to: string, subject: string, body: string, attachments?: string[]) => Promise<boolean>
+}
+
+const MAX_DELIVERY_ATTEMPTS = 3
+const DELIVERY_INTERVAL = 5000
 
 export class MessageLayer {
   private filePath: string
   private messages: QueuedMessage[] = []
+  private outboundPath: string
+  private outbound: OutboundMessage[] = []
+  private deliverers: Deliverers | null = null
+  private deliveryTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(filePath?: string) {
-    // 默认路径：data/messages.md
-    this.filePath = filePath || path.join(process.cwd(), 'data', 'messages.md')
+    this.filePath = filePath || path.join(process.cwd(), 'data', 'inbound.json')
+    this.outboundPath = path.join(path.dirname(this.filePath), 'outbound.json')
     this.load()
+    this.loadOutbound()
   }
 
   /**
@@ -98,22 +144,36 @@ export class MessageLayer {
       tui: [],
       gui: [],
       mail: [],
+      notification: [],
     }
 
     for (const msg of pending) {
       bySource[msg.source].push(msg.content)
     }
 
-    let chat = '<chat>\n'
-    for (const source of ['tui', 'gui', 'mail'] as MessageSource[]) {
-      if (bySource[source].length > 0) {
-        const combined = bySource[source].join('\n---\n')
-        chat += `<${source}>${combined}</${source}>\n`
-      }
-    }
-    chat += '</chat>'
+    let result = ''
 
-    return chat
+    // Chat sources (tui, gui, mail) go inside <chat>
+    const chatSources = ['tui', 'gui', 'mail'] as MessageSource[]
+    const hasChatContent = chatSources.some(s => bySource[s].length > 0)
+    if (hasChatContent) {
+      result += '<chat>\n'
+      for (const source of chatSources) {
+        if (bySource[source].length > 0) {
+          const combined = bySource[source].join('\n---\n')
+          result += `<${source}>${combined}</${source}>\n`
+        }
+      }
+      result += '</chat>\n'
+    }
+
+    // Notification goes outside <chat> in its own tag
+    if (bySource.notification.length > 0) {
+      const combined = bySource.notification.join('\n---\n')
+      result += `<notification>\n${combined}\n</notification>`
+    }
+
+    return result.trim() || null
   }
 
   /**
@@ -136,11 +196,19 @@ export class MessageLayer {
     const mailMatch = chatContent.match(/<mail>([\s\S]*?)<\/mail>/)
     if (mailMatch) reply.mail = mailMatch[1].trim()
 
+    const attachmentMatches = chatContent.matchAll(/<attachment>([\s\S]*?)<\/attachment>/g)
+    const attachments: string[] = []
+    for (const m of attachmentMatches) {
+      const p = m[1].trim()
+      if (p) attachments.push(p)
+    }
+    if (attachments.length > 0) reply.attachments = attachments
+
     return reply
   }
 
   /**
-   * 从 md 文件加载消息
+   * Load inbound queue from JSON file.
    */
   private load(): void {
     try {
@@ -148,17 +216,20 @@ export class MessageLayer {
         this.messages = []
         return
       }
-
-      const content = fs.readFileSync(this.filePath, 'utf-8')
-      this.messages = this.parseMd(content)
+      const raw = fs.readFileSync(this.filePath, 'utf-8')
+      const parsed = JSON.parse(raw) as Array<Record<string, unknown>>
+      this.messages = parsed.map((m) => ({
+        ...m,
+        timestamp: new Date(m.timestamp as string),
+      })) as QueuedMessage[]
     } catch (error) {
-      console.error('[MessageLayer] Failed to load:', error)
+      console.error('[MessageLayer] Failed to load inbound:', error)
       this.messages = []
     }
   }
 
   /**
-   * 保存消息到 md 文件
+   * Save inbound queue to JSON file.
    */
   private save(): void {
     try {
@@ -166,64 +237,236 @@ export class MessageLayer {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true })
       }
-
-      const content = this.toMd()
-      fs.writeFileSync(this.filePath, content, 'utf-8')
+      fs.writeFileSync(this.filePath, JSON.stringify(this.messages, null, 2), 'utf-8')
     } catch (error) {
-      console.error('[MessageLayer] Failed to save:', error)
+      console.error('[MessageLayer] Failed to save inbound:', error)
+    }
+  }
+
+  // ========== Outbound Queue ==========
+
+  /**
+   * Register delivery functions and start the delivery loop.
+   * Called by Agent after all services are initialized.
+   */
+  registerDeliverers(deliverers: Deliverers): void {
+    this.deliverers = deliverers
+    this.startDeliveryLoop()
+  }
+
+  /**
+   * Stop the delivery loop.
+   */
+  stopDeliveryLoop(): void {
+    if (this.deliveryTimer) {
+      clearInterval(this.deliveryTimer)
+      this.deliveryTimer = null
     }
   }
 
   /**
-   * 解析 md 文件内容
-   *
-   * 格式：
-   * - [ ] `m001` [2024-02-07 10:30:15] [terminal] 消息内容
-   * - [x] `m002` [2024-02-07 10:31:20] [gui] 已消费的消息
+   * Push an outbound message. Immediately attempts delivery, then
+   * the background loop retries any failures.
    */
-  private parseMd(content: string): QueuedMessage[] {
-    const messages: QueuedMessage[] = []
-    const lines = content.split('\n')
+  pushOutbound(msg: {
+    tui?: string
+    gui?: string
+    mail?: OutboundMailTarget
+    attachments?: string[]
+  }): string {
+    const id = `o${Date.now()}`
+    const delivered: Record<string, boolean> = {}
+    const attempts: Record<string, number> = {}
+    if (msg.tui !== undefined) { delivered.tui = false; attempts.tui = 0 }
+    if (msg.gui !== undefined) { delivered.gui = false; attempts.gui = 0 }
+    if (msg.mail !== undefined) { delivered.mail = false; attempts.mail = 0 }
 
-    // 正则：- [ ] `id` [timestamp] [source] content
-    // 或：  - [x] `id` [timestamp] [source] content
-    const regex = /^- \[([ x])\] `([^`]+)` \[([^\]]+)\] \[([^\]]+)\] (.+)$/
+    const outMsg: OutboundMessage = {
+      id,
+      timestamp: new Date(),
+      ...msg,
+      delivered,
+      attempts,
+    }
+    this.outbound.push(outMsg)
+    this.saveOutbound()
 
-    for (const line of lines) {
-      const match = line.match(regex)
-      if (match) {
-        const [, consumed, id, timestamp, source, content] = match
-        messages.push({
-          id,
-          timestamp: new Date(timestamp),
-          source: source as MessageSource,
-          content,
-          consumed: consumed === 'x',
-        })
+    // Attempt immediate delivery
+    this.deliverOne(outMsg)
+
+    return id
+  }
+
+  /**
+   * Get outbound messages with at least one undelivered channel.
+   */
+  getPendingOutbound(): OutboundMessage[] {
+    return this.outbound.filter(m =>
+      Object.entries(m.delivered).some(
+        ([ch, v]) => v === false && (m.attempts[ch as DeliveryChannel] ?? 0) < MAX_DELIVERY_ATTEMPTS
+      )
+    )
+  }
+
+  // ---------- Delivery Loop ----------
+
+  private startDeliveryLoop(): void {
+    if (this.deliveryTimer) return
+    this.deliveryTimer = setInterval(() => {
+      this.deliverAll()
+    }, DELIVERY_INTERVAL)
+  }
+
+  private deliverAll(): void {
+    const pending = this.getPendingOutbound()
+    for (const msg of pending) {
+      this.deliverOne(msg)
+    }
+  }
+
+  private deliverOne(msg: OutboundMessage): void {
+    if (!this.deliverers) return
+
+    const channels: DeliveryChannel[] = ['tui', 'gui', 'mail']
+    let changed = false
+
+    for (const ch of channels) {
+      if (msg.delivered[ch] !== false) continue
+      if ((msg.attempts[ch] ?? 0) >= MAX_DELIVERY_ATTEMPTS) continue
+
+      let success = false
+
+      if (ch === 'tui' && msg.tui) {
+        success = this.deliverers.tui(msg.tui, msg.attachments)
+      } else if (ch === 'gui' && msg.gui) {
+        success = this.deliverers.gui(msg.gui, msg.attachments)
+      } else if (ch === 'mail' && msg.mail) {
+        // Mail is async -- fire and handle result
+        const mailTarget = msg.mail
+        const attachments = msg.attachments
+        this.deliverers.mail(mailTarget.to, mailTarget.subject, mailTarget.body, attachments)
+          .then(ok => {
+            if (ok) {
+              msg.delivered.mail = true
+              console.log(`[Outbound] mail delivered: ${msg.id} -> ${mailTarget.to}`)
+            } else {
+              msg.attempts.mail = (msg.attempts.mail ?? 0) + 1
+              console.log(`[Outbound] mail failed (${msg.attempts.mail}/${MAX_DELIVERY_ATTEMPTS}): ${msg.id}`)
+              this.checkMaxAttempts(msg, 'mail')
+            }
+            this.saveOutbound()
+          })
+          .catch(() => {
+            msg.attempts.mail = (msg.attempts.mail ?? 0) + 1
+            this.checkMaxAttempts(msg, 'mail')
+            this.saveOutbound()
+          })
+        continue  // mail handled async, skip sync logic below
+      }
+
+      if (ch !== 'mail') {
+        msg.attempts[ch] = (msg.attempts[ch] ?? 0) + 1
+        if (success) {
+          msg.delivered[ch] = true
+          changed = true
+        } else {
+          this.checkMaxAttempts(msg, ch)
+          changed = true
+        }
       }
     }
 
-    return messages
+    if (changed) {
+      this.saveOutbound()
+    }
   }
 
   /**
-   * 转换为 md 格式
+   * After MAX_DELIVERY_ATTEMPTS failures, inject a system notification
+   * into the inbound queue at the FIRST position (highest priority).
    */
-  private toMd(): string {
-    let md = '# Agent Message Queue\n\n'
+  private checkMaxAttempts(msg: OutboundMessage, channel: DeliveryChannel): void {
+    if ((msg.attempts[channel] ?? 0) < MAX_DELIVERY_ATTEMPTS) return
 
-    // 按时间排序
-    const sorted = [...this.messages].sort(
-      (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
-    )
+    const preview = channel === 'mail' && msg.mail
+      ? `to=${msg.mail.to} subject="${msg.mail.subject}"`
+      : (msg[channel as 'tui' | 'gui'] || '').slice(0, 80)
 
-    for (const msg of sorted) {
-      const checkbox = msg.consumed ? '[x]' : '[ ]'
-      const timestamp = msg.timestamp.toISOString().replace('T', ' ').slice(0, 19)
-      md += `- ${checkbox} \`${msg.id}\` [${timestamp}] [${msg.source}] ${msg.content}\n`
+    const notification = `[SYSTEM] Outbound delivery failed after ${MAX_DELIVERY_ATTEMPTS} attempts. channel=${channel}, id=${msg.id}, content="${preview}". Please check the ${channel} channel and retry or inform the user.`
+
+    // Insert at position 0 (highest priority) in inbound queue
+    const sysMsg: QueuedMessage = {
+      id: `sys${Date.now()}`,
+      timestamp: new Date(),
+      source: 'tui',  // system messages go through tui channel
+      content: notification,
+      consumed: false,
     }
+    this.messages.unshift(sysMsg)
+    this.save()
+    console.log(`[Outbound] delivery failed permanently: ${channel} ${msg.id}`)
+  }
 
-    return md
+  // ---------- Outbound Persistence ----------
+
+  private loadOutbound(): void {
+    try {
+      if (!fs.existsSync(this.outboundPath)) {
+        this.outbound = []
+        return
+      }
+      const raw = fs.readFileSync(this.outboundPath, 'utf-8')
+      const parsed = JSON.parse(raw) as Array<Record<string, unknown>>
+      this.outbound = parsed.map((m) => ({
+        ...m,
+        timestamp: new Date(m.timestamp as string),
+      })) as OutboundMessage[]
+    } catch {
+      this.outbound = []
+    }
+  }
+
+  private saveOutbound(): void {
+    try {
+      const dir = path.dirname(this.outboundPath)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      fs.writeFileSync(this.outboundPath, JSON.stringify(this.outbound, null, 2), 'utf-8')
+    } catch (error) {
+      console.error('[MessageLayer] Failed to save outbound:', error)
+    }
+  }
+
+  /**
+   * Clear all pending (unconsumed) inbound messages and all pending outbound messages.
+   */
+  clearPending(): void {
+    const before = this.messages.length
+    this.messages = this.messages.filter(m => m.consumed)
+    this.save()
+
+    const outBefore = this.outbound.length
+    this.outbound = this.outbound.filter(m =>
+      Object.values(m.delivered).every(v => v === true)
+    )
+    this.saveOutbound()
+
+    const inCleared = before - this.messages.length
+    const outCleared = outBefore - this.outbound.length
+    console.log(`[MessageLayer] cleared ${inCleared} inbound, ${outCleared} outbound pending messages`)
+  }
+
+  cleanupOutbound(keepRecent: number = 100): void {
+    const fullyDelivered = this.outbound.filter(m =>
+      Object.values(m.delivered).every(v => v === true)
+    )
+    const rest = this.outbound.filter(m =>
+      !Object.values(m.delivered).every(v => v === true)
+    )
+    const recentDelivered = fullyDelivered.slice(-keepRecent)
+    this.outbound = [...recentDelivered, ...rest]
+    this.saveOutbound()
   }
 
   /**
