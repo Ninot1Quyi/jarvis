@@ -4,19 +4,17 @@
 
 use tauri::WebviewWindow;
 
-/// Apply Acrylic/Mica effect on Windows
+/// Apply Acrylic effect on Windows
 /// 
-/// Note: Mica is only available on Windows 11. Acrylic works on Windows 10+.
-/// Both effects require proper window configuration:
-/// - transparent: true in tauri.conf.json
-/// - decorations: false (to allow custom titlebar)
+/// Uses transparent Acrylic for true glass effect.
+/// Note: Acrylic requires Windows 10 version 1803 or later.
 pub fn apply_effect(window: &WebviewWindow) {
     use window_vibrancy::apply_acrylic;
 
-    // Use Acrylic with dark tint for consistent dark theme
-    // RGB: 30, 30, 30 (dark gray) with 128 opacity (~50% transparent)
-    // This ensures background stays dark regardless of Windows theme
-    if let Err(e) = apply_acrylic(window, Some((30, 30, 30, 128))) {
+    // Use Acrylic with very subtle dark tint
+    // RGB: 20, 20, 20 with 60 opacity (~75% transparent)
+    // This creates a true glass effect showing desktop behind
+    if let Err(e) = apply_acrylic(window, Some((20, 20, 20, 60))) {
         eprintln!("Failed to apply Acrylic effect: {}", e);
     }
 }

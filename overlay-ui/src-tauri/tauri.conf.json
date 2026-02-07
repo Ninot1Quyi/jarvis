@@ -27,13 +27,7 @@
         "skipTaskbar": true,
         "visible": true,
         "focus": true,
-        "shadow": false,
-        "windowEffects": {
-          "effects": [
-            "acrylic"
-          ],
-          "state": "active"
-        }
+        "shadow": false
       }
     ],
     "security": {

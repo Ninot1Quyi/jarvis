@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 
 // Liquid Glass Input Component
@@ -95,6 +95,7 @@ interface Message {
   content: string
   timestamp: string
   toolCalls?: string[]
+  attachments?: string[]
 }
 
 function formatTime(date: Date): string {
@@ -104,6 +105,45 @@ function formatTime(date: Date): string {
     minute: '2-digit',
     second: '2-digit',
   })
+}
+
+function getMediaType(filePath: string): 'image' | 'video' | 'file' {
+  const ext = filePath.split('.').pop()?.toLowerCase() || ''
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) return 'image'
+  if (['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext)) return 'video'
+  return 'file'
+}
+
+function AttachmentRenderer({ attachments }: { attachments: string[] }) {
+  return (
+    <div className="attachments-container">
+      {attachments.map((filePath, i) => {
+        const mediaType = getMediaType(filePath)
+        const src = convertFileSrc(filePath)
+        const fileName = filePath.split('/').pop() || filePath
+
+        if (mediaType === 'image') {
+          return (
+            <div key={i} className="attachment-image">
+              <img src={src} alt={fileName} loading="lazy" />
+            </div>
+          )
+        }
+        if (mediaType === 'video') {
+          return (
+            <div key={i} className="attachment-video">
+              <video src={src} controls preload="metadata" />
+            </div>
+          )
+        }
+        return (
+          <div key={i} className="attachment-file">
+            <span className="attachment-file-name">{fileName}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 function MessageItem({ msg }: { msg: Message }) {
@@ -184,7 +224,7 @@ function MessageItem({ msg }: { msg: Message }) {
         {msg.content}
       </div>
       {hasToolCalls && (
-        <div 
+        <div
           className={`tool-bubble ${toolsExpanded ? 'expanded' : ''}`}
           onClick={handleToolsClick}
         >
@@ -202,6 +242,9 @@ function MessageItem({ msg }: { msg: Message }) {
             ))}
           </div>
         </div>
+      )}
+      {msg.attachments && msg.attachments.length > 0 && (
+        <AttachmentRenderer attachments={msg.attachments} />
       )}
     </div>
   )
