@@ -26,6 +26,7 @@ struct AgentMessage {
     timestamp: String,
     #[serde(rename = "toolCalls")]
     tool_calls: Option<Vec<String>>,
+    attachments: Option<Vec<String>>,
 }
 
 // Message from UI to Agent

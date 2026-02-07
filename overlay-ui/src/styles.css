@@ -5,7 +5,7 @@
 }
 
 :root {
-  /* Dark Theme (Default) - Dark text on light glass */
+  /* Light Theme (Default) - Dark text on light glass */
   --text-primary: rgba(0, 0, 0, 0.85);
   --text-secondary: rgba(0, 0, 0, 0.6);
   --text-muted: rgba(0, 0, 0, 0.4);
@@ -30,24 +30,22 @@
 }
 
 /* Dark theme - Light text on dark glass */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text-primary: rgba(255, 255, 255, 0.92);
-    --text-secondary: rgba(255, 255, 255, 0.65);
-    --text-muted: rgba(255, 255, 255, 0.4);
+#app[data-theme="dark"] {
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.4);
 
-    --user-color: rgba(255, 190, 120, 0.95);
-    --assistant-color: rgba(140, 210, 140, 0.95);
-    --system-color: rgba(255, 190, 120, 0.9);
-    --error-color: rgba(255, 120, 120, 0.9);
-    --tool-color: rgba(200, 200, 200, 0.85);
+  --user-color: rgba(255, 190, 120, 0.95);
+  --assistant-color: rgba(140, 210, 140, 0.95);
+  --system-color: rgba(255, 190, 120, 0.9);
+  --error-color: rgba(255, 120, 120, 0.9);
+  --tool-color: rgba(200, 200, 200, 0.85);
 
-    --glass-bg: rgba(255, 255, 255, 0.05);
-    --glass-bg-hover: rgba(255, 255, 255, 0.1);
-    --glass-border: rgba(255, 255, 255, 0.08);
-    --glass-border-hover: rgba(255, 255, 255, 0.15);
-    --glass-shadow: rgba(0, 0, 0, 0.2);
-  }
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-bg-hover: rgba(255, 255, 255, 0.1);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-hover: rgba(255, 255, 255, 0.15);
+  --glass-shadow: rgba(0, 0, 0, 0.2);
 }
 
 html, body, #root {
@@ -160,6 +158,32 @@ html, body, #root {
 /* Hide traffic light buttons completely */
 #titlebar .controls {
   display: none;
+}
+
+/* Theme toggle button */
+.theme-toggle {
+  margin-left: auto;
+  margin-right: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 11;
+}
+
+.theme-toggle:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-hover);
+  transform: scale(1.1);
 }
 
 /* Messages container */

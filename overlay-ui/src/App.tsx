@@ -212,8 +212,14 @@ function App() {
   const [, setStatus] = useState({ text: 'Waiting for agent...', type: 'normal' as 'normal' | 'connected' })
   const [inputValue, setInputValue] = useState('')
   const [isConnected, setIsConnected] = useState(false)
+  const [theme, setTheme] = useState<'light' | 'dark'>('light')
   const messagesRef = useRef<HTMLDivElement>(null)
   const initialLoadDone = useRef(false)
+
+  // Toggle theme
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light')
+  }
 
   // Send message to agent
   const sendMessage = async () => {
@@ -361,9 +367,12 @@ function App() {
   }, [messages])
 
   return (
-    <div id="app" onContextMenu={handleContextMenu}>
+    <div id="app" data-theme={theme} onContextMenu={handleContextMenu}>
       <div id="titlebar" data-tauri-drag-region>
         <span className="title">Jarvis</span>
+        <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
+          {theme === 'light' ? '☀️' : '🌙'}
+        </button>
       </div>
 
       <div id="messages" ref={messagesRef}>

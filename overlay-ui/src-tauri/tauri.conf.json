@@ -29,13 +29,21 @@
         "focus": true,
         "shadow": false,
         "windowEffects": {
-          "effects": ["acrylic"],
+          "effects": [
+            "acrylic"
+          ],
           "state": "active"
         }
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
     }
   },
   "bundle": {
