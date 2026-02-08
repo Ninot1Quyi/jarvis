@@ -230,6 +230,8 @@ GUI coordinates use normalized [0, 1000] range. (0,0) = top-left, (1000,1000) = 
 
 7.**禁止使用 Emoji**：不要在代码、日志、prompt、注释中添加任何 emoji 符号。保持专业和简洁。
 
+8.**Git commit 必须使用英文**：commit message 必须全部使用英文，不要使用中文或其他语言。
+
 </IMPORTANT>
 
 
