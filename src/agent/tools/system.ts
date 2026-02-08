@@ -93,10 +93,15 @@ export const waitTool: Tool = {
   },
 }
 
+// Track consecutive rounds that called finished().
+// Must be called in two CONSECUTIVE rounds to actually finish.
+let finishedConsecutiveRounds = 0
+let lastFinishedRound = -1  // stepCount of the last round that called finished
+
 export const finishedTool: Tool = {
   definition: {
     name: 'finished',
-    description: 'Mark the task as completed',
+    description: 'Mark the task as completed. Requires two consecutive rounds of calling finished() to confirm. The first call triggers a completion checklist review.',
     parameters: {
       type: 'object',
       properties: {
@@ -105,8 +110,49 @@ export const finishedTool: Tool = {
       required: ['content'],
     },
   },
-  async execute(args) {
+  async execute(args, context) {
     const content = args.content as string
+    const currentRound = (context as Record<string, unknown>)?.stepCount as number | undefined
+
+    // Same round, multiple calls count as one (already counted on first call)
+    if (currentRound !== undefined && currentRound === lastFinishedRound) {
+      return {
+        success: true,
+        data: { finished: false },
+        message: '<warning>finished() can only be called once per round. Multiple calls in the same round count as one. To confirm completion, call finished() in the NEXT round.</warning>',
+      }
+    }
+
+    // Check if this round is consecutive to the last
+    if (currentRound !== undefined && lastFinishedRound !== -1 && currentRound === lastFinishedRound + 1) {
+      finishedConsecutiveRounds++
+    } else {
+      // Not consecutive, reset
+      finishedConsecutiveRounds = 1
+    }
+    lastFinishedRound = currentRound ?? -1
+
+    if (finishedConsecutiveRounds < 2) {
+      return {
+        success: true,
+        data: { finished: false },
+        message: `<reminder>COMPLETION CHECKLIST -- Review before confirming:
+
+1. Did you call recordTask(content="...", source="...") at the START of this task?
+2. Did you REPLY to the message source?
+   - If the task came from <notification> (WeChat, QQ, Slack, etc.): You MUST open the originating app via GUI automation and send a reply to the sender. <chat> tags CANNOT reach these apps.
+   - If the task came from <chat> (tui/gui/mail): Reply via <chat> tags.
+3. Did you update TODO to "completed"?
+4. Did you call recordTask(content="") to clear the task?
+
+If ANY step is missing (especially replying to the sender), do it NOW.
+If ALL steps are done and nothing is missing, call finished() again in the next round to confirm completion.</reminder>`,
+      }
+    }
+
+    // Two consecutive rounds confirmed, actually finish
+    finishedConsecutiveRounds = 0
+    lastFinishedRound = -1
     return {
       success: true,
       data: {
@@ -186,8 +232,8 @@ export const takeScreenshotTool: Tool = {
 // Task control tool - set current task
 export const taskTool: Tool = {
   definition: {
-    name: 'task',
-    description: 'Set your current task. This helps you stay focused on what you are doing. Set to empty string to clear the task when completed.',
+    name: 'recordTask',
+    description: 'Record/set your current task so the system can track and display what you are working on. Must include task source. Set content to empty string to clear the task when completed.',
     parameters: {
       type: 'object',
       properties: {
@@ -195,20 +241,28 @@ export const taskTool: Tool = {
           type: 'string',
           description: 'The task description. Use empty string "" to clear the task.',
         },
+        source: {
+          type: 'string',
+          description: 'Where the task came from. e.g. "tui", "gui", "mail:boss@company.com", "notification:WeChat", "notification:QQ"',
+        },
       },
       required: ['content'],
     },
   },
   async execute(args) {
     const content = (args.content as string).trim()
+    const source = (args.source as string | undefined)?.trim() || ''
+    const display = content
+      ? (source ? `[${source}] ${content}` : content)
+      : ''
     return {
       success: true,
       data: {
-        taskContent: content,
+        taskContent: display,
         taskSet: true,
       },
-      message: content
-        ? `Task set: ${content}`
+      message: display
+        ? `Task set: ${display}`
         : 'Task cleared.',
     }
   },

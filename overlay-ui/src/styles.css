@@ -513,6 +513,22 @@ html, body, #root {
 /* Computer message content area */
 .computer-content {
   cursor: pointer;
+  max-height: 500px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.3s ease-out,
+              margin 0.3s ease-out;
+}
+
+/* Folded state - collapsed with smooth animation */
+.computer-content.folded {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .message-header {

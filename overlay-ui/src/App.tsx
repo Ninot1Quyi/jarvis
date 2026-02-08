@@ -422,16 +422,15 @@ function MessageItem({ msg }: { msg: Message }) {
         </span>
         <span className="message-time">{msg.timestamp}</span>
       </div>
-      {/* Computer message content - only show when expanded */}
-      {!(msg.role === 'computer' && isComputerFolded) && (
-        <div className={`message-content ${isExpanded ? 'expanded' : ''} ${msg.role === 'tool' ? 'tool-content' : ''} ${msg.role === 'computer' ? 'computer-content' : ''}`}>
-          {msg.role === 'computer' ? (
-            <MarkdownContent content={msg.content} />
-          ) : (
-            msg.content
-          )}
-        </div>
-      )}
+      <div 
+        className={`message-content ${isExpanded ? 'expanded' : ''} ${msg.role === 'tool' ? 'tool-content' : ''} ${msg.role === 'computer' ? 'computer-content' : ''} ${msg.role === 'computer' && isComputerFolded ? 'folded' : ''}`}
+      >
+        {msg.role === 'computer' ? (
+          <MarkdownContent content={msg.content} />
+        ) : (
+          msg.content
+        )}
+      </div>
       {hasToolCalls && (
         <div
           className={`tool-bubble ${toolsExpanded ? 'expanded' : ''}`}

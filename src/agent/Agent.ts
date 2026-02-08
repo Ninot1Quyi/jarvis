@@ -335,9 +335,20 @@ Note: Screenshot is attached. If target window != focused window, first click ac
         this.lastHadToolCall = false
 
         if (this.noToolCallCount >= 2) {
-          // 连续两轮没有工具调用，进入等待模式
-          logger.debug('No tool call for 2 consecutive rounds, waiting for new messages...')
-          // 不退出，继续循环等待新消息
+          // 连续两轮没有工具调用，添加回复提醒后进入等待模式
+          logger.debug('No tool call for 2 consecutive rounds, adding reply reminder then waiting...')
+          lastToolResults.push({
+            toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
+            result: JSON.stringify({
+              message: `<reminder>You are about to enter idle mode (no tool calls for 2 rounds).
+
+BEFORE idling, verify you have replied to the message source:
+- If the task came from <notification> (WeChat, QQ, Slack, etc.): Did you open the app and send a reply to the sender? The sender is still waiting!
+- If the task came from <chat> (tui/gui/mail): Did you reply via <chat> tags?
+
+If you forgot to reply, call tools NOW to send the reply. Do NOT leave the sender without a response.</reminder>`
+            })
+          })
           continue
         } else {
           // 第一次没有工具调用，添加提醒
@@ -372,6 +383,7 @@ If the task is NOT COMPLETE and requires GUI/file operations: You MUST call tool
           workspace: config.workspace,
           screenWidth: this.screenContext.screenWidth,
           screenHeight: this.screenContext.screenHeight,
+          stepCount,
         })
 
         // Send tool result to overlay
