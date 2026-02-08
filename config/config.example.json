@@ -33,6 +33,7 @@
   "notification": {
     "enabled": true,
     "appWhitelist": [],
-    "appBlacklist": ["Jarvis"]
+    "appBlacklist": ["jarvis-overlay"],
+    "diffApps": ["WeChat", "QQ", "Lark", "DingTalk", "Discord", "Telegram", "Slack", "WhatsApp", "Line", "Signal", "Messages"]
   }
 }

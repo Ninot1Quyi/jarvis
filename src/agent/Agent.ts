@@ -16,6 +16,7 @@ import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry
 import { messageManager } from '../message/MessageManager.js'
 import { type MailConfig } from '../message/mail.js'
 import type { NotificationConfig } from '../notification/types.js'
+import { captureAXSnapshot, computeAXDiff, type AXSnapshot } from '../notification/axSnapshot.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -61,6 +62,7 @@ export class Agent {
   private screenEnabled: boolean = true  // 屏幕截图开关，默认开启
   private currentTask: string = ''  // 当前任务
   private todoSummary: string = '(none)'  // TODO 摘要
+  private lastAXSnapshot: AXSnapshot | null = null
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -128,6 +130,23 @@ export class Agent {
     let finished = false
 
     while (stepCount < this.maxSteps && !finished) {
+      // AX diff: capture current snapshot and diff with post-action baseline
+      if (this.lastAXSnapshot) {
+        const snapshot = await captureAXSnapshot()
+        if (snapshot && snapshot.bundleId === this.lastAXSnapshot.bundleId) {
+          const diff = computeAXDiff(this.lastAXSnapshot.lines, snapshot.lines)
+          if (diff.added.length > 0 || diff.removed.length > 0) {
+            const diffLines = [
+              ...diff.added.map(l => `+ ${l}`),
+              ...diff.removed.map(l => `- ${l}`),
+            ]
+            const formatted = `[App: ${snapshot.appName}] [AX Change: +${diff.added.length} -${diff.removed.length}]\n${diffLines.join('\n')}`
+            messageManager.pushInbound('notification', formatted)
+          }
+        }
+        this.lastAXSnapshot = null
+      }
+
       // 1. 检查消息队列，获取新的用户消息
       const pendingMessages = messageManager.getInbound()
 
@@ -470,6 +489,17 @@ If the task is NOT COMPLETE and requires GUI/file operations: You MUST call tool
       // 保存本轮点击信息（循环写入）
       this.roundClicks[this.roundClickIndex] = { coordinates: currentRoundClicks }
       this.roundClickIndex = (this.roundClickIndex + 1) % ROUND_CLICKS_CAPACITY
+
+      // AX diff: capture post-action baseline snapshot for diffApps
+      const diffApps = (config.keys.notification as NotificationConfig)?.diffApps || []
+      if (diffApps.length > 0 && !finished) {
+        const snapshot = await captureAXSnapshot()
+        if (snapshot && diffApps.some(app => snapshot.appName.toLowerCase().includes(app.toLowerCase()))) {
+          this.lastAXSnapshot = snapshot
+        } else {
+          this.lastAXSnapshot = null
+        }
+      }
 
       await new Promise(resolve => setTimeout(resolve, 500))
     }

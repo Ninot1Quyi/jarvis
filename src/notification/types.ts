@@ -1,6 +1,7 @@
 export type Platform = 'darwin' | 'win32' | 'linux'
 
 export interface NotificationEvent {
+  type: 'notification'
   id: string
   appName: string
   bundleId?: string
@@ -13,6 +14,7 @@ export interface NotificationConfig {
   enabled: boolean
   appWhitelist?: string[]
   appBlacklist?: string[]
+  diffApps?: string[]
 }
 
 export interface NotificationProvider {

@@ -41,6 +41,7 @@ export class NotificationService {
 
     const time = new Date(event.timestamp * 1000).toLocaleString()
     const formatted = `[App: ${event.appName}] [Time: ${time}] [Title: ${event.title}]\n${event.body}`
+
     messageLayer.push('notification', formatted)
   }
 

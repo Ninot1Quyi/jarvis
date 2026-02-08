@@ -61,10 +61,11 @@ export class MacOSNotificationProvider implements NotificationProvider {
           return
         }
         const event: NotificationEvent = {
+          type: 'notification',
           id: data.id,
           appName: data.appName,
           bundleId: data.bundleId,
-          title: data.title,
+          title: data.title || '',
           body: data.body,
           timestamp: data.timestamp,
         }
