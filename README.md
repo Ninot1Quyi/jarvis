@@ -6,7 +6,7 @@ LLM-powered GUI automation agent.
 
 ## Quick Start
 
-**Option 1: Let AI Coding tools do it for you**
+**Option 1 (Recommended): Let AI Coding tools do it for you**
 
 Open any AI coding tool (Claude Code, Cursor, Trae, Codex CLI, Kimi CLI, etc.) in this project directory, and tell it:
 

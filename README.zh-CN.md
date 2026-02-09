@@ -6,7 +6,7 @@ LLM 驱动的 GUI 自动化代理。
 
 ## Quick Start
 
-**方式一：让 AI Coding 工具帮你搞定**
+**方式一（推荐）：让 AI Coding 工具帮你搞定**
 
 在项目目录下打开任意 AI Coding 工具（Claude Code、Cursor、Trae、Codex CLI、Kimi CLI 等），告诉它：
 
