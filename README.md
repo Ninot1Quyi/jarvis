@@ -2,16 +2,16 @@
 
 LLM-powered GUI automation agent with overlay UI.
 
-[English](README.md) | [Chinese](README.zh-CN.md)
+[English](README.md) | [中文](README.zh-CN.md)
 
 ## Quick Start
 
-**Option 1: Let Claude Code do it for you**
+**Option 1: Let AI Coding tools do it for you**
 
-If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, just run:
+Open any AI coding tool (Claude Code, Cursor, Trae, Codex CLI, Kimi CLI, etc.) in this project directory, and tell it:
 
-```bash
-claude "Read README.md in this project, set up the environment, install dependencies, build and start the project. Fix any errors that occur."
+```
+Read README.md in this project, set up the environment, install dependencies, build and start the project. Fix any errors that occur.
 ```
 
 **Option 2: Manual setup**

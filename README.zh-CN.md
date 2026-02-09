@@ -2,16 +2,16 @@
 
 LLM 驱动的 GUI 自动化代理，带有 Overlay UI。
 
-[English](README.md) | [Chinese](README.zh-CN.md)
+[English](README.md) | [中文](README.zh-CN.md)
 
 ## Quick Start
 
-**方式一：让 Claude Code 帮你搞定**
+**方式一：让 AI Coding 工具帮你搞定**
 
-如果你已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)，直接运行：
+在项目目录下打开任意 AI Coding 工具（Claude Code、Cursor、Trae、Codex CLI、Kimi CLI 等），告诉它：
 
-```bash
-claude "Read README.md in this project, set up the environment, install dependencies, build and start the project. Fix any errors that occur."
+```
+Read README.md in this project, set up the environment, install dependencies, build and start the project. Fix any errors that occur.
 ```
 
 **方式二：手动安装**
