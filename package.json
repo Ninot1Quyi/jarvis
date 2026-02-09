@@ -28,6 +28,7 @@
     "@anthropic-ai/sdk": "^0.32.0",
     "@computer-use/nut-js": "^4.2.0",
     "imapflow": "^1.2.9",
+    "koffi": "^2.15.1",
     "mailparser": "^3.9.3",
     "nodemailer": "^8.0.0",
     "openai": "^4.77.0",

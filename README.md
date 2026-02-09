@@ -2,6 +2,53 @@
 
 LLM-powered GUI automation agent with overlay UI.
 
+## Prerequisites
+
+### All Platforms
+
+- [Node.js](https://nodejs.org/) (v18+)
+- [Rust](https://rustup.rs/)
+
+### Windows
+
+Windows requires MSVC toolchain for compiling the overlay UI.
+
+1. **Install Visual Studio Build Tools**
+
+   Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) or full Visual Studio, and select **"Desktop development with C++"** workload.
+
+2. **Install Rust with MSVC toolchain**
+
+   ```powershell
+   # Install rustup (if not installed)
+   winget install Rustlang.Rustup
+
+   # Ensure MSVC toolchain is default
+   rustup default stable-x86_64-pc-windows-msvc
+   ```
+
+3. **Verify setup**
+
+   ```powershell
+   rustup show
+   # Should show: stable-x86_64-pc-windows-msvc (default)
+   ```
+
+> **Note**: Do NOT use the GNU toolchain (`x86_64-pc-windows-gnu`) on Windows. It has linker limitations that cause build failures with large projects like Tauri.
+
+### macOS
+
+```bash
+xcode-select --install
+```
+
+### Linux
+
+```bash
+# Debian/Ubuntu
+sudo apt install build-essential libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
 ## Quick Start
 
 ```bash
@@ -10,7 +57,7 @@ npm run build
 npm start
 ```
 
-Overlay UI requires [Rust](https://rustup.rs/). First time also run `cd overlay-ui && npm install`.
+First time also run `cd overlay-ui && npm install`.
 
 ## Usage
 
