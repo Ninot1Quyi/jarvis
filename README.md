@@ -1,6 +1,6 @@
 # Jarvis
 
-LLM-powered GUI automation agent with overlay UI.
+LLM-powered GUI automation agent.
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -14,6 +14,8 @@ Open any AI coding tool (Claude Code, Cursor, Trae, Codex CLI, Kimi CLI, etc.) i
 Read README.md in this project, set up the environment, install dependencies, build and start the project. Fix any errors that occur.
 ```
 
+&nbsp;
+
 **Option 2: Manual setup**
 
 Requires [Node.js](https://nodejs.org/) (v18+) and [Rust](https://rustup.rs/).
@@ -26,12 +28,7 @@ npm start            # 3. Start Jarvis
 
 ## Usage
 
-`npm start` launches the overlay UI automatically. Enter tasks through the GUI input box.
-
-```bash
-npm start              # Start with overlay UI (default)
-npm run start:clear    # Clear persisted messages, then start
-```
+Enter tasks through the GUI input box after starting.
 
 ## Configuration
 
@@ -45,7 +42,7 @@ Windows requires MSVC toolchain for compiling the overlay UI.
 
 1. **Install Visual Studio Build Tools**
 
-   Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) or full Visual Studio, and select **"Desktop development with C++"** workload.
+   Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (lightweight, no need for the full Visual Studio IDE) and select **"Desktop development with C++"** workload.
 
 2. **Install Rust with MSVC toolchain**
 
@@ -55,16 +52,3 @@ Windows requires MSVC toolchain for compiling the overlay UI.
    ```
 
 > **Note**: Do NOT use the GNU toolchain (`x86_64-pc-windows-gnu`) on Windows. It has linker limitations that cause build failures with large projects like Tauri.
-
-### macOS
-
-```bash
-xcode-select --install
-```
-
-### Linux
-
-```bash
-# Debian/Ubuntu
-sudo apt install build-essential libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-```

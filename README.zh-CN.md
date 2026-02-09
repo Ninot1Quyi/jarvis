@@ -1,6 +1,6 @@
 # Jarvis
 
-LLM 驱动的 GUI 自动化代理，带有 Overlay UI。
+LLM 驱动的 GUI 自动化代理。
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -14,6 +14,8 @@ LLM 驱动的 GUI 自动化代理，带有 Overlay UI。
 Read README.md in this project, set up the environment, install dependencies, build and start the project. Fix any errors that occur.
 ```
 
+&nbsp;
+
 **方式二：手动安装**
 
 需要 [Node.js](https://nodejs.org/) (v18+) 和 [Rust](https://rustup.rs/)。
@@ -26,12 +28,7 @@ npm start            # 3. 启动 Jarvis
 
 ## Usage
 
-`npm start` 会自动启动 Overlay UI，通过 GUI 输入框输入任务即可。
-
-```bash
-npm start              # 启动（默认带 Overlay UI）
-npm run start:clear    # 清除持久化消息后启动
-```
+启动后通过 GUI 输入框输入任务即可。
 
 ## Configuration
 
@@ -45,7 +42,7 @@ Windows 需要 MSVC 工具链来编译 Overlay UI。
 
 1. **安装 Visual Studio Build Tools**
 
-   下载 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 或完整版 Visual Studio，勾选 **"Desktop development with C++"** 工作负载。
+   下载 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)（轻量级，不需要安装完整的 Visual Studio IDE），勾选 **"Desktop development with C++"** 工作负载。
 
 2. **安装 Rust（MSVC 工具链）**
 
@@ -55,16 +52,3 @@ Windows 需要 MSVC 工具链来编译 Overlay UI。
    ```
 
 > **Note**: Windows 上不要使用 GNU 工具链（`x86_64-pc-windows-gnu`），它的链接器限制会导致 Tauri 等大型项目构建失败。
-
-### macOS
-
-```bash
-xcode-select --install
-```
-
-### Linux
-
-```bash
-# Debian/Ubuntu
-sudo apt install build-essential libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-```
