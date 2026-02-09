@@ -38,7 +38,7 @@ npm start            # 3. 启动 Jarvis
 
 ### Windows
 
-Windows 需要 MSVC 工具链来编译 Overlay UI。
+Windows 需要 MSVC 工具链来编译 GUI。
 
 1. **安装 Visual Studio Build Tools**
 

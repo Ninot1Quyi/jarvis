@@ -38,7 +38,7 @@ Copy `config/config.example.json` to `config/config.json` and fill in your API k
 
 ### Windows
 
-Windows requires MSVC toolchain for compiling the overlay UI.
+Windows requires MSVC toolchain for compiling the GUI.
 
 1. **Install Visual Studio Build Tools**
 
