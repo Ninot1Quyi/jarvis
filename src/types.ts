@@ -40,6 +40,7 @@ export interface ChatOptions {
 export interface ChatResponse {
   content: string
   toolCalls?: ToolCall[]
+  parseError?: string
   usage: {
     inputTokens: number
     outputTokens: number

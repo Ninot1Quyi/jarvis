@@ -191,16 +191,19 @@ export class OpenAIProvider extends BaseLLMProvider {
     }
 
     // Fallback: try parsing from text if no native tool calls
+    let parseError: string | undefined
     if (toolCalls.length === 0 && message.content) {
-      const { toolCalls: parsedCalls } = parseToolCallsFromText(message.content)
-      if (parsedCalls.length > 0) {
-        toolCalls.push(...parsedCalls)
+      const parsed = parseToolCallsFromText(message.content)
+      if (parsed.toolCalls.length > 0) {
+        toolCalls.push(...parsed.toolCalls)
       }
+      parseError = parsed.parseError
     }
 
     return {
       content: message.content || '',
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      parseError,
       usage: {
         inputTokens: response.usage?.prompt_tokens || 0,
         outputTokens: response.usage?.completion_tokens || 0,
@@ -226,11 +229,12 @@ export class OpenAIProvider extends BaseLLMProvider {
     const content = message.content || ''
 
     // Parse tool calls from text
-    const { thought, toolCalls } = parseToolCallsFromText(content)
+    const { thought, toolCalls, parseError } = parseToolCallsFromText(content)
 
     return {
       content: toolCalls.length > 0 ? thought : content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      parseError,
       usage: {
         inputTokens: response.usage?.prompt_tokens || 0,
         outputTokens: response.usage?.completion_tokens || 0,

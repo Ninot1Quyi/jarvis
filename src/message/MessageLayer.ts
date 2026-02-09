@@ -18,6 +18,7 @@ export interface QueuedMessage {
   source: MessageSource
   content: string
   consumed: boolean
+  status: 'pending' | 'processing'
 }
 
 /**
@@ -96,6 +97,7 @@ export class MessageLayer {
       source,
       content: content.trim(),
       consumed: false,
+      status: 'pending',
     }
     this.messages.push(message)
     this.save()
@@ -103,10 +105,17 @@ export class MessageLayer {
   }
 
   /**
-   * 获取所有未消费的消息
+   * 获取所有未消费的消息（包括 pending 和 processing）
    */
   getPending(): QueuedMessage[] {
     return this.messages.filter(m => !m.consumed)
+  }
+
+  /**
+   * 获取仅 pending 状态的消息（用于 UI 显示）
+   */
+  getPendingOnly(): QueuedMessage[] {
+    return this.messages.filter(m => !m.consumed && m.status === 'pending')
   }
 
   /**
@@ -131,6 +140,33 @@ export class MessageLayer {
       }
     }
     this.save()
+  }
+
+  /**
+   * Mark messages as processing (agent has picked them up, UI should hide them)
+   */
+  markProcessing(ids: string[]): void {
+    for (const id of ids) {
+      const msg = this.messages.find(m => m.id === id)
+      if (msg) {
+        msg.status = 'processing'
+      }
+    }
+    this.save()
+  }
+
+  /**
+   * Reset all processing messages back to pending (on agent restart)
+   */
+  resetProcessing(): void {
+    let changed = false
+    for (const msg of this.messages) {
+      if (!msg.consumed && msg.status === 'processing') {
+        msg.status = 'pending'
+        changed = true
+      }
+    }
+    if (changed) this.save()
   }
 
   /**
@@ -398,9 +434,10 @@ export class MessageLayer {
     const sysMsg: QueuedMessage = {
       id: `sys${Date.now()}`,
       timestamp: new Date(),
-      source: 'tui',  // system messages go through tui channel
+      source: 'tui',
       content: notification,
       consumed: false,
+      status: 'pending',
     }
     this.messages.unshift(sysMsg)
     this.save()

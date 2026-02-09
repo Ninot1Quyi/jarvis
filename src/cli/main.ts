@@ -29,17 +29,9 @@ function probePort(port: number): Promise<boolean> {
   })
 }
 
-/** Kill stale processes left over from a previous run. */
-async function cleanStalePorts(): Promise<void> {
-  // WS port open means UI is fully alive -- nothing to clean
-  if (await probePort(WS_PORT)) return
-
-  // Vite port occupied without WS = orphaned Vite from last run
-  if (await probePort(VITE_PORT)) {
-    console.log('[JARVIS] Killing stale Vite process on port 1420...')
-    try { execSync(`lsof -ti:${VITE_PORT} | xargs kill -9`, { stdio: 'ignore' }) } catch {}
-    await new Promise(r => setTimeout(r, 500))
-  }
+/** Kill any stale processes on UI ports from a previous run. */
+function cleanStalePorts(): void {
+  try { execSync(`lsof -ti:${VITE_PORT},${WS_PORT} | xargs kill -9 2>/dev/null`, { stdio: 'ignore' }) } catch {}
 }
 
 async function waitForUi(timeoutMs = 120_000): Promise<void> {
@@ -89,8 +81,8 @@ function killUi(): void {
 
   if (!pid) return
 
-  // Kill the entire process group (shell + npm + vite + cargo + tauri)
-  try { process.kill(-pid, 'SIGTERM') } catch {}
+  // Kill the entire process group with SIGKILL (SIGTERM is often ignored by shell children)
+  try { process.kill(-pid, 'SIGKILL') } catch {}
   // Belt-and-suspenders: also nuke the ports directly
   try { execSync(`lsof -ti:${VITE_PORT},${WS_PORT} | xargs kill -9 2>/dev/null`, { stdio: 'ignore' }) } catch {}
 }
@@ -99,6 +91,9 @@ function killUi(): void {
 
 async function main() {
   const args = process.argv.slice(2)
+
+  // Kill any stale UI processes from previous runs
+  cleanStalePorts()
 
   let verbose = false
   let noUi = false
@@ -161,17 +156,10 @@ async function main() {
   let overlay = false
 
   if (!noUi) {
-    const alreadyRunning = await probePort(WS_PORT)
-
-    if (alreadyRunning) {
-      console.log('[JARVIS] Overlay UI already running\n')
-    } else {
-      await cleanStalePorts()
-      console.log('[JARVIS] Starting overlay UI...\n')
-      uiProcess = spawnUi()
-      await waitForUi()
-      console.log('[JARVIS] Overlay UI ready\n')
-    }
+    console.log('[JARVIS] Starting overlay UI...\n')
+    uiProcess = spawnUi()
+    await waitForUi()
+    console.log('[JARVIS] Overlay UI ready\n')
 
     overlay = true
     overlayClient.enable()
@@ -223,6 +211,11 @@ function startTerminalInput() {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
+  })
+
+  // readline swallows SIGINT (Ctrl+C) by default -- re-emit it to process
+  rl.on('SIGINT', () => {
+    process.emit('SIGINT' as any)
   })
 
   rl.on('line', (line) => {

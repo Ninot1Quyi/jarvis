@@ -105,7 +105,25 @@ export class MessageManager {
    * Push a message into the inbound queue.
    */
   pushInbound(source: MessageSource, content: string): string {
-    return messageLayer.push(source, content)
+    const id = messageLayer.push(source, content)
+    // Notify overlay UI of pending queue update
+    this.notifyPendingQueue()
+    return id
+  }
+
+  /**
+   * Notify overlay UI of pending messages queue update.
+   * Only shows 'pending' status messages (not 'processing').
+   */
+  private notifyPendingQueue(): void {
+    if (!this.overlay) return
+    const pending = messageLayer.getPendingOnly()
+    const formatted = pending.map(m => ({
+      id: m.id,
+      content: m.content,
+      timestamp: m.timestamp.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    }))
+    overlayClient.sendPendingQueue(formatted)
   }
 
   /**
@@ -123,10 +141,28 @@ export class MessageManager {
   }
 
   /**
+   * Mark inbound messages as processing (picked up by agent, hide from UI).
+   */
+  markProcessing(ids: string[]): void {
+    messageLayer.markProcessing(ids)
+    this.notifyPendingQueue()
+  }
+
+  /**
+   * Reset all processing messages back to pending (on agent restart).
+   */
+  resetProcessing(): void {
+    messageLayer.resetProcessing()
+    this.notifyPendingQueue()
+  }
+
+  /**
    * Mark inbound messages as consumed.
    */
   consumeInbound(ids: string[]): void {
     messageLayer.consumeAll(ids)
+    // Notify overlay UI of pending queue update
+    this.notifyPendingQueue()
   }
 
   /**
@@ -209,9 +245,9 @@ export class MessageManager {
   /**
    * Send a computer message (system feedback) to overlay UI.
    */
-  notifyGuiComputer(content: string): void {
+  notifyGuiComputer(content: string, attachments?: string[]): void {
     if (!this.overlay) return
-    overlayClient.sendComputer(content)
+    overlayClient.sendComputer(content, attachments)
   }
 
   /**

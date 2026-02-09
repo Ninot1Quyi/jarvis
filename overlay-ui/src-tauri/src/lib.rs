@@ -29,6 +29,22 @@ struct AgentMessage {
     attachments: Option<Vec<String>>,
 }
 
+// Pending message for queue display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingMessage {
+    id: String,
+    content: String,
+    timestamp: String,
+}
+
+// Pending queue update message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingQueueMessage {
+    #[serde(rename = "type")]
+    msg_type: String,
+    messages: Vec<PendingMessage>,
+}
+
 // Message from UI to Agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UiMessage {
@@ -56,6 +72,13 @@ async fn send_to_agent(state: State<'_, AppState>, content: String) -> Result<bo
     }
 }
 
+// Tauri command to update pending messages queue
+#[tauri::command]
+async fn update_pending_queue(app: AppHandle, messages: Vec<PendingMessage>) -> Result<(), String> {
+    let _ = app.emit("pending-messages", messages);
+    Ok(())
+}
+
 async fn handle_connection(stream: TcpStream, app: AppHandle, ws_writer: WsWriter) {
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
@@ -81,6 +104,17 @@ async fn handle_connection(stream: TcpStream, app: AppHandle, ws_writer: WsWrite
             Ok(msg) => {
                 if msg.is_text() {
                     let text = msg.to_text().unwrap_or("");
+                    
+                    // Try to parse as pending queue update first
+                    match serde_json::from_str::<PendingQueueMessage>(text) {
+                        Ok(queue_msg) if queue_msg.msg_type == "pending_queue" => {
+                            let _ = app.emit("pending-messages", queue_msg.messages);
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    
+                    // Try to parse as agent message
                     match serde_json::from_str::<AgentMessage>(text) {
                         Ok(agent_msg) => {
                             let _ = app.emit("agent-message", agent_msg);
@@ -139,7 +173,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![send_to_agent])
+        .invoke_handler(tauri::generate_handler![send_to_agent, update_pending_queue])
         .setup(|app| {
             let app_handle = app.handle().clone();
             let state: State<AppState> = app.state();

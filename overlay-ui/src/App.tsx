@@ -167,13 +167,45 @@ function AttachmentRenderer({ attachments }: { attachments: string[] }) {
 }
 
 // Component for rendering markdown content
+const CUSTOM_XML_TAGS = ['quote', 'reminder', 'warning', 'thought', 'error']
+const CUSTOM_XML_RE = new RegExp(
+  `<(${CUSTOM_XML_TAGS.join('|')})>([\\s\\S]*?)<\\/\\1>`,
+  'gi'
+)
+
+// Escape HTML special chars for safe dangerouslySetInnerHTML usage
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+// Process plain text content: escape HTML first, then apply custom XML tag labels
+function processCustomTags(text: string): string {
+  const escaped = escapeHtml(text)
+  const escapedTagRe = new RegExp(
+    `&lt;(${CUSTOM_XML_TAGS.join('|')})&gt;([\\s\\S]*?)&lt;/\\1&gt;`,
+    'gi'
+  )
+  return escaped.replace(
+    escapedTagRe,
+    (_match, tag, inner) => `${inner.replace(/[\s\n\r]+$/, '')}<sup class="xml-tag">${escapeHtml(tag)}</sup>`
+  )
+}
+
 function MarkdownContent({ content }: { content: string }) {
-  const htmlContent = marked.parse(content, { async: false }) as string
-  
+  let htmlContent = marked.parse(content, { async: false }) as string
+  // Replace known custom XML tags with content + superscript tag label
+  htmlContent = htmlContent.replace(
+    CUSTOM_XML_RE,
+    (_match, tag, inner) => `${inner.replace(/[\s\n\r]+$/, '')}<sup class="xml-tag">${tag}</sup>`
+  )
   return (
-    <div 
+    <div
       className="markdown-content"
-      dangerouslySetInnerHTML={{ __html: htmlContent }} 
+      dangerouslySetInnerHTML={{ __html: htmlContent }}
     />
   )
 }
@@ -188,69 +220,13 @@ function MessageItem({ msg }: { msg: Message }) {
   })
   // Computer message fold state - default folded for computer messages
   const [isComputerFolded, setIsComputerFolded] = useState(() => msg.role === 'computer')
+  // Enable CSS transition only after first user toggle (prevents flash on initial render)
+  const [computerAnimated, setComputerAnimated] = useState(false)
   
   const [toolsExpanded, setToolsExpanded] = useState(false)
   const [mousePos, setMousePos] = useState({ x: 50, y: 50 })
   const [isHovered, setIsHovered] = useState(false)
-  // Drag interaction states
-  const [isDragging, setIsDragging] = useState(false)
-  const isDraggingRef = useRef(isDragging)
-  const dragStartPos = useRef({ x: 0, y: 0 })
-  const hasDragged = useRef(false)
   const messageRef = useRef<HTMLDivElement>(null)
-  
-  // Spring physics for smooth drag
-  const springPos = useRef({ x: 0, y: 0 }) // Current spring position
-  const targetPos = useRef({ x: 0, y: 0 }) // Target position (mouse)
-  const animationRef = useRef<number | null>(null)
-  
-  // Keep ref in sync with state to avoid closure issues
-  useEffect(() => {
-    isDraggingRef.current = isDragging
-  }, [isDragging])
-  
-  // Spring physics animation loop
-  useEffect(() => {
-    if (!isDragging) return
-    
-    const springStrength = 0.15 // How fast it follows (0-1)
-    const friction = 0.7 // Damping factor (0-1)
-    let velocityX = 0
-    let velocityY = 0
-    
-    const animate = () => {
-      if (!messageRef.current) return
-      
-      // Spring physics: F = -k*x - c*v
-      const dx = targetPos.current.x - springPos.current.x
-      const dy = targetPos.current.y - springPos.current.y
-      
-      velocityX += dx * springStrength
-      velocityY += dy * springStrength
-      velocityX *= friction
-      velocityY *= friction
-      
-      springPos.current.x += velocityX
-      springPos.current.y += velocityY
-      
-      // Apply transform with slight scale for elastic feel
-      const scale = 1 - Math.min(Math.abs(springPos.current.x) * 0.002, 0.02)
-      messageRef.current.style.transform = `translate(${springPos.current.x}px, ${springPos.current.y}px) scale(${scale})`
-      messageRef.current.style.transition = 'none'
-      
-      if (isDraggingRef.current || Math.abs(velocityX) > 0.1 || Math.abs(velocityY) > 0.1) {
-        animationRef.current = requestAnimationFrame(animate)
-      }
-    }
-    
-    animationRef.current = requestAnimationFrame(animate)
-    
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
-  }, [isDragging])
 
   const isLong = msg.content.length > 100
   const shouldShowExpand = isLong && msg.role === 'tool'
@@ -258,14 +234,8 @@ function MessageItem({ msg }: { msg: Message }) {
   const isClickable = shouldShowExpand || (msg.role === 'assistant' && hasToolCalls) || msg.role === 'computer'
 
   const handleClick = () => {
-    // Prevent click if was actually dragging (moved more than threshold)
-    if (hasDragged.current) {
-      hasDragged.current = false
-      return
-    }
-    
     if (msg.role === 'computer') {
-      // Computer messages: click to toggle fold/unfold
+      if (!computerAnimated) setComputerAnimated(true)
       setIsComputerFolded(!isComputerFolded)
     } else if (shouldShowExpand) {
       setIsExpanded(!isExpanded)
@@ -281,120 +251,19 @@ function MessageItem({ msg }: { msg: Message }) {
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!messageRef.current) return
-    
-    // Handle dragging - use ref to avoid closure issues
-    if (isDraggingRef.current) {
-      const deltaX = e.clientX - dragStartPos.current.x
-      const deltaY = e.clientY - dragStartPos.current.y
-      
-      // Rubber band effect: displacement slows down as it approaches max
-      const maxDrag = 25
-      const rubberBand = (val: number, max: number) => {
-        const absVal = Math.abs(val)
-        if (absVal <= max) return val
-        const overflow = absVal - max
-        const damped = max + overflow * 0.3 // Slow down beyond max
-        return val > 0 ? damped : -damped
-      }
-      
-      targetPos.current = {
-        x: rubberBand(deltaX, maxDrag),
-        y: rubberBand(deltaY, maxDrag)
-      }
-      
-      // Mark as dragged if moved more than 3px
-      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
-        hasDragged.current = true
-      }
-      return
-    }
-    
-    // Handle edge refraction mouse follow
     const rect = messageRef.current.getBoundingClientRect()
     const x = ((e.clientX - rect.left) / rect.width) * 100
     const y = ((e.clientY - rect.top) / rect.height) * 100
     setMousePos({ x, y })
   }
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Only left mouse button
-    if (e.button !== 0) return
-    
-    // Prevent text selection during drag
-    e.preventDefault()
-    
-    setIsDragging(true)
-    isDraggingRef.current = true
-    hasDragged.current = false
-    dragStartPos.current = { x: e.clientX, y: e.clientY }
-  }
-
-  const handleMouseUp = () => {
-    setIsDragging(false)
-    // Spring animation will continue briefly due to velocity
-    // Then CSS transition takes over for final snap back
-    setTimeout(() => {
-      if (messageRef.current && !isDraggingRef.current) {
-        messageRef.current.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
-        messageRef.current.style.transform = 'translate(0px, 0px) scale(1)'
-        springPos.current = { x: 0, y: 0 }
-        targetPos.current = { x: 0, y: 0 }
-      }
-    }, 50)
-  }
-
-  const handleMouseLeave = () => {
-    setIsHovered(false)
-    if (isDraggingRef.current) {
-      setIsDragging(false)
-      setTimeout(() => {
-        if (messageRef.current && !isDraggingRef.current) {
-          messageRef.current.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
-          messageRef.current.style.transform = 'translate(0px, 0px) scale(1)'
-          springPos.current = { x: 0, y: 0 }
-          targetPos.current = { x: 0, y: 0 }
-        }
-      }, 50)
-    }
-  }
-  
-  // Global mouse up handler to catch drag release outside the element
-  useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      if (isDraggingRef.current) {
-        setIsDragging(false)
-        setTimeout(() => {
-          if (messageRef.current && !isDraggingRef.current) {
-            messageRef.current.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
-            messageRef.current.style.transform = 'translate(0px, 0px) scale(1)'
-            springPos.current = { x: 0, y: 0 }
-            targetPos.current = { x: 0, y: 0 }
-          }
-        }, 50)
-      }
-    }
-    
-    if (isDragging) {
-      window.addEventListener('mouseup', handleGlobalMouseUp)
-      return () => window.removeEventListener('mouseup', handleGlobalMouseUp)
-    }
-  }, [isDragging])
-
-  // Cursor style only - transform is handled via direct DOM manipulation for performance
-  const dragStyle: React.CSSProperties = {
-    cursor: isDragging ? 'grabbing' : 'default',
-  }
-
   return (
     <div
       ref={messageRef}
-      className={`message ${msg.role} ${isClickable ? 'clickable' : ''} ${isHovered ? 'hovered' : ''} ${isDragging ? 'dragging' : ''}`}
-      style={dragStyle}
+      className={`message ${msg.role} ${msg.role === 'status' && /connected/i.test(msg.content) && !/disconnected/i.test(msg.content) ? 'connected' : ''} ${isClickable ? 'clickable' : ''} ${isHovered ? 'hovered' : ''}`}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={handleMouseLeave}
+      onMouseLeave={() => setIsHovered(false)}
       onMouseMove={handleMouseMove}
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
       onClick={handleClick}
     >
       {/* Mouse follow edge refraction for message bubble */}
@@ -422,11 +291,17 @@ function MessageItem({ msg }: { msg: Message }) {
         </span>
         <span className="message-time">{msg.timestamp}</span>
       </div>
-      <div 
-        className={`message-content ${isExpanded ? 'expanded' : ''} ${msg.role === 'tool' ? 'tool-content' : ''} ${msg.role === 'computer' ? 'computer-content' : ''} ${msg.role === 'computer' && isComputerFolded ? 'folded' : ''}`}
+      <div
+        className={`message-content ${isExpanded && msg.role !== 'computer' ? 'expanded' : ''} ${msg.role === 'tool' ? 'tool-content' : ''} ${msg.role === 'computer' ? 'computer-content' : ''} ${msg.role === 'computer' && computerAnimated ? 'animated' : ''} ${msg.role === 'computer' && isComputerFolded ? 'folded' : ''}`}
       >
         {msg.role === 'computer' ? (
-          <MarkdownContent content={msg.content} />
+          <MarkdownContent content={
+            (msg.attachments && msg.attachments.length > 0
+              ? msg.attachments.map(f => `![screenshot](${convertFileSrc(f)})`).join('\n') + '\n\n'
+              : '') + msg.content
+          } />
+        ) : msg.role === 'assistant' ? (
+          <div dangerouslySetInnerHTML={{ __html: processCustomTags(msg.content) }} />
         ) : (
           msg.content
         )}
@@ -451,7 +326,7 @@ function MessageItem({ msg }: { msg: Message }) {
           </div>
         </div>
       )}
-      {msg.attachments && msg.attachments.length > 0 && (
+      {msg.role !== 'computer' && msg.attachments && msg.attachments.length > 0 && (
         <AttachmentRenderer attachments={msg.attachments} />
       )}
     </div>
@@ -464,6 +339,7 @@ function App() {
   const [inputValue, setInputValue] = useState('')
   const [isConnected, setIsConnected] = useState(false)
   const [theme] = useState<'light' | 'dark'>('dark')
+  const [pendingMessages, setPendingMessages] = useState<Array<{id: string; content: string; timestamp: string}>>([])
   const messagesRef = useRef<HTMLDivElement>(null)
   const initialLoadDone = useRef(false)
 
@@ -615,6 +491,12 @@ function App() {
       setIsConnected(false)
     })
 
+    // Listen for pending messages queue updates
+    const unlistenPending = listen<Array<{id: string; content: string; timestamp: string}>>('pending-messages', (event) => {
+      console.log('[pending-messages] Updated:', event.payload)
+      setPendingMessages(event.payload || [])
+    })
+
     // Welcome message
     setMessages([{
       role: 'system',
@@ -631,6 +513,7 @@ function App() {
       unlistenMessage.then(fn => fn())
       unlistenStatus.then(fn => fn())
       unlistenError.then(fn => fn())
+      unlistenPending.then(fn => fn())
     }
   }, [])
 
@@ -652,6 +535,27 @@ function App() {
           <MessageItem key={i} msg={msg} />
         ))}
       </div>
+
+      {/* Pending Messages Queue */}
+      {pendingMessages.length > 0 && (
+        <div id="pending-queue">
+          <div className="pending-header">
+            <span className="pending-count">{pendingMessages.length}</span>
+            <span className="pending-label">待发送</span>
+          </div>
+          <div className="pending-list">
+            {pendingMessages.map((msg) => (
+              <div key={msg.id} className="pending-item">
+                <span className="pending-dot" />
+                <span className="pending-content" title={msg.content}>
+                  {msg.content}
+                </span>
+                <span className="pending-time">{msg.timestamp}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div id="input-area">
         <LiquidGlassInput

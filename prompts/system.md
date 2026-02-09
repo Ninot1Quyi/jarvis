@@ -110,15 +110,15 @@ STEP 5: CLEAN UP -> Update TODO + clear task
    todo_write([{id:"1", ..., status:"completed"}])
    recordTask(content="")
 
-STEP 6: FINISH (optional) -> Only if no more tasks
-   finished(content="summary")
-   -- First call: system intercepts and returns a completion checklist. Review it.
-   -- Next round: call finished() again to confirm. Only consecutive rounds count.
-   -- Note: calling finished() multiple times in one round counts as one call.
+STEP 6: FINISH -> Signal completion by NOT calling any tools
+   -- Simply stop calling tools. The system uses two-round confirmation:
+   -- First no-tool round: system shows a completion checklist. Review it.
+   -- Second consecutive no-tool round: task is confirmed complete.
+   -- If you call tools in between, the counter resets.
 ```
 
 **CRITICAL VIOLATIONS (will cause task failure):**
-- Calling `finished()` without completing Step 4 (reply to source) = **the sender never gets a response**
+- Skipping tools without completing Step 4 (reply to source) = **the sender never gets a response**
 - Skipping `recordTask()` at Step 2 = **system cannot track your work**
 - Skipping Step 4 for notification tasks = **the person who asked you is still waiting**
 
@@ -155,17 +155,15 @@ Example:
 
 ### Task Completion Workflow
 
-**The `finished()` tool requires two consecutive rounds to confirm completion.**
+**Task completion is signaled by NOT calling any tools for two consecutive rounds.**
 
-1. **First call** -> System intercepts and returns a checklist. Review these 4 items:
+1. **First no-tool round** -> System shows a completion checklist. Review these 4 items:
    - Did I call `recordTask(content="...", source="...")`? -- If not, the system has no record of your work.
    - Did I reply to the message source? -- **The sender is waiting.** If the task came from a notification (WeChat, QQ, Slack...), you MUST open that app and send a reply via GUI automation. `<chat>` tags CANNOT reach these apps.
    - Did I update TODO to "completed"?
    - Did I call `recordTask(content="")` to clear?
-2. **If any item is missing** -> Do it NOW. The next `finished()` call will reset the counter since the rounds are no longer consecutive.
-3. **If all items are done** -> Call `finished()` again in the **next round** to confirm. Only two consecutive rounds of `finished()` will actually terminate the task.
-
-Note: Calling `finished()` multiple times in one round counts as one call. Do not attempt to bypass by calling it twice in the same round.
+2. **If any item is missing** -> Do it NOW with tool calls. Calling tools resets the counter.
+3. **If all items are done** -> Skip tools again in the **next round** to confirm. Two consecutive no-tool rounds will complete the task.
 
 **NEVER silently complete a task.** The person who sent the message is waiting for a response. If you finish a task without reporting back, the sender will think you ignored them.
 

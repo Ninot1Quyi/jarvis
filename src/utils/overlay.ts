@@ -239,19 +239,34 @@ class OverlayClient {
   /**
    * Send a computer message (system feedback)
    */
-  sendComputer(content: string): void {
+  sendComputer(content: string, attachments?: string[]): void {
     if (!this.enabled) return
 
     const msg: OverlayMessage = {
       role: 'computer',
       content,
       timestamp: this.formatTime(),
+      attachments,
     }
 
     if (this.isConnected()) {
       this.sendMessage(msg)
     } else {
       this.messageQueue.push(msg)
+    }
+  }
+
+  /**
+   * Send pending messages queue update
+   */
+  sendPendingQueue(messages: Array<{id: string; content: string; timestamp: string}>): void {
+    if (!this.enabled) return
+
+    if (this.isConnected()) {
+      this.ws!.send(JSON.stringify({
+        type: 'pending_queue',
+        messages,
+      }))
     }
   }
 

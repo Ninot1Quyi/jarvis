@@ -22,7 +22,7 @@ function stripJsonComments(json: string): string {
  * Format: <Thought>...</Thought> <Action>[...]</Action>
  * Also handles raw JSON array without tags
  */
-export function parseToolCallsFromText(text: string): { thought: string; toolCalls: ToolCall[] } {
+export function parseToolCallsFromText(text: string): { thought: string; toolCalls: ToolCall[]; parseError?: string } {
   const thought = text.match(/<Thought>([\s\S]*?)<\/Thought>/i)?.[1]?.trim() || ''
   const toolCalls: ToolCall[] = []
 
@@ -54,8 +54,13 @@ export function parseToolCallsFromText(text: string): { thought: string; toolCal
         })
       }
     }
-  } catch {
-    // JSON parse failed
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e)
+    return {
+      thought,
+      toolCalls,
+      parseError: `JSON parse failed: ${errMsg}\nRaw content: ${actionContent}`,
+    }
   }
 
   return { thought, toolCalls }

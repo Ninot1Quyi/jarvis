@@ -192,11 +192,12 @@ export class AnthropicProvider extends BaseLLMProvider {
 
     // If not using native tool call, parse tool calls from text
     if (!this.nativeToolCall && toolCalls.length === 0 && content) {
-      const { thought, toolCalls: parsedCalls } = parseToolCallsFromText(content)
-      if (parsedCalls.length > 0) {
+      const { thought, toolCalls: parsedCalls, parseError } = parseToolCallsFromText(content)
+      if (parsedCalls.length > 0 || parseError) {
         return {
           content: thought || content,
-          toolCalls: parsedCalls,
+          toolCalls: parsedCalls.length > 0 ? parsedCalls : undefined,
+          parseError,
           usage: {
             inputTokens: response.usage.input_tokens,
             outputTokens: response.usage.output_tokens,

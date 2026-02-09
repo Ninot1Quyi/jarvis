@@ -31,9 +31,22 @@ export async function captureAXSnapshot(): Promise<AXSnapshot | null> {
 }
 
 export function computeAXDiff(a: string[], b: string[]): { added: string[]; removed: string[] } {
-  const setA = new Set(a)
-  const setB = new Set(b)
-  const added = b.filter(l => !setA.has(l))
-  const removed = a.filter(l => !setB.has(l))
+  const countA = new Map<string, number>()
+  const countB = new Map<string, number>()
+  for (const l of a) countA.set(l, (countA.get(l) || 0) + 1)
+  for (const l of b) countB.set(l, (countB.get(l) || 0) + 1)
+
+  const added: string[] = []
+  const removed: string[] = []
+
+  for (const [line, cnt] of countB) {
+    const diff = cnt - (countA.get(line) || 0)
+    for (let i = 0; i < diff; i++) added.push(line)
+  }
+  for (const [line, cnt] of countA) {
+    const diff = cnt - (countB.get(line) || 0)
+    for (let i = 0; i < diff; i++) removed.push(line)
+  }
+
   return { added, removed }
 }

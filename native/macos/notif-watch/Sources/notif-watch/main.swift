@@ -196,6 +196,18 @@ func scanBannersAndEmit(_ ncApp: AXUIElement) {
 func serializeAXTree(_ element: AXUIElement) -> [String] {
     var lines: [String] = []
     walkTree(element, &lines)
+
+    // Some apps (QQ, Electron-based) don't include windows in kAXChildrenAttribute.
+    // Explicitly fetch windows and traverse them too.
+    // Duplicates are harmless since computeAXDiff uses occurrence counting.
+    var windowsValue: AnyObject?
+    let result = AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as String as CFString, &windowsValue)
+    if result == .success, let windows = windowsValue as? [AXUIElement] {
+        for window in windows {
+            walkTree(window, &lines)
+        }
+    }
+
     return lines
 }
 
@@ -205,14 +217,13 @@ func walkTree(_ element: AXUIElement, _ lines: inout [String]) {
     let desc = getDescription(element) ?? ""
     let title = getStringAttribute(element, "AXTitle" as String) ?? ""
 
-    // Build a compact representation of this node
-    var parts: [String] = []
-    if !role.isEmpty { parts.append(role) }
-    if !title.isEmpty { parts.append("t=\(title)") }
-    if !value.isEmpty { parts.append("v=\(value)") }
-    if !desc.isEmpty { parts.append("d=\(desc)") }
-
-    if parts.count > 1 { // skip nodes with only a role and no content
+    // Skip nodes with no text content
+    if !title.isEmpty || !value.isEmpty || !desc.isEmpty {
+        var parts: [String] = []
+        if !role.isEmpty { parts.append(role) }
+        if !title.isEmpty { parts.append("t=\(title)") }
+        if !value.isEmpty { parts.append("v=\(value)") }
+        if !desc.isEmpty { parts.append("d=\(desc)") }
         lines.append(parts.joined(separator: "|"))
     }
 
