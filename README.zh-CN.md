@@ -28,7 +28,11 @@ npm start            # 3. 启动 Jarvis
 
 ## Usage
 
-启动后通过 GUI 输入框输入任务即可。
+启动后通过 GUI 输入框输入任务即可。例如：
+
+- `打开 Chrome 搜索 Minecraft`
+- `用微信给张三发一条消息说下午三点开会`
+- `打开备忘录，记录今天的待办事项`
 
 ## Configuration
 

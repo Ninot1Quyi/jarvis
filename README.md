@@ -28,7 +28,11 @@ npm start            # 3. Start Jarvis
 
 ## Usage
 
-Enter tasks through the GUI input box after starting.
+Enter tasks through the GUI input box after starting. For example:
+
+- `Open Chrome and search for Minecraft`
+- `Send a message to John on WeChat saying the meeting is at 3pm`
+- `Open Notepad and write down today's to-do list`
 
 ## Configuration
 
