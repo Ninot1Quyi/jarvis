@@ -1,11 +1,11 @@
 {
-  "defaultProvider": "anthropic",
-  "mouseSpeed": -1,
+  "defaultProvider": "doubao",
+  "mouseSpeed": 3000,
   "workspace": "/path/to/your/workspace",
   "anthropic": {
     "apiKey": "your-anthropic-api-key",
     "baseUrl": "https://api.anthropic.com",
-    "model": "claude-sonnet-4-5-20250514",
+    "model": "claude-opus-4-6-kiro",
     "apiType": "anthropic",
     "nativeToolCall": true
   },
@@ -19,16 +19,35 @@
   "doubao": {
     "apiKey": "your-doubao-api-key",
     "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
-    "model": "doubao-1-5-ui-tars-250428",
+    "model": "doubao-seed-1-8-251228",
     "apiType": "openai",
     "nativeToolCall": false
   },
-  "ollama-example": {
+  "ollama": {
     "apiKey": "ollama",
     "baseUrl": "http://127.0.0.1:11434/v1",
     "model": "your-model-name",
     "apiType": "openai",
     "nativeToolCall": false
+  },
+  "mail": {
+    "smtp": {
+      "host": "smtp.example.com",
+      "port": 465,
+      "secure": true
+    },
+    "pop3": {
+      "host": "pop.example.com",
+      "port": 995
+    },
+    "imap": {
+      "host": "imap.example.com",
+      "port": 993
+    },
+    "user": "your-email@example.com",
+    "pass": "your-email-password",
+    "pollInterval": 300000,
+    "whitelist": []
   },
   "notification": {
     "enabled": true,

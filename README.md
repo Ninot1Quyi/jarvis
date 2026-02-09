@@ -2,7 +2,19 @@
 
 LLM-powered GUI automation agent with overlay UI.
 
+[English](README.md) | [Chinese](README.zh-CN.md)
+
 ## Quick Start
+
+**Option 1: Let Claude Code do it for you**
+
+If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, just run:
+
+```bash
+claude "Read README.md in this project, set up the environment, install dependencies, build and start the project. Fix any errors that occur."
+```
+
+**Option 2: Manual setup**
 
 Requires [Node.js](https://nodejs.org/) (v18+) and [Rust](https://rustup.rs/).
 
@@ -10,12 +22,6 @@ Requires [Node.js](https://nodejs.org/) (v18+) and [Rust](https://rustup.rs/).
 npm install          # 1. Install dependencies
 npm run build        # 2. Compile TypeScript
 npm start            # 3. Start Jarvis
-```
-
-Clear persisted messages to avoid interference from previous sessions:
-
-```bash
-npm run start:clear
 ```
 
 ## Usage
@@ -29,7 +35,7 @@ npm run start:clear    # Clear persisted messages, then start
 
 ## Configuration
 
-`config/key.json` -- API keys, provider settings, mail credentials.
+Copy `config/config.example.json` to `config/config.json` and fill in your API keys.
 
 ## Platform Notes
 
