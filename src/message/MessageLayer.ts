@@ -78,28 +78,12 @@ export class MessageLayer {
   private outbound: OutboundMessage[] = []
   private deliverers: Deliverers | null = null
   private deliveryTimer: ReturnType<typeof setInterval> | null = null
-  private onPushListener: (() => void) | null = null
-  private pushNotifyEnabled: boolean = true
 
   constructor(filePath?: string) {
     this.filePath = filePath || path.join(process.cwd(), 'data', 'inbound.json')
     this.outboundPath = path.join(path.dirname(this.filePath), 'outbound.json')
     this.load()
     this.loadOutbound()
-  }
-
-  /**
-   * Register a listener called whenever a new message is pushed.
-   */
-  onPush(listener: () => void): void {
-    this.onPushListener = listener
-  }
-
-  /**
-   * Suppress or resume onPush notifications.
-   */
-  setPushNotify(enabled: boolean): void {
-    this.pushNotifyEnabled = enabled
   }
 
   /**
@@ -117,7 +101,6 @@ export class MessageLayer {
     }
     this.messages.push(message)
     this.save()
-    if (this.pushNotifyEnabled && this.onPushListener) this.onPushListener()
     return id
   }
 

@@ -228,18 +228,7 @@ function MessageItem({ msg }: { msg: Message }) {
   const [isHovered, setIsHovered] = useState(false)
   const messageRef = useRef<HTMLDivElement>(null)
 
-  // Parse source tag from user messages: "[gui] content" -> { source: "gui", content: "content" }
-  let userSource = ''
-  let displayContent = msg.content
-  if (msg.role === 'user') {
-    const sourceMatch = msg.content.match(/^\[(gui|mail|tui|notification)\]\s*/)
-    if (sourceMatch) {
-      userSource = sourceMatch[1]
-      displayContent = msg.content.slice(sourceMatch[0].length)
-    }
-  }
-
-  const isLong = displayContent.length > 100
+  const isLong = msg.content.length > 100
   const shouldShowExpand = isLong && msg.role === 'tool'
   const hasToolCalls = msg.toolCalls && msg.toolCalls.length > 0
   const isClickable = shouldShowExpand || (msg.role === 'assistant' && hasToolCalls) || msg.role === 'computer'
@@ -290,7 +279,6 @@ function MessageItem({ msg }: { msg: Message }) {
       <div className="message-header">
         <span className="message-role">
           {msg.role}
-          {userSource && <span className="message-source">{userSource}</span>}
           {isClickable && (
             <span className="expand-hint">
               {msg.role === 'assistant' && hasToolCalls 
@@ -315,7 +303,7 @@ function MessageItem({ msg }: { msg: Message }) {
         ) : msg.role === 'assistant' ? (
           <div dangerouslySetInnerHTML={{ __html: processCustomTags(msg.content) }} />
         ) : (
-          displayContent
+          msg.content
         )}
       </div>
       {hasToolCalls && (
@@ -362,6 +350,14 @@ function App() {
 
     try {
       await invoke('send_to_agent', { content })
+
+      // Add to local messages
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: content,
+        timestamp: formatTime(new Date()),
+      }])
+
       setInputValue('')
     } catch (e) {
       console.error('Failed to send message:', e)
@@ -526,7 +522,7 @@ function App() {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight
     }
-  }, [messages, pendingMessages])
+  }, [messages])
 
   return (
     <div id="app" data-theme={theme} onContextMenu={handleContextMenu}>

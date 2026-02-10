@@ -189,10 +189,6 @@ export class Agent {
         this.noToolCallCount = 0
         this.lastHadToolCall = true  // 有新消息时视为需要继续
       } else if (stepCount === 0 || (!this.lastHadToolCall && this.noToolCallCount >= 2)) {
-        // Idle wait: messages will be consumed immediately on break,
-        // suppress push notifications to avoid flashing pending UI.
-        messageManager.setPushNotify(false)
-
         // Idle wait: poll every 1s for new messages AND AX diff on whitelisted focused apps
         const diffApps = (config.keys.notification as NotificationConfig)?.diffApps || []
         let idleBaseline: AXSnapshot | null = null
@@ -231,7 +227,6 @@ export class Agent {
           }
         }
 
-        messageManager.setPushNotify(true)
         continue
       }
 
@@ -413,6 +408,12 @@ Note: Screenshot is attached. If target window != focused window, first click ac
 
       // 5. 提交到 MessageManager（解析 <chat> 标签，路由到各通道，持久化+重试）
       messageManager.dispatchReply(response.content || '')
+
+      // Forward assistant reply to overlay UI
+      messageManager.notifyGuiAssistant(
+        response.content || '',
+        response.toolCalls?.map(tc => ({ name: tc.name, arguments: tc.arguments })),
+      )
 
       // 添加 assistant 消息
       messages.push({

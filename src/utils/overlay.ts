@@ -84,6 +84,7 @@ class OverlayClient {
         try {
           const msg: UiMessage = JSON.parse(data.toString())
           if (msg.type === 'user_input' && msg.content) {
+            // Add to message queue with 'gui' source
             messageLayer.push('gui', msg.content)
             console.log(`[Overlay] Received from UI: ${msg.content}`)
           }
