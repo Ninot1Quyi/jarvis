@@ -3,6 +3,7 @@ import type {
   Message,
   ImageInput,
   ToolCall,
+  ChatResponse,
   Step,
   Task,
   ProviderConfig,
@@ -14,6 +15,7 @@ import { createProvider } from '../llm/index.js'
 import { screenshotTool } from './tools/system.js'
 import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry as SkillRegistryType } from '../skills/index.js'
 import { messageManager } from '../message/MessageManager.js'
+import { overlayClient } from '../utils/overlay.js'
 import { type MailConfig } from '../message/mail.js'
 import type { NotificationConfig } from '../notification/types.js'
 import { captureAXSnapshot, computeAXDiff, type AXSnapshot } from '../notification/axSnapshot.js'
@@ -64,6 +66,7 @@ export class Agent {
   private todoSummary: string = '(none)'  // TODO 摘要
   private axDiffBaseline: AXSnapshot | null = null
   private axToolDiffAdded: Map<string, number> = new Map()  // tool-caused additions to subtract
+  private stopRequested: boolean = false  // Stop signal from UI
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -111,6 +114,15 @@ export class Agent {
       notificationConfig: config.keys.notification as NotificationConfig | undefined,
     })
 
+    // Register stop callback for graceful shutdown from UI
+    if (this.overlay) {
+      overlayClient.onStop(() => {
+        logger.info('Stop signal received from UI')
+        this.stopRequested = true
+        this.llm.abort()  // Abort in-flight LLM request immediately
+      })
+    }
+
     // 获取组合后的系统提示（根据nativeToolCall和平台自动选择）
     const platform = getCurrentPlatform()
     let systemPrompt = getSystemPrompt(this.nativeToolCall, platform)
@@ -134,6 +146,18 @@ export class Agent {
     let finished = false
 
     while (stepCount < this.maxSteps && !(finished && !this.interactive)) {
+      // Handle stop signal: reset task state and go back to idle wait
+      if (this.stopRequested) {
+        logger.info('Stop signal received, aborting current task...')
+        this.stopRequested = false
+        this.currentTask = ''
+        this.noToolCallCount = 2  // >= 2 triggers idle-wait branch
+        this.lastHadToolCall = false
+        lastToolResults = []
+        // Notify UI
+        overlayClient.sendSystem('Task aborted by user, waiting for new messages...')
+        continue  // Will fall into idle-wait branch (no pending messages + noToolCallCount >= 2 path)
+      }
       // AX diff: detect external changes before checking messages (so diff gets consumed this round)
       const diffApps = (config.keys.notification as NotificationConfig)?.diffApps || []
       if (this.axDiffBaseline && diffApps.length > 0) {
@@ -205,6 +229,9 @@ export class Agent {
 
         // Poll loop: check messages + AX diff every 1s
         while (true) {
+          // Check for stop signal
+          if (this.stopRequested) break
+
           const hasMsg = await this.waitForMessages(1000)
           if (hasMsg) break
 
@@ -398,14 +425,32 @@ Note: Screenshot is attached. If target window != focused window, first click ac
       }
 
       // 4. 调用 LLM
-      const response = await this.llm.chatWithVisionAndTools(
-        messages,
-        images,
-        this.tools.getDefinitions(),
-        { maxTokens: 4096 }
-      )
+      let response: ChatResponse
+      try {
+        response = await this.llm.chatWithVisionAndTools(
+          messages,
+          images,
+          this.tools.getDefinitions(),
+          { maxTokens: 4096 }
+        )
+      } catch (err: any) {
+        // If aborted by stop signal, go back to top of loop (stopRequested handler)
+        if (err?.name === 'AbortError' || this.stopRequested) {
+          logger.info('LLM request aborted')
+          // Remove the computer message we just pushed (it won't get a response)
+          messages.pop()
+          continue
+        }
+        throw err  // Re-throw unexpected errors
+      }
 
       logger.debug(`Tokens: ${response.usage.inputTokens} in, ${response.usage.outputTokens} out`)
+
+      // Check stop signal after LLM call returns (may have waited a long time)
+      if (this.stopRequested) {
+        messages.pop()  // Remove unanswered computer message
+        continue
+      }
 
       if (response.content) {
         logger.thought(response.content)
@@ -611,7 +656,7 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
       logger.warn(`Reached max steps (${this.maxSteps})`)
     }
 
-    logger.info(`Task completed in ${stepCount} steps`)
+    logger.info(`Agent finished after ${stepCount} steps`)
   }
 
   /**

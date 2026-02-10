@@ -174,7 +174,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       messages,
       tools: openaiTools,
       tool_choice: 'required',
-    } as any)
+    } as any, {
+      signal: this.getAbortSignal(),
+    })
 
     const choice = response.choices[0]
     const message = choice.message
@@ -222,6 +224,8 @@ export class OpenAIProvider extends BaseLLMProvider {
       model: this.model,
       max_tokens: options?.maxTokens || 4096,
       messages,
+    }, {
+      signal: this.getAbortSignal(),
     })
 
     const choice = response.choices[0]

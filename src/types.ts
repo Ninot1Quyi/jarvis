@@ -55,6 +55,7 @@ export interface LLMProvider {
     tools: ToolDefinition[],
     options?: ChatOptions
   ): Promise<ChatResponse>
+  abort(): void
 }
 
 // ============ Tool Types ============

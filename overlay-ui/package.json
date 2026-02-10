@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "kill-port": "node -e \"const{execSync}=require('child_process');try{const r=execSync('netstat -ano | findstr :1420 | findstr LISTENING',{encoding:'utf8'});const pid=r.trim().split(/\\s+/).pop();if(pid&&pid!=='0')execSync('taskkill /F /PID '+pid)}catch{}\"",
+    "dev": "npm run kill-port && vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

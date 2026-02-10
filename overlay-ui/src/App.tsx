@@ -13,9 +13,10 @@ interface LiquidGlassInputProps {
   placeholder: string
   disabled?: boolean
   isConnected?: boolean
+  onStop?: () => void
 }
 
-function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, isConnected = true }: LiquidGlassInputProps) {
+function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, isConnected = true, onStop }: LiquidGlassInputProps) {
   const [isFocused, setIsFocused] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
   const [mousePos, setMousePos] = useState({ x: 50, y: 50 })
@@ -87,6 +88,23 @@ function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, is
         disabled={disabled}
         rows={1}
       />
+
+      {/* Stop button */}
+      {onStop && (
+        <button
+          className="input-stop-btn"
+          onMouseDown={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onStop()
+          }}
+          title="Stop agent"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+            <rect x="2" y="2" width="8" height="8" rx="1" />
+          </svg>
+        </button>
+      )}
     </div>
   )
 }
@@ -350,6 +368,7 @@ function App() {
   const [, setStatus] = useState({ text: 'Waiting for agent...', type: 'normal' as 'normal' | 'connected' })
   const [inputValue, setInputValue] = useState('')
   const [isConnected, setIsConnected] = useState(false)
+  const [isAgentBusy, setIsAgentBusy] = useState(false)
   const [theme] = useState<'light' | 'dark'>('dark')
   const [pendingMessages, setPendingMessages] = useState<Array<{id: string; content: string; timestamp: string}>>([])
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -363,11 +382,32 @@ function App() {
     try {
       await invoke('send_to_agent', { content })
       setInputValue('')
+      setIsAgentBusy(true)
     } catch (e) {
       console.error('Failed to send message:', e)
       setMessages(prev => [...prev, {
         role: 'status',
         content: `Failed to send: ${e}`,
+        timestamp: formatTime(new Date()),
+      }])
+    }
+  }
+
+  // Stop the agent
+  const stopAgent = async () => {
+    try {
+      await invoke('stop_agent')
+      setIsAgentBusy(false)
+      setMessages(prev => [...prev, {
+        role: 'status',
+        content: 'Stop signal sent to agent',
+        timestamp: formatTime(new Date()),
+      }])
+    } catch (e) {
+      console.error('Failed to stop agent:', e)
+      setMessages(prev => [...prev, {
+        role: 'status',
+        content: `Failed to stop: ${e}`,
         timestamp: formatTime(new Date()),
       }])
     }
@@ -461,6 +501,16 @@ function App() {
       setMessages(prev => [...prev, validMessage])
       setStatus({ text: 'Connected', type: 'connected' })
       setIsConnected(true)
+
+      // Track agent busy state based on message role
+      if (validMessage.role === 'computer' || validMessage.role === 'tool' || validMessage.role === 'assistant') {
+        setIsAgentBusy(true)
+      } else if (validMessage.role === 'system') {
+        const lc = validMessage.content.toLowerCase()
+        if (lc.includes('aborted') || lc.includes('waiting for new messages')) {
+          setIsAgentBusy(false)
+        }
+      }
     })
 
     const unlistenStatus = listen<string>('agent-status', (event) => {
@@ -472,6 +522,7 @@ function App() {
         setIsConnected(true)
       } else if (lowerContent.includes('disconnected')) {
         setIsConnected(false)
+        setIsAgentBusy(false)
       }
 
       // All connection-related status messages should use 'status' role
@@ -493,6 +544,7 @@ function App() {
       }])
       setStatus({ text: event.payload, type: 'normal' })
       setIsConnected(false)
+      setIsAgentBusy(false)
     })
 
     // Listen for pending messages queue updates
@@ -569,7 +621,8 @@ function App() {
           placeholder={isConnected ? "Type a message..." : "Disconnected"}
           disabled={false}
           isConnected={isConnected}
- />
+          onStop={isConnected && isAgentBusy ? stopAgent : undefined}
+        />
       </div>
 
 

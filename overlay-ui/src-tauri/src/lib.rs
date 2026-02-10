@@ -76,6 +76,25 @@ async fn send_to_agent(state: State<'_, AppState>, content: String) -> Result<bo
     }
 }
 
+// Tauri command to stop the agent
+#[tauri::command]
+async fn stop_agent(state: State<'_, AppState>) -> Result<bool, String> {
+    let mut writer_guard = state.ws_writer.lock().await;
+
+    if let Some(writer) = writer_guard.as_mut() {
+        let msg = UiMessage {
+            msg_type: "stop_agent".to_string(),
+            content: String::new(),
+        };
+        let json = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
+
+        writer.send(Message::Text(json)).await.map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        Err("Not connected to agent".to_string())
+    }
+}
+
 // Tauri command to update pending messages queue
 #[tauri::command]
 async fn update_pending_queue(app: AppHandle, messages: Vec<PendingMessage>) -> Result<(), String> {
@@ -177,7 +196,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![send_to_agent, update_pending_queue])
+        .invoke_handler(tauri::generate_handler![send_to_agent, stop_agent, update_pending_queue])
         .setup(|app| {
             let app_handle = app.handle().clone();
             let state: State<AppState> = app.state();

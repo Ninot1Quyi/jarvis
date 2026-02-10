@@ -20,6 +20,7 @@ import { traceLogger } from '../utils/trace.js'
 export abstract class BaseLLMProvider implements LLMProvider {
   abstract name: string
   protected lastMessageCount: number = 0
+  protected abortController: AbortController | null = null
 
   /**
    * Subclasses implement this to make the actual API call
@@ -32,6 +33,23 @@ export abstract class BaseLLMProvider implements LLMProvider {
   ): Promise<ChatResponse>
 
   /**
+   * Abort the current LLM request if one is in progress
+   */
+  abort(): void {
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+  }
+
+  /**
+   * Get the current abort signal (for subclasses to pass to API calls)
+   */
+  protected getAbortSignal(): AbortSignal | undefined {
+    return this.abortController?.signal
+  }
+
+  /**
    * Main entry point - handles logging and tracing, then delegates to doChat
    */
   async chatWithVisionAndTools(
@@ -40,16 +58,23 @@ export abstract class BaseLLMProvider implements LLMProvider {
     tools: ToolDefinition[],
     options?: ChatOptions
   ): Promise<ChatResponse> {
-    // Log and trace input messages
-    this.logInputMessages(messages, images)
+    // Create a new AbortController for this request
+    this.abortController = new AbortController()
 
-    // Call the actual implementation
-    const response = await this.doChat(messages, images, tools, options)
+    try {
+      // Log and trace input messages
+      this.logInputMessages(messages, images)
 
-    // Log and trace assistant response
-    this.logAssistantResponse(response)
+      // Call the actual implementation
+      const response = await this.doChat(messages, images, tools, options)
 
-    return response
+      // Log and trace assistant response
+      this.logAssistantResponse(response)
+
+      return response
+    } finally {
+      this.abortController = null
+    }
   }
 
   /**

@@ -172,7 +172,9 @@ export class AnthropicProvider extends BaseLLMProvider {
       requestParams.tool_choice = { type: 'any' }
     }
 
-    const response = await this.client.messages.create(requestParams)
+    const response = await this.client.messages.create(requestParams, {
+      signal: this.getAbortSignal(),
+    })
 
     // Parse response
     let content = ''

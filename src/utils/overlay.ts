@@ -21,15 +21,19 @@ export interface OverlayMessage {
 
 // Message from UI to Agent
 interface UiMessage {
-  type: string  // "user_input"
+  type: string  // "user_input" | "stop_agent"
   content: string
 }
+
+// Stop signal callback
+type StopCallback = () => void
 
 class OverlayClient {
   private ws: WebSocket | null = null
   private enabled: boolean = false
   private reconnectTimer: NodeJS.Timeout | null = null
   private messageQueue: OverlayMessage[] = []
+  private stopCallback: StopCallback | null = null
 
   /**
    * Enable the overlay client and connect to the UI
@@ -86,6 +90,11 @@ class OverlayClient {
           if (msg.type === 'user_input' && msg.content) {
             messageLayer.push('gui', msg.content)
             console.log(`[Overlay] Received from UI: ${msg.content}`)
+          } else if (msg.type === 'stop_agent') {
+            console.log('[Overlay] Received stop signal from UI')
+            if (this.stopCallback) {
+              this.stopCallback()
+            }
           }
         } catch (e) {
           console.error('[Overlay] Failed to parse UI message:', e)
@@ -286,6 +295,13 @@ class OverlayClient {
     } else {
       this.messageQueue.push(msg)
     }
+  }
+
+  /**
+   * Register a callback to be called when stop signal is received from UI
+   */
+  onStop(callback: StopCallback): void {
+    this.stopCallback = callback
   }
 }
 

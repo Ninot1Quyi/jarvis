@@ -108,6 +108,10 @@ export const hotkeyTool: Tool = {
     const keyEnumMap: Record<string, number> = {
       command: Key.LeftCmd,
       cmd: Key.LeftCmd,
+      win: Key.LeftWin,
+      windows: Key.LeftWin,
+      super: Key.LeftSuper,
+      meta: Key.LeftSuper,
       control: Key.LeftControl,
       ctrl: Key.LeftControl,
       option: Key.LeftAlt,
