@@ -56,3 +56,7 @@ Windows requires MSVC toolchain for compiling the GUI.
    ```
 
 > **Note**: Do NOT use the GNU toolchain (`x86_64-pc-windows-gnu`) on Windows. It has linker limitations that cause build failures with large projects like Tauri.
+
+#### AI Agent Marketplace Index And Agent Router | [API Doc](https://www.deepnlp.org/doc/ai_agent_marketplace)
+    [![AI Agent Marketplace and Router Badge](https://www.deepnlp.org/api/ai_agent_marketplace/svg?name=Ninot1Quyi/jarvis&badge_type=review)](https://www.deepnlp.org/store/ai-agent/ai-agent/pub-ninot1quyi/jarvis)
+    
