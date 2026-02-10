@@ -37,6 +37,9 @@ export class MessageManager {
       overlayClient.enable()
     }
 
+    // Notify overlay UI whenever a new message is pushed from any source
+    messageLayer.onPush(() => this.notifyPendingQueue())
+
     // -- Mail channel --
     if (options.mailConfig?.user && options.mailConfig?.pass) {
       this.mailService = new MailService(options.mailConfig)
@@ -102,13 +105,19 @@ export class MessageManager {
   // ========== Inbound (External -> Agent) ==========
 
   /**
+   * Suppress or resume push notifications to overlay UI.
+   * Used by Agent to avoid flashing pending UI when messages
+   * will be consumed immediately (e.g. idle wait branch).
+   */
+  setPushNotify(enabled: boolean): void {
+    messageLayer.setPushNotify(enabled)
+  }
+
+  /**
    * Push a message into the inbound queue.
    */
   pushInbound(source: MessageSource, content: string): string {
-    const id = messageLayer.push(source, content)
-    // Notify overlay UI of pending queue update
-    this.notifyPendingQueue()
-    return id
+    return messageLayer.push(source, content)
   }
 
   /**
