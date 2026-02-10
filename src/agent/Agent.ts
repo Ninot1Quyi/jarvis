@@ -119,7 +119,7 @@ export class Agent {
       overlayClient.onStop(() => {
         logger.info('Stop signal received from UI')
         this.stopRequested = true
-        this.llm.abort()  // Abort in-flight LLM request immediately
+        this.llm.abort()
       })
     }
 
@@ -551,6 +551,8 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
 
       // 7. 执行工具调用
       for (const toolCall of response.toolCalls) {
+        if (this.stopRequested) break
+
         const result = await this.tools.execute(toolCall, {
           screenshotDir: config.screenshotDir,
           workspace: config.workspace,
@@ -558,6 +560,8 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
           screenHeight: this.screenContext.screenHeight,
           stepCount,
         })
+
+        if (this.stopRequested) break
 
         // Send tool result to overlay
         const resultStr = result.success

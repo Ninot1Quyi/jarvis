@@ -98,10 +98,10 @@ function LiquidGlassInput({ value, onChange, onSubmit, placeholder, disabled, is
             e.stopPropagation()
             onStop()
           }}
-          title="Stop agent"
+          title="Stop generating"
         >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-            <rect x="2" y="2" width="8" height="8" rx="1" />
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor" fillOpacity="0.6" />
           </svg>
         </button>
       )}
@@ -397,12 +397,7 @@ function App() {
   const stopAgent = async () => {
     try {
       await invoke('stop_agent')
-      setIsAgentBusy(false)
-      setMessages(prev => [...prev, {
-        role: 'status',
-        content: 'Stop signal sent to agent',
-        timestamp: formatTime(new Date()),
-      }])
+      // Don't setIsAgentBusy(false) here - wait for backend "aborted" system message
     } catch (e) {
       console.error('Failed to stop agent:', e)
       setMessages(prev => [...prev, {
