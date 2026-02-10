@@ -25,10 +25,6 @@ config/config.json
 *.xcodeproj
 *.xcworkspace
 
-# .NET build artifacts
-native/windows/notif-watch/bin/
-native/windows/notif-watch/obj/
-
 # IDE
 .idea/
 .vscode/

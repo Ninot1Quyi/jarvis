@@ -606,10 +606,6 @@ function Get-Snapshot {
     return $snapshot
 }
 
-# Force UTF-8 output
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
-
 # Main execution
 $startTime = Get-Date
 $result = $null
