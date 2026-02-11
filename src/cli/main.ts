@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js'
 import { traceLogger } from '../utils/trace.js'
 import { overlayClient } from '../utils/overlay.js'
 import { messageLayer } from '../message/index.js'
+import { messageManager } from '../message/MessageManager.js'
 import * as readline from 'readline'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
@@ -168,12 +169,23 @@ async function main() {
   // ── Cleanup handlers ───────────────────────────────────────────
 
   const cleanup = () => {
+    messageManager.stop()
     killUi()
     if (overlay) overlayClient.disable()
   }
+  const gracefulExit = () => {
+    console.log('\n[JARVIS] Shutting down...\n')
+    cleanup()
+    process.exit(0)
+  }
   process.on('exit', cleanup)
-  process.on('SIGINT', () => { cleanup(); process.exit(0) })
-  process.on('SIGTERM', () => { cleanup(); process.exit(0) })
+  process.on('SIGINT', gracefulExit)
+  process.on('SIGTERM', gracefulExit)
+
+  // Register exit callback from overlay UI
+  if (overlay) {
+    overlayClient.onExit(gracefulExit)
+  }
 
   // ── Start agent ────────────────────────────────────────────────
 
@@ -220,6 +232,11 @@ function startTerminalInput() {
 
   rl.on('line', (line) => {
     const trimmed = line.trim()
+    if (trimmed === '/exit' || trimmed === '/quit') {
+      console.log('\n[JARVIS] Exit requested via terminal\n')
+      process.emit('SIGINT' as any)
+      return
+    }
     if (trimmed) {
       messageLayer.push('tui', trimmed)
       console.log(`[QUEUED] ${trimmed}\n`)

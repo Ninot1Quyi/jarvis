@@ -70,6 +70,7 @@ export interface Deliverers {
 
 const MAX_DELIVERY_ATTEMPTS = 3
 const DELIVERY_INTERVAL = 5000
+let idCounter = 0
 
 export class MessageLayer {
   private filePath: string
@@ -106,7 +107,7 @@ export class MessageLayer {
    * 添加新消息到队列
    */
   push(source: MessageSource, content: string): string {
-    const id = `m${Date.now()}`
+    const id = `m${Date.now()}_${++idCounter}`
     const message: QueuedMessage = {
       id,
       timestamp: new Date(),
@@ -327,7 +328,7 @@ export class MessageLayer {
     mail?: OutboundMailTarget
     attachments?: string[]
   }): string {
-    const id = `o${Date.now()}`
+    const id = `o${Date.now()}_${++idCounter}`
     const delivered: Record<string, boolean> = {}
     const attempts: Record<string, number> = {}
     if (msg.tui !== undefined) { delivered.tui = false; attempts.tui = 0 }
@@ -449,7 +450,7 @@ export class MessageLayer {
 
     // Insert at position 0 (highest priority) in inbound queue
     const sysMsg: QueuedMessage = {
-      id: `sys${Date.now()}`,
+      id: `sys${Date.now()}_${++idCounter}`,
       timestamp: new Date(),
       source: 'tui',
       content: notification,

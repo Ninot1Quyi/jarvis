@@ -8,13 +8,45 @@ export function buildToolsPrompt(_tools: ToolDefinition[]): string {
 }
 
 /**
- * Remove comments from JSON string
+ * Remove comments from JSON string, preserving content inside quoted strings.
  */
 function stripJsonComments(json: string): string {
-  // Remove single-line comments (// ... and # ...)
-  return json
-    .replace(/\/\/[^\n]*/g, '')  // Remove // comments
-    .replace(/#[^\n]*/g, '')      // Remove # comments
+  let result = ''
+  let i = 0
+  while (i < json.length) {
+    // String literal: copy verbatim until closing quote
+    if (json[i] === '"') {
+      result += '"'
+      i++
+      while (i < json.length && json[i] !== '"') {
+        if (json[i] === '\\' && i + 1 < json.length) {
+          result += json[i] + json[i + 1]
+          i += 2
+        } else {
+          result += json[i]
+          i++
+        }
+      }
+      if (i < json.length) {
+        result += '"'
+        i++
+      }
+    }
+    // Single-line comment: skip until newline
+    else if (json[i] === '/' && i + 1 < json.length && json[i + 1] === '/') {
+      while (i < json.length && json[i] !== '\n') i++
+    }
+    // Hash comment: skip until newline
+    else if (json[i] === '#') {
+      while (i < json.length && json[i] !== '\n') i++
+    }
+    // Normal character
+    else {
+      result += json[i]
+      i++
+    }
+  }
+  return result
 }
 
 /**

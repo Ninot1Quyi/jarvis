@@ -19,6 +19,59 @@ function normalizeCoord(value: number): number {
   return value / COORDINATE_FACTOR
 }
 
+/**
+ * Auto-correct click coordinates via accessibility search.
+ * When desc is provided and a high-confidence match is found (>= 80% similarity)
+ * that is far enough from the LLM-provided coordinate (> 30 normalized units),
+ * returns the corrected screen pixel coordinates.
+ * Times out after 500ms to avoid blocking clicks.
+ */
+const CORRECT_TIMEOUT_MS = 500
+
+async function correctCoordinate(
+  coord: number[],
+  x: number,
+  y: number,
+  screenWidth: number,
+  screenHeight: number,
+  desc?: string,
+): Promise<{ x: number; y: number; corrected: boolean }> {
+  const fallback = { x, y, corrected: false }
+  if (!desc || !desc.trim() || !(await isAccessibilityAvailable())) {
+    return fallback
+  }
+
+  try {
+    // Race: accessibility search vs timeout
+    const searchPromise = searchUIElements(desc.trim(), { maxResults: 3 })
+    const timeoutPromise = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), CORRECT_TIMEOUT_MS)
+    )
+    const searchResult = await Promise.race([searchPromise, timeoutPromise])
+
+    if (!searchResult || !searchResult.success || searchResult.results.length === 0) {
+      if (!searchResult) logger.debug(`correctCoordinate: search for "${desc}" timed out (${CORRECT_TIMEOUT_MS}ms)`)
+      return fallback
+    }
+
+    const best = searchResult.results[0]
+    if (best.similarity && best.similarity >= 0.8) {
+      const [cx, cy] = best.center
+      const normBestX = Math.round((cx / screenWidth) * COORDINATE_FACTOR)
+      const normBestY = Math.round((cy / screenHeight) * COORDINATE_FACTOR)
+      const dist = Math.sqrt((normBestX - coord[0]) ** 2 + (normBestY - coord[1]) ** 2)
+      if (dist > 30) {
+        logger.debug(`correctCoordinate: "${desc}" matched "${best.title}" (${Math.round(best.similarity * 100)}%), correcting screen(${x},${y}) -> screen(${cx},${cy}), dist=${Math.round(dist)}`)
+        return { x: Math.round(cx), y: Math.round(cy), corrected: true }
+      }
+    }
+  } catch (error) {
+    logger.debug(`correctCoordinate: search for "${desc}" failed: ${error}`)
+  }
+
+  return fallback
+}
+
 // 移动鼠标，支持瞬移（mouseSpeed=-1）
 async function moveMouse(x: number, y: number) {
   const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
@@ -226,11 +279,17 @@ export const clickTool: Tool = {
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
     const modifiers = args.modifiers as string[] | undefined
-    const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
-    const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
+    let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
+    let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
+
+    // Auto-correct coordinates via accessibility search when desc is provided
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    x = correction.x
+    y = correction.y
 
     const modifierStr = modifiers?.length ? ` +[${modifiers.join('+')}]` : ''
-    logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${modifierStr}${desc ? ` (target: ${desc})` : ''}`)
+    const correctedStr = correction.corrected ? ' (corrected)' : ''
+    logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${modifierStr}${correctedStr}${desc ? ` (target: ${desc})` : ''}`)
 
     // Map modifier names to Key enum
     const modifierKeyMap: Record<string, number> = {
@@ -305,10 +364,15 @@ export const doubleClickTool: Tool = {
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
-    const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
-    const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
+    let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
+    let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    logger.debug(`left_double: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    x = correction.x
+    y = correction.y
+
+    const correctedStr = correction.corrected ? ' (corrected)' : ''
+    logger.debug(`left_double: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${correctedStr}${desc ? ` (target: ${desc})` : ''}`)
 
     // Execute double click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
@@ -352,10 +416,15 @@ export const rightClickTool: Tool = {
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
-    const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
-    const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
+    let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
+    let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    logger.debug(`right_single: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    x = correction.x
+    y = correction.y
+
+    const correctedStr = correction.corrected ? ' (corrected)' : ''
+    logger.debug(`right_single: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${correctedStr}${desc ? ` (target: ${desc})` : ''}`)
 
     // Execute right click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
@@ -399,10 +468,15 @@ export const middleClickTool: Tool = {
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
-    const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
-    const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
+    let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
+    let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    logger.debug(`middle_click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${desc ? ` (target: ${desc})` : ''}`)
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    x = correction.x
+    y = correction.y
+
+    const correctedStr = correction.corrected ? ' (corrected)' : ''
+    logger.debug(`middle_click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${correctedStr}${desc ? ` (target: ${desc})` : ''}`)
 
     // Execute middle click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {

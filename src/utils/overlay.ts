@@ -34,6 +34,7 @@ class OverlayClient {
   private reconnectTimer: NodeJS.Timeout | null = null
   private messageQueue: OverlayMessage[] = []
   private stopCallback: StopCallback | null = null
+  private exitCallback: StopCallback | null = null
 
   /**
    * Enable the overlay client and connect to the UI
@@ -95,6 +96,11 @@ class OverlayClient {
             if (this.stopCallback) {
               this.stopCallback()
             }
+          } else if (msg.type === 'exit_agent') {
+            console.log('[Overlay] Received exit signal from UI')
+            if (this.exitCallback) {
+              this.exitCallback()
+            }
           }
         } catch (e) {
           console.error('[Overlay] Failed to parse UI message:', e)
@@ -110,6 +116,7 @@ class OverlayClient {
       this.ws.on('error', (err) => {
         // Silently handle connection errors (UI might not be running)
         this.ws = null
+        this.scheduleReconnect()
       })
     } catch (err) {
       this.ws = null
@@ -302,6 +309,13 @@ class OverlayClient {
    */
   onStop(callback: StopCallback): void {
     this.stopCallback = callback
+  }
+
+  /**
+   * Register a callback to be called when exit signal is received from UI
+   */
+  onExit(callback: StopCallback): void {
+    this.exitCallback = callback
   }
 }
 

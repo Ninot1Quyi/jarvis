@@ -67,6 +67,7 @@ export class Agent {
   private axDiffBaseline: AXSnapshot | null = null
   private axToolDiffAdded: Map<string, number> = new Map()  // tool-caused additions to subtract
   private stopRequested: boolean = false  // Stop signal from UI
+  private stopResolvers: Set<() => void> = new Set()  // Pending stop waiters
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -120,6 +121,8 @@ export class Agent {
         logger.info('Stop signal received from UI')
         this.stopRequested = true
         this.llm.abort()
+        for (const resolve of this.stopResolvers) resolve()
+        this.stopResolvers.clear()
       })
     }
 
@@ -551,8 +554,6 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
 
       // 7. 执行工具调用
       for (const toolCall of response.toolCalls) {
-        if (this.stopRequested) break
-
         const result = await this.tools.execute(toolCall, {
           screenshotDir: config.screenshotDir,
           workspace: config.workspace,
@@ -560,8 +561,6 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
           screenHeight: this.screenContext.screenHeight,
           stepCount,
         })
-
-        if (this.stopRequested) break
 
         // Send tool result to overlay
         const resultStr = result.success

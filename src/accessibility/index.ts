@@ -321,7 +321,7 @@ export function diffState(before: StateSnapshot, after: StateSnapshot): StateDif
   const summary: string[] = []
 
   // Time delta
-  const timeDeltaMs = (after.timestamp - before.timestamp) * 1000
+  const timeDeltaMs = after.timestamp - before.timestamp
 
   // Application change
   const applicationChanged =
