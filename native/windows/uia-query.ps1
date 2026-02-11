@@ -25,10 +25,15 @@ param(
     [int]$y = -1,
     [string]$search = "",
     [switch]$snapshot,
+    [switch]$axlines,
     [int]$count = 5,
     [int]$distance = 200,
     [switch]$includeNonInteractive
 )
+
+# Force UTF-8 output so Node.js (and other callers) get correct encoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Load UI Automation assemblies
 Add-Type -AssemblyName UIAutomationClient
@@ -606,12 +611,136 @@ function Get-Snapshot {
     return $snapshot
 }
 
+# Win32 API for foreground window detection
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32FG {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+
+function Get-AXLines {
+    $maxElements = 5000
+
+    try {
+        # Get foreground window process via Win32 (more reliable than UIA FocusedElement walk-up)
+        $hwnd = [Win32FG]::GetForegroundWindow()
+        $fgPid = [uint32]0
+        [void][Win32FG]::GetWindowThreadProcessId($hwnd, [ref]$fgPid)
+
+        if ($fgPid -eq 0) {
+            return @{ error = "No foreground window" }
+        }
+
+        $proc = Get-Process -Id $fgPid -ErrorAction SilentlyContinue
+        if (-not $proc) {
+            return @{ error = "Process not found for PID $fgPid" }
+        }
+
+        $appName = $proc.MainWindowTitle
+        if (-not $appName) { $appName = $proc.ProcessName }
+        $bundleId = $proc.ProcessName
+
+        # Find all top-level windows belonging to this process
+        $root = [System.Windows.Automation.AutomationElement]::RootElement
+        $pidCondition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$fgPid
+        )
+        $topWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $pidCondition)
+
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $totalElements = 0
+
+        foreach ($win in $topWindows) {
+            if ($totalElements -ge $maxElements) { break }
+
+            try {
+                # Skip minimized windows
+                try {
+                    $wp = $win.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+                    if ($wp -and $wp.Current.WindowVisualState -eq [System.Windows.Automation.WindowVisualState]::Minimized) {
+                        continue
+                    }
+                } catch {}
+
+                $condition = [System.Windows.Automation.Condition]::TrueCondition
+                $allElements = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+
+                foreach ($elem in $allElements) {
+                    if ($totalElements -ge $maxElements) { break }
+                    $totalElements++
+
+                    try {
+                        $ct = $elem.Current.ControlType
+                        $typeName = $ct.ProgrammaticName -replace "ControlType.", ""
+                        if ($ControlTypeToRole.ContainsKey($typeName)) {
+                            $role = $ControlTypeToRole[$typeName]
+                        } else {
+                            $role = $typeName
+                        }
+                        $name = $elem.Current.Name
+                        $automationId = $elem.Current.AutomationId
+
+                        # Only query Value pattern for input-like controls (expensive COM call)
+                        $value = $null
+                        if ($typeName -eq "Edit" -or $typeName -eq "ComboBox" -or $typeName -eq "Slider" -or $typeName -eq "Spinner" -or $typeName -eq "Document") {
+                            try {
+                                $vp = $elem.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                                if ($vp) { $value = $vp.Current.Value }
+                            } catch {}
+                            if ($null -eq $value) {
+                                try {
+                                    $rp = $elem.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern)
+                                    if ($rp) { $value = $rp.Current.Value.ToString() }
+                                } catch {}
+                            }
+                        }
+
+                        # Skip if all text fields are empty
+                        if ((-not $name) -and (-not $value) -and (-not $automationId)) { continue }
+
+                        # Build line: "Role|t=Name|v=Value|d=AutomationId"
+                        $parts = [System.Collections.Generic.List[string]]::new()
+                        $parts.Add($role)
+                        if ($name) { $parts.Add("t=$name") }
+                        if ($value) { $parts.Add("v=$value") }
+                        if ($automationId) { $parts.Add("d=$automationId") }
+
+                        $lines.Add($parts -join "|")
+                    } catch {
+                        # Skip individual element errors
+                    }
+                }
+            } catch {
+                # Skip window-level errors, continue to next window
+            }
+        }
+
+        return @{
+            appName = $appName
+            bundleId = $bundleId
+            lines = @($lines)
+        }
+    } catch {
+        return @{ error = $_.Exception.Message }
+    }
+}
+
 # Main execution
 $startTime = Get-Date
 $result = $null
 
 try {
-    if ($snapshot) {
+    if ($axlines) {
+        # AX lines mode - flat tree dump for diff
+        $result = Get-AXLines
+        if (-not $result.ContainsKey("error")) {
+            $result.queryTimeMs = [Math]::Round(((Get-Date) - $startTime).TotalMilliseconds)
+        }
+    }
+    elseif ($snapshot) {
         # Snapshot mode
         $result = Get-Snapshot -queryX $x -queryY $y
         $result.queryTimeMs = [Math]::Round(((Get-Date) - $startTime).TotalMilliseconds)

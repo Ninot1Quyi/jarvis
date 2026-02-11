@@ -18,7 +18,7 @@ import { messageManager } from '../message/MessageManager.js'
 import { overlayClient } from '../utils/overlay.js'
 import { type MailConfig } from '../message/mail.js'
 import type { NotificationConfig } from '../notification/types.js'
-import { captureAXSnapshot, computeAXDiff, type AXSnapshot } from '../notification/axSnapshot.js'
+import { captureAXSnapshot, computeAXDiff, filterDiffNoise, type AXSnapshot } from '../notification/axSnapshot.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -167,10 +167,12 @@ export class Agent {
         const snap = await captureAXSnapshot()
         if (snap && snap.bundleId === this.axDiffBaseline.bundleId) {
           const totalDiff = computeAXDiff(this.axDiffBaseline.lines, snap.lines)
+          // Filter out UI refresh noise (same element, different text)
+          const genuineAdded = filterDiffNoise(totalDiff)
           // Subtract tool-caused additions
           const externalAdded: string[] = []
           const toolRemain = new Map(this.axToolDiffAdded)
-          for (const line of totalDiff.added) {
+          for (const line of genuineAdded) {
             const cnt = toolRemain.get(line) || 0
             if (cnt > 0) {
               toolRemain.set(line, cnt - 1)
@@ -244,9 +246,10 @@ export class Agent {
             if (snap && diffApps.some(app => snap.appName.toLowerCase().includes(app.toLowerCase()))) {
               if (idleBaseline && snap.bundleId === idleBaseline.bundleId) {
                 const diff = computeAXDiff(idleBaseline.lines, snap.lines)
-                if (diff.added.length > 0) {
-                  const diffLines = diff.added.map(l => `+ ${l}`)
-                  const formatted = `[App: ${snap.appName}] [AX Change: +${diff.added.length}]\n${diffLines.join('\n')}`
+                const genuine = filterDiffNoise(diff)
+                if (genuine.length > 0) {
+                  const diffLines = genuine.map(l => `+ ${l}`)
+                  const formatted = `[App: ${snap.appName}] [AX Change: +${genuine.length}]\n${diffLines.join('\n')}`
                   messageManager.pushInbound('notification', formatted)
                   logger.info(`[AX-diff] idle: ${snap.appName} +${diff.added.length}`)
                   // Clear the main-loop baseline so the external diff check
