@@ -464,6 +464,7 @@ Note: Screenshot is attached. If target window != focused window, first click ac
 
       // 5. 提交到 MessageManager（解析 <chat> 标签，路由到各通道，持久化+重试）
       messageManager.dispatchReply(response.content || '')
+      messageManager.notifyGuiAssistant(response.content || '', response.toolCalls)
 
       // 添加 assistant 消息
       messages.push({

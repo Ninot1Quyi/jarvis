@@ -67,10 +67,8 @@ export class MessageManager {
         }
         return true
       },
-      gui: (content: string, attachments?: string[]) => {
-        if (!overlayEnabled) return true
-        if (!overlayClient.isConnected()) return false
-        overlayClient.sendAssistant(content, undefined, attachments)
+      gui: (_content: string, _attachments?: string[]) => {
+        // GUI assistant messages are sent directly via notifyGuiAssistant in Agent.ts
         return true
       },
       mail: async (to: string, subject: string, body: string, attachments?: string[]) => {
@@ -209,9 +207,8 @@ export class MessageManager {
 
     if (chatReply.tui) outbound.tui = chatReply.tui
 
-    if (this.overlay) {
-      outbound.gui = chatReply.gui || chatReply.tui || rawContent || ''
-    }
+    // GUI channel is now handled by notifyGuiAssistant (full content + toolCalls),
+    // no longer routed through MessageLayer's persistent delivery.
 
     if (chatReply.mail) {
       const recipientMatch = chatReply.mail.match(/<recipient>([\s\S]*?)<\/recipient>/)

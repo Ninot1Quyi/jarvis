@@ -541,7 +541,7 @@ html, body, #root {
 /* Computer message content area - use compound selector for specificity over .message-content.expanded */
 .message-content.computer-content {
   cursor: pointer;
-  max-height: 2000px;
+  max-height: 10000px;
   opacity: 1;
   overflow: hidden;
 }
@@ -563,14 +563,33 @@ html, body, #root {
               padding 0.22s ease-in-out;
 }
 
-/* Folded state */
+/* Folded state - show preview with fade-out mask */
 .message-content.computer-content.folded {
-  max-height: 0;
-  opacity: 0;
+  max-height: 60px;
+  opacity: 0.7;
   margin-top: 0;
   margin-bottom: 0;
   padding-top: 0;
   padding-bottom: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Gradient mask at bottom when folded */
+.message-content.computer-content.folded::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(100, 180, 255, 0.15) 100%
+  );
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
 
 .message-header {

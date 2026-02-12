@@ -185,7 +185,7 @@ function AttachmentRenderer({ attachments }: { attachments: string[] }) {
 }
 
 // Component for rendering markdown content
-const CUSTOM_XML_TAGS = ['quote', 'reminder', 'warning', 'thought', 'error']
+const CUSTOM_XML_TAGS = ['chat', 'quote', 'reminder', 'warning', 'thought', 'error', 'tui', 'gui']
 const CUSTOM_XML_RE = new RegExp(
   `<(${CUSTOM_XML_TAGS.join('|')})>([\\s\\S]*?)<\\/\\1>`,
   'gi'
@@ -202,24 +202,34 @@ function escapeHtml(text: string): string {
 
 // Process plain text content: escape HTML first, then apply custom XML tag labels
 function processCustomTags(text: string): string {
-  const escaped = escapeHtml(text)
+  let result = escapeHtml(text)
   const escapedTagRe = new RegExp(
     `&lt;(${CUSTOM_XML_TAGS.join('|')})&gt;([\\s\\S]*?)&lt;/\\1&gt;`,
     'gi'
   )
-  return escaped.replace(
-    escapedTagRe,
-    (_match, tag, inner) => `${inner.replace(/[\s\n\r]+$/, '')}<sup class="xml-tag">${escapeHtml(tag)}</sup>`
-  )
+  // Loop to handle nested tags (inner tags get replaced first in subsequent passes)
+  let prev = ''
+  while (prev !== result) {
+    prev = result
+    result = result.replace(
+      escapedTagRe,
+      (_match, tag, inner) => `${inner.replace(/[\s\n\r]+$/, '')}<sup class="xml-tag">${escapeHtml(tag)}</sup>`
+    )
+  }
+  return result
 }
 
 function MarkdownContent({ content }: { content: string }) {
   let htmlContent = marked.parse(content, { async: false }) as string
-  // Replace known custom XML tags with content + superscript tag label
-  htmlContent = htmlContent.replace(
-    CUSTOM_XML_RE,
-    (_match, tag, inner) => `${inner.replace(/[\s\n\r]+$/, '')}<sup class="xml-tag">${tag}</sup>`
-  )
+  // Replace known custom XML tags with content + superscript tag label (loop for nesting)
+  let prev = ''
+  while (prev !== htmlContent) {
+    prev = htmlContent
+    htmlContent = htmlContent.replace(
+      CUSTOM_XML_RE,
+      (_match, tag, inner) => `${inner.replace(/[\s\n\r]+$/, '')}<sup class="xml-tag">${tag}</sup>`
+    )
+  }
   return (
     <div
       className="markdown-content"
