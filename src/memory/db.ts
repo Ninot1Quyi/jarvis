@@ -3,13 +3,28 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import { chunkMarkdown, type ChunkOptions } from './chunker.js'
-import type { Chunk, SearchResult } from './types.js'
+import type { Chunk, SearchResult, IndexMeta, EmbeddingCacheEntry } from './types.js'
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1)
+}
 
 export class MemoryDB {
-  private db: Database.Database
+  private db!: Database.Database
+  private dbPath: string
 
   constructor(dbPath: string) {
-    // Ensure parent directory exists
+    this.dbPath = dbPath
+    this.openDb(dbPath)
+  }
+
+  private openDb(dbPath: string): void {
     const dir = path.dirname(dbPath)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 
@@ -21,28 +36,51 @@ export class MemoryDB {
 
   private ensureSchema(): void {
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS files (
         path TEXT PRIMARY KEY,
+        source TEXT NOT NULL DEFAULT 'memory',
         hash TEXT NOT NULL,
         mtime INTEGER NOT NULL,
         size INTEGER NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS chunks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT PRIMARY KEY,
         path TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'memory',
         chunk_index INTEGER NOT NULL,
-        content TEXT NOT NULL,
-        heading TEXT,
         start_line INTEGER NOT NULL,
         end_line INTEGER NOT NULL,
+        hash TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL,
+        embedding TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL,
         FOREIGN KEY (path) REFERENCES files(path) ON DELETE CASCADE
       );
 
       CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
+      CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);
+
+      CREATE TABLE IF NOT EXISTS embedding_cache (
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        embedding TEXT NOT NULL,
+        dims INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, model, hash)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated ON embedding_cache(updated_at);
     `)
 
-    // FTS5 virtual table - check if exists first
+    // FTS5 virtual table -- manual sync, no triggers (TEXT primary key)
     const ftsExists = this.db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
     ).get()
@@ -50,89 +88,124 @@ export class MemoryDB {
     if (!ftsExists) {
       this.db.exec(`
         CREATE VIRTUAL TABLE chunks_fts USING fts5(
-          content, heading,
-          content='chunks', content_rowid='id'
+          content,
+          id UNINDEXED,
+          path UNINDEXED,
+          source UNINDEXED,
+          start_line UNINDEXED,
+          end_line UNINDEXED
         );
-
-        CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
-          INSERT INTO chunks_fts(rowid, content, heading) VALUES (new.id, new.content, new.heading);
-        END;
-
-        CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
-          INSERT INTO chunks_fts(chunks_fts, rowid, content, heading) VALUES ('delete', old.id, old.content, old.heading);
-        END;
       `)
     }
   }
 
-  // Index a single file. Returns true if file was actually re-indexed (hash changed).
+  // ---- Meta ----
+
+  getMeta(): IndexMeta | null {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'index_meta'").get() as { value: string } | undefined
+    if (!row) return null
+    try {
+      return JSON.parse(row.value) as IndexMeta
+    } catch {
+      return null
+    }
+  }
+
+  setMeta(meta: IndexMeta): void {
+    this.db.prepare(
+      "INSERT OR REPLACE INTO meta (key, value) VALUES ('index_meta', ?)"
+    ).run(JSON.stringify(meta))
+  }
+
+  // ---- File indexing ----
+
   indexFile(absolutePath: string, relativePath: string, chunkOptions?: ChunkOptions): boolean {
-    // 1. Read file, compute SHA-256
     const content = fs.readFileSync(absolutePath, 'utf-8')
     const hash = crypto.createHash('sha256').update(content).digest('hex')
     const stat = fs.statSync(absolutePath)
 
-    // 2. Check if hash unchanged
     const existing = this.db.prepare('SELECT hash FROM files WHERE path = ?').get(relativePath) as { hash: string } | undefined
     if (existing && existing.hash === hash) return false
 
-    // 3. Transaction: delete old chunks, insert new
-    const insertFile = this.db.prepare(
-      'INSERT OR REPLACE INTO files (path, hash, mtime, size) VALUES (?, ?, ?, ?)'
-    )
-    const deleteChunks = this.db.prepare('DELETE FROM chunks WHERE path = ?')
-    const insertChunk = this.db.prepare(
-      'INSERT INTO chunks (path, chunk_index, content, heading, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?)'
-    )
-
     const chunks = chunkMarkdown(content, chunkOptions)
+    const now = Date.now()
 
     const txn = this.db.transaction(() => {
-      deleteChunks.run(relativePath)
-      insertFile.run(relativePath, hash, stat.mtimeMs, stat.size)
+      // Delete old FTS entries for this path
+      const oldChunks = this.db.prepare('SELECT id FROM chunks WHERE path = ?').all(relativePath) as Array<{ id: string }>
+      const deleteFts = this.db.prepare("DELETE FROM chunks_fts WHERE id = ?")
+      for (const old of oldChunks) {
+        deleteFts.run(old.id)
+      }
+
+      // Delete old chunks
+      this.db.prepare('DELETE FROM chunks WHERE path = ?').run(relativePath)
+
+      // Upsert file record
+      this.db.prepare(
+        'INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)'
+      ).run(relativePath, 'memory', hash, stat.mtimeMs, stat.size)
+
+      // Insert new chunks + FTS
+      const insertChunk = this.db.prepare(
+        'INSERT INTO chunks (id, path, source, chunk_index, start_line, end_line, hash, model, content, embedding, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      const insertFts = this.db.prepare(
+        'INSERT INTO chunks_fts (content, id, path, source, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?)'
+      )
+
       for (let i = 0; i < chunks.length; i++) {
         const c = chunks[i]
-        insertChunk.run(relativePath, i, c.content, c.heading, c.startLine, c.endLine)
+        const chunkId = `${relativePath}:${i}`
+        const chunkHash = c.hash ?? crypto.createHash('sha256').update(c.content).digest('hex')
+        insertChunk.run(chunkId, relativePath, 'memory', i, c.startLine, c.endLine, chunkHash, '', c.content, '[]', now)
+        insertFts.run(c.content, chunkId, relativePath, 'memory', c.startLine, c.endLine)
       }
     })
     txn()
     return true
   }
 
-  // Remove a file and its chunks from the index
   removeFile(relativePath: string): void {
     const txn = this.db.transaction(() => {
+      // Remove FTS entries
+      const oldChunks = this.db.prepare('SELECT id FROM chunks WHERE path = ?').all(relativePath) as Array<{ id: string }>
+      const deleteFts = this.db.prepare("DELETE FROM chunks_fts WHERE id = ?")
+      for (const old of oldChunks) {
+        deleteFts.run(old.id)
+      }
+
       this.db.prepare('DELETE FROM chunks WHERE path = ?').run(relativePath)
       this.db.prepare('DELETE FROM files WHERE path = ?').run(relativePath)
     })
     txn()
   }
 
-  // BM25 full-text search with LIKE fallback for CJK text
+  // ---- BM25 search ----
+
   searchBM25(query: string, limit: number = 10): SearchResult[] {
     if (!query.trim()) return []
 
     const tokens = query.trim().split(/\s+/).filter(Boolean)
 
-    // Try FTS5 first (works well for Latin/ASCII tokens)
+    // Try FTS5 first
     const ftsQuery = tokens.map(t => `"${t.replace(/"/g, '""')}"`).join(' AND ')
     try {
       const rows = this.db.prepare(`
         SELECT
-          c.path,
-          c.heading,
-          c.content,
-          c.start_line,
-          c.end_line,
+          f.id,
+          f.path,
+          f.content,
+          f.start_line,
+          f.end_line,
           bm25(chunks_fts) as rank
-        FROM chunks_fts
-        JOIN chunks c ON chunks_fts.rowid = c.id
+        FROM chunks_fts f
         WHERE chunks_fts MATCH ?
         ORDER BY bm25(chunks_fts)
         LIMIT ?
       `).all(ftsQuery, limit) as Array<{
+        id: string
         path: string
-        heading: string | null
         content: string
         start_line: number
         end_line: number
@@ -142,7 +215,7 @@ export class MemoryDB {
       if (rows.length > 0) {
         return rows.map(r => ({
           path: r.path,
-          heading: r.heading,
+          heading: null,
           snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
           startLine: r.start_line,
           endLine: r.end_line,
@@ -154,21 +227,16 @@ export class MemoryDB {
     }
 
     // Fallback: LIKE search for CJK and other non-tokenizable text
-    const likeClauses = tokens.map(() => '(c.content LIKE ? OR c.heading LIKE ?)').join(' AND ')
-    const likeParams: string[] = []
-    for (const t of tokens) {
-      const pattern = `%${t}%`
-      likeParams.push(pattern, pattern)
-    }
+    const likeClauses = tokens.map(() => 'c.content LIKE ?').join(' AND ')
+    const likeParams: string[] = tokens.map(t => `%${t}%`)
 
     const rows = this.db.prepare(`
-      SELECT c.path, c.heading, c.content, c.start_line, c.end_line
+      SELECT c.path, c.content, c.start_line, c.end_line
       FROM chunks c
       WHERE ${likeClauses}
       LIMIT ?
     `).all(...likeParams, limit) as Array<{
       path: string
-      heading: string | null
       content: string
       start_line: number
       end_line: number
@@ -176,22 +244,207 @@ export class MemoryDB {
 
     return rows.map((r, i) => ({
       path: r.path,
-      heading: r.heading,
+      heading: null,
       snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
       startLine: r.start_line,
       endLine: r.end_line,
-      score: 0.5 / (1 + i),  // Decreasing score for LIKE results
+      score: 0.5 / (1 + i),
     }))
   }
 
-  // Get indexed file count and chunk count
+  // ---- Vector search ----
+
+  getChunksForEmbedding(paths?: string[]): Array<{ id: string; hash: string; content: string }> {
+    if (paths && paths.length > 0) {
+      const placeholders = paths.map(() => '?').join(',')
+      return this.db.prepare(
+        `SELECT id, hash, content FROM chunks WHERE embedding = '[]' AND path IN (${placeholders})`
+      ).all(...paths) as Array<{ id: string; hash: string; content: string }>
+    }
+    return this.db.prepare(
+      "SELECT id, hash, content FROM chunks WHERE embedding = '[]'"
+    ).all() as Array<{ id: string; hash: string; content: string }>
+  }
+
+  updateChunkEmbedding(id: string, embedding: number[], model: string): void {
+    this.db.prepare(
+      'UPDATE chunks SET embedding = ?, model = ?, updated_at = ? WHERE id = ?'
+    ).run(JSON.stringify(embedding), model, Date.now(), id)
+  }
+
+  searchVector(queryEmbedding: number[], limit: number = 10): SearchResult[] {
+    const rows = this.db.prepare(
+      "SELECT id, path, content, start_line, end_line, embedding FROM chunks WHERE embedding != '[]'"
+    ).all() as Array<{
+      id: string
+      path: string
+      content: string
+      start_line: number
+      end_line: number
+      embedding: string
+    }>
+
+    const scored = rows.map(r => {
+      const emb = JSON.parse(r.embedding) as number[]
+      const score = cosineSimilarity(queryEmbedding, emb)
+      return { ...r, score }
+    })
+
+    scored.sort((a, b) => b.score - a.score)
+
+    return scored.slice(0, limit).map(r => ({
+      path: r.path,
+      heading: null,
+      snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
+      startLine: r.start_line,
+      endLine: r.end_line,
+      score: r.score,
+    }))
+  }
+
+  // ---- Embedding cache ----
+
+  getEmbeddingCache(provider: string, model: string, hashes: string[]): Map<string, EmbeddingCacheEntry> {
+    const result = new Map<string, EmbeddingCacheEntry>()
+    if (hashes.length === 0) return result
+
+    // Batch in groups of 500 to avoid SQLite variable limit
+    const batchSize = 500
+    for (let i = 0; i < hashes.length; i += batchSize) {
+      const batch = hashes.slice(i, i + batchSize)
+      const placeholders = batch.map(() => '?').join(',')
+      const rows = this.db.prepare(
+        `SELECT hash, embedding, dims FROM embedding_cache WHERE provider = ? AND model = ? AND hash IN (${placeholders})`
+      ).all(provider, model, ...batch) as Array<{ hash: string; embedding: string; dims: number }>
+
+      for (const row of rows) {
+        result.set(row.hash, {
+          provider,
+          model,
+          hash: row.hash,
+          embedding: JSON.parse(row.embedding) as number[],
+          dims: row.dims,
+        })
+      }
+    }
+
+    return result
+  }
+
+  setEmbeddingCache(entries: EmbeddingCacheEntry[]): void {
+    if (entries.length === 0) return
+
+    const stmt = this.db.prepare(
+      'INSERT OR REPLACE INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    )
+    const now = Date.now()
+
+    const txn = this.db.transaction(() => {
+      for (const e of entries) {
+        stmt.run(e.provider, e.model, e.hash, JSON.stringify(e.embedding), e.dims, now)
+      }
+    })
+    txn()
+  }
+
+  pruneEmbeddingCache(maxEntries: number): void {
+    const count = (this.db.prepare('SELECT COUNT(*) as cnt FROM embedding_cache').get() as { cnt: number }).cnt
+    if (count <= maxEntries) return
+
+    const excess = count - maxEntries
+    this.db.prepare(
+      'DELETE FROM embedding_cache WHERE rowid IN (SELECT rowid FROM embedding_cache ORDER BY updated_at ASC LIMIT ?)'
+    ).run(excess)
+  }
+
+  // ---- Atomic reindex ----
+
+  async atomicReindex(indexFn: (tempDb: MemoryDB) => Promise<void>): Promise<void> {
+    const uuid = crypto.randomUUID()
+    const tempPath = `${this.dbPath}.tmp-${uuid}`
+    const backupPath = `${this.dbPath}.backup-${uuid}`
+
+    let tempDb: MemoryDB | null = null
+
+    try {
+      // Create temp DB
+      tempDb = new MemoryDB(tempPath)
+
+      // Copy embedding cache from current DB to temp
+      const cacheRows = this.db.prepare('SELECT provider, model, hash, embedding, dims, updated_at FROM embedding_cache').all() as Array<{
+        provider: string; model: string; hash: string; embedding: string; dims: number; updated_at: number
+      }>
+      if (cacheRows.length > 0) {
+        const insertCache = tempDb.db.prepare(
+          'INSERT OR REPLACE INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+        const txn = tempDb.db.transaction(() => {
+          for (const row of cacheRows) {
+            insertCache.run(row.provider, row.model, row.hash, row.embedding, row.dims, row.updated_at)
+          }
+        })
+        txn()
+      }
+
+      // Run the index function on temp DB
+      await indexFn(tempDb)
+
+      // Close both DBs before file swap
+      tempDb.close()
+      tempDb = null
+      this.db.close()
+
+      // Atomic swap: current -> backup, temp -> current
+      fs.renameSync(this.dbPath, backupPath)
+      // Also move WAL/SHM if they exist
+      for (const suffix of ['-wal', '-shm']) {
+        const src = this.dbPath + suffix
+        if (fs.existsSync(src)) fs.renameSync(src, backupPath + suffix)
+      }
+
+      fs.renameSync(tempPath, this.dbPath)
+      for (const suffix of ['-wal', '-shm']) {
+        const src = tempPath + suffix
+        if (fs.existsSync(src)) fs.renameSync(src, this.dbPath + suffix)
+      }
+
+      // Remove backup
+      for (const suffix of ['', '-wal', '-shm']) {
+        const f = backupPath + suffix
+        if (fs.existsSync(f)) fs.unlinkSync(f)
+      }
+
+      // Reopen from target path
+      this.openDb(this.dbPath)
+    } catch (err) {
+      // Cleanup: close temp if still open, remove temp files
+      if (tempDb) {
+        try { tempDb.close() } catch { /* ignore */ }
+      }
+      for (const suffix of ['', '-wal', '-shm']) {
+        const f = tempPath + suffix
+        if (fs.existsSync(f)) try { fs.unlinkSync(f) } catch { /* ignore */ }
+      }
+
+      // If we closed the main DB but failed to swap, reopen original
+      try {
+        if (!this.db.open) {
+          this.openDb(this.dbPath)
+        }
+      } catch { /* ignore */ }
+
+      throw err
+    }
+  }
+
+  // ---- Status ----
+
   status(): { files: number; chunks: number } {
     const files = (this.db.prepare('SELECT COUNT(*) as cnt FROM files').get() as { cnt: number }).cnt
     const chunks = (this.db.prepare('SELECT COUNT(*) as cnt FROM chunks').get() as { cnt: number }).cnt
     return { files, chunks }
   }
 
-  // Get all indexed file paths
   getIndexedPaths(): string[] {
     const rows = this.db.prepare('SELECT path FROM files').all() as Array<{ path: string }>
     return rows.map(r => r.path)
