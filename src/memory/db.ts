@@ -56,6 +56,7 @@ export class MemoryDB {
         chunk_index INTEGER NOT NULL,
         start_line INTEGER NOT NULL,
         end_line INTEGER NOT NULL,
+        heading TEXT,
         hash TEXT NOT NULL,
         model TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL,
@@ -89,6 +90,7 @@ export class MemoryDB {
       this.db.exec(`
         CREATE VIRTUAL TABLE chunks_fts USING fts5(
           content,
+          heading,
           id UNINDEXED,
           path UNINDEXED,
           source UNINDEXED,
@@ -148,18 +150,18 @@ export class MemoryDB {
 
       // Insert new chunks + FTS
       const insertChunk = this.db.prepare(
-        'INSERT INTO chunks (id, path, source, chunk_index, start_line, end_line, hash, model, content, embedding, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO chunks (id, path, source, chunk_index, start_line, end_line, heading, hash, model, content, embedding, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       const insertFts = this.db.prepare(
-        'INSERT INTO chunks_fts (content, id, path, source, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO chunks_fts (content, heading, id, path, source, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?)'
       )
 
       for (let i = 0; i < chunks.length; i++) {
         const c = chunks[i]
         const chunkId = `${relativePath}:${i}`
         const chunkHash = c.hash ?? crypto.createHash('sha256').update(c.content).digest('hex')
-        insertChunk.run(chunkId, relativePath, 'memory', i, c.startLine, c.endLine, chunkHash, '', c.content, '[]', now)
-        insertFts.run(c.content, chunkId, relativePath, 'memory', c.startLine, c.endLine)
+        insertChunk.run(chunkId, relativePath, 'memory', i, c.startLine, c.endLine, c.heading, chunkHash, '', c.content, '[]', now)
+        insertFts.run(c.content, c.heading ?? '', chunkId, relativePath, 'memory', c.startLine, c.endLine)
       }
     })
     txn()
@@ -196,6 +198,7 @@ export class MemoryDB {
           f.id,
           f.path,
           f.content,
+          f.heading,
           f.start_line,
           f.end_line,
           bm25(chunks_fts) as rank
@@ -207,6 +210,7 @@ export class MemoryDB {
         id: string
         path: string
         content: string
+        heading: string | null
         start_line: number
         end_line: number
         rank: number
@@ -215,7 +219,7 @@ export class MemoryDB {
       if (rows.length > 0) {
         return rows.map(r => ({
           path: r.path,
-          heading: null,
+          heading: r.heading || null,
           snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
           startLine: r.start_line,
           endLine: r.end_line,
@@ -231,20 +235,21 @@ export class MemoryDB {
     const likeParams: string[] = tokens.map(t => `%${t}%`)
 
     const rows = this.db.prepare(`
-      SELECT c.path, c.content, c.start_line, c.end_line
+      SELECT c.path, c.content, c.heading, c.start_line, c.end_line
       FROM chunks c
       WHERE ${likeClauses}
       LIMIT ?
     `).all(...likeParams, limit) as Array<{
       path: string
       content: string
+      heading: string | null
       start_line: number
       end_line: number
     }>
 
     return rows.map((r, i) => ({
       path: r.path,
-      heading: null,
+      heading: r.heading || null,
       snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
       startLine: r.start_line,
       endLine: r.end_line,
@@ -274,11 +279,12 @@ export class MemoryDB {
 
   searchVector(queryEmbedding: number[], limit: number = 10): SearchResult[] {
     const rows = this.db.prepare(
-      "SELECT id, path, content, start_line, end_line, embedding FROM chunks WHERE embedding != '[]'"
+      "SELECT id, path, content, heading, start_line, end_line, embedding FROM chunks WHERE embedding != '[]'"
     ).all() as Array<{
       id: string
       path: string
       content: string
+      heading: string | null
       start_line: number
       end_line: number
       embedding: string
@@ -294,7 +300,7 @@ export class MemoryDB {
 
     return scored.slice(0, limit).map(r => ({
       path: r.path,
-      heading: null,
+      heading: r.heading || null,
       snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
       startLine: r.start_line,
       endLine: r.end_line,
