@@ -10,6 +10,7 @@ export interface Chunk {
   heading: string | null;   // the ## heading this chunk belongs to
   startLine: number;        // 1-indexed
   endLine: number;          // 1-indexed
+  hash: string;             // SHA-256 hex of content
 }
 
 export interface SearchResult {
