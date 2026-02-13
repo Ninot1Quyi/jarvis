@@ -55,14 +55,18 @@ async function correctCoordinate(
     }
 
     const best = searchResult.results[0]
-    if (best.similarity && best.similarity >= 0.8) {
+    if (best.similarity && best.similarity >= 0.9) {
       const [cx, cy] = best.center
       const normBestX = Math.round((cx / screenWidth) * COORDINATE_FACTOR)
       const normBestY = Math.round((cy / screenHeight) * COORDINATE_FACTOR)
       const dist = Math.sqrt((normBestX - coord[0]) ** 2 + (normBestY - coord[1]) ** 2)
-      if (dist > 30) {
+      // Only correct when AX result is CLOSE to LLM coordinate (fine-tuning).
+      // If dist is large, AX likely matched a wrong element -- trust LLM instead.
+      if (dist <= 150) {
         logger.debug(`correctCoordinate: "${desc}" matched "${best.title}" (${Math.round(best.similarity * 100)}%), correcting screen(${x},${y}) -> screen(${cx},${cy}), dist=${Math.round(dist)}`)
         return { x: Math.round(cx), y: Math.round(cy), corrected: true }
+      } else {
+        logger.debug(`correctCoordinate: "${desc}" matched "${best.title}" (${Math.round(best.similarity * 100)}%) but dist=${Math.round(dist)} too far, keeping LLM coord`)
       }
     }
   } catch (error) {
