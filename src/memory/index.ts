@@ -3,15 +3,20 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import { MemoryDB } from './db.js'
 import { MemoryWatcher } from './watcher.js'
-import type { SearchResult, MemoryFileEntry } from './types.js'
+import { mergeHybridResults, DEFAULT_SEARCH_OPTIONS, type HybridSearchOptions } from './search.js'
+import type { SearchResult, MemoryFileEntry, MemoryConfig } from './types.js'
 
-export { type SearchResult, type Chunk, type MemoryFileEntry } from './types.js'
+export { type SearchResult, type Chunk, type MemoryFileEntry, type MemoryConfig } from './types.js'
+export { type HybridSearchOptions, DEFAULT_SEARCH_OPTIONS } from './search.js'
 
 export class MemorySystem {
   private db: MemoryDB
   private watcher: MemoryWatcher
   private dataDir: string
   private dirty: boolean = false
+  private syncingPromise: Promise<void> | null = null
+  private fileSizes: Map<string, number> = new Map()
+  private readonly DELTA_BYTES_THRESHOLD = 100_000
 
   private constructor(dataDir: string, db: MemoryDB) {
     this.dataDir = dataDir
@@ -40,26 +45,49 @@ export class MemorySystem {
     system.watcher.start(dataDir, {
       onFileChanged: (absolutePath: string) => {
         const relativePath = path.relative(dataDir, absolutePath)
+
+        // Delta threshold for trace files: only re-index if file grew significantly
+        if (relativePath.startsWith('traces/')) {
+          try {
+            const stat = fs.statSync(absolutePath)
+            const prevSize = system.fileSizes.get(relativePath) ?? 0
+            if (stat.size - prevSize < system.DELTA_BYTES_THRESHOLD) return
+            system.fileSizes.set(relativePath, stat.size)
+          } catch { return }
+        }
+
         try {
           const chunkOpts = relativePath.startsWith('traces/')
             ? { onlyHeadings: ['USER', 'ASSISTANT'] }
             : undefined
           system.db.indexFile(absolutePath, relativePath, chunkOpts)
-        } catch (e) {
+          system.dirty = true
+        } catch {
           // Silently ignore indexing errors from watcher
         }
       },
       onFileRemoved: (absolutePath: string) => {
         const relativePath = path.relative(dataDir, absolutePath)
         system.db.removeFile(relativePath)
+        system.dirty = true
       },
     })
 
     return system
   }
 
-  // Full sync: scan filesystem, index changed files, remove stale entries
+  // Full sync with promise dedup: concurrent callers share the same sync
   async sync(): Promise<void> {
+    if (this.syncingPromise) return this.syncingPromise
+    this.syncingPromise = this._doSync()
+    try {
+      await this.syncingPromise
+    } finally {
+      this.syncingPromise = null
+    }
+  }
+
+  private async _doSync(): Promise<void> {
     const memoryFiles = this.listMemoryFiles()
     const indexedPaths = new Set(this.db.getIndexedPaths())
 
@@ -71,6 +99,11 @@ export class MemorySystem {
         : undefined
       this.db.indexFile(entry.path, relativePath, chunkOpts)
       indexedPaths.delete(relativePath)
+
+      // Track file sizes for delta threshold
+      if (relativePath.startsWith('traces/')) {
+        this.fileSizes.set(relativePath, entry.size)
+      }
     }
 
     // Remove stale entries (files that no longer exist)
@@ -139,9 +172,34 @@ export class MemorySystem {
     return entries
   }
 
-  // Search memory using BM25
+  // Search memory using BM25, triggers sync if dirty
   search(query: string, limit: number = 5): SearchResult[] {
+    if (this.dirty) {
+      this.sync().catch(() => {})
+    }
     return this.db.searchBM25(query, limit)
+  }
+
+  // Hybrid search: weighted fusion of BM25 + vector results
+  searchHybrid(
+    query: string,
+    queryEmbedding: number[] | null,
+    options?: Partial<HybridSearchOptions>
+  ): SearchResult[] {
+    const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options }
+    const candidates = Math.min(200, opts.maxResults * opts.candidateMultiplier)
+
+    const keywordResults = this.db.searchBM25(query, candidates)
+
+    if (!queryEmbedding) {
+      // No embedding available, return keyword results with minScore filter
+      return keywordResults
+        .filter(r => r.score >= opts.minScore)
+        .slice(0, opts.maxResults)
+    }
+
+    const vectorResults = this.db.searchVector(queryEmbedding, candidates)
+    return mergeHybridResults(vectorResults, keywordResults, opts)
   }
 
   // Read a memory file by relative path
@@ -160,9 +218,9 @@ export class MemorySystem {
   }
 
   // Get system status
-  status(): { files: number; chunks: number; dirty: boolean } {
+  status(): { files: number; chunks: number; dirty: boolean; embeddingsReady: boolean } {
     const dbStatus = this.db.status()
-    return { ...dbStatus, dirty: this.dirty }
+    return { ...dbStatus, dirty: this.dirty, embeddingsReady: false }
   }
 
   // Clean shutdown

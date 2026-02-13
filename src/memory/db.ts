@@ -184,6 +184,11 @@ export class MemoryDB {
     }))
   }
 
+  // Vector search stub - returns empty until embedding storage is implemented
+  searchVector(_queryEmbedding: number[], _limit: number = 10): SearchResult[] {
+    return []
+  }
+
   // Get indexed file count and chunk count
   status(): { files: number; chunks: number } {
     const files = (this.db.prepare('SELECT COUNT(*) as cnt FROM files').get() as { cnt: number }).cnt

@@ -20,3 +20,27 @@ export interface SearchResult {
   endLine: number;
   score: number;            // 0-1 normalized
 }
+
+export interface MemoryConfig {
+  embedding?: {
+    provider: 'openai' | 'none'
+    model?: string
+    apiKey?: string
+    baseUrl?: string
+  }
+  search?: {
+    vectorWeight?: number
+    textWeight?: number
+    minScore?: number
+    maxResults?: number
+    snippetMaxChars?: number
+  }
+  chunk?: {
+    maxChars?: number
+    overlapChars?: number
+  }
+  cache?: {
+    enabled?: boolean
+    maxEntries?: number
+  }
+}
