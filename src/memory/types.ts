@@ -46,18 +46,18 @@ export interface MemoryConfig {
     baseUrl?: string;
   };
   search?: {
-    vectorWeight?: number;    // default 0.7
-    textWeight?: number;      // default 0.3
-    minScore?: number;        // default 0.35
-    maxResults?: number;      // default 6
-    snippetMaxChars?: number; // default 700
+    vectorWeight?: number;
+    textWeight?: number;
+    minScore?: number;
+    maxResults?: number;
+    snippetMaxChars?: number;
   };
   chunk?: {
-    maxChars?: number;        // default 1600
-    overlapChars?: number;    // default 320
+    maxChars?: number;
+    overlapChars?: number;
   };
   cache?: {
-    enabled?: boolean;        // default true
-    maxEntries?: number;      // default unlimited
+    enabled?: boolean;
+    maxEntries?: number;
   };
 }

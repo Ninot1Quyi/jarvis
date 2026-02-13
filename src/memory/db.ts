@@ -308,7 +308,6 @@ export class MemoryDB {
     const result = new Map<string, EmbeddingCacheEntry>()
     if (hashes.length === 0) return result
 
-    // Batch in groups of 500 to avoid SQLite variable limit
     const batchSize = 500
     for (let i = 0; i < hashes.length; i += batchSize) {
       const batch = hashes.slice(i, i + batchSize)
@@ -367,7 +366,6 @@ export class MemoryDB {
     let tempDb: MemoryDB | null = null
 
     try {
-      // Create temp DB
       tempDb = new MemoryDB(tempPath)
 
       // Copy embedding cache from current DB to temp
@@ -386,17 +384,14 @@ export class MemoryDB {
         txn()
       }
 
-      // Run the index function on temp DB
       await indexFn(tempDb)
 
-      // Close both DBs before file swap
       tempDb.close()
       tempDb = null
       this.db.close()
 
-      // Atomic swap: current -> backup, temp -> current
+      // Atomic swap
       fs.renameSync(this.dbPath, backupPath)
-      // Also move WAL/SHM if they exist
       for (const suffix of ['-wal', '-shm']) {
         const src = this.dbPath + suffix
         if (fs.existsSync(src)) fs.renameSync(src, backupPath + suffix)
@@ -414,10 +409,8 @@ export class MemoryDB {
         if (fs.existsSync(f)) fs.unlinkSync(f)
       }
 
-      // Reopen from target path
       this.openDb(this.dbPath)
     } catch (err) {
-      // Cleanup: close temp if still open, remove temp files
       if (tempDb) {
         try { tempDb.close() } catch { /* ignore */ }
       }
@@ -426,7 +419,6 @@ export class MemoryDB {
         if (fs.existsSync(f)) try { fs.unlinkSync(f) } catch { /* ignore */ }
       }
 
-      // If we closed the main DB but failed to swap, reopen original
       try {
         if (!this.db.open) {
           this.openDb(this.dbPath)
