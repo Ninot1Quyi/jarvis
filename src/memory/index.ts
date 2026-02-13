@@ -5,7 +5,7 @@ import { MemoryDB } from './db.js'
 import { MemoryWatcher } from './watcher.js'
 import type { SearchResult, MemoryFileEntry } from './types.js'
 
-export { type SearchResult, type Chunk, type MemoryFileEntry } from './types.js'
+export { type SearchResult, type Chunk, type MemoryFileEntry, type IndexMeta, type EmbeddingCacheEntry, type MemoryConfig } from './types.js'
 
 export class MemorySystem {
   private db: MemoryDB
