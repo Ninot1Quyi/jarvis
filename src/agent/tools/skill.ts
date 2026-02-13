@@ -1,4 +1,4 @@
-// Skill Tool - 渐进式加载skill内容
+// Skill Tool - progressive skill loading
 
 import type { Tool } from '../../types.js'
 import { SkillRegistry } from '../../skills/registry.js'
@@ -30,8 +30,8 @@ export function getSkillRegistry(): SkillRegistry | null {
  */
 export const skillTool: Tool = {
   definition: {
-    name: 'skill',
-    description: 'Load a skill to get detailed instructions. Use this when you need specific guidance for a task that matches an available skill.',
+    name: 'activate_skill',
+    description: 'Activate a skill to get detailed instructions. Use this when you need specific guidance for a task that matches an available skill.',
     parameters: {
       type: 'object',
       properties: {
@@ -127,8 +127,68 @@ export const listSkillsTool: Tool = {
       success: true,
       data: {
         skills: skillList,
-        message: `${skills.length} skills available. Use skill tool to load detailed instructions.`,
+        message: `${skills.length} skills available. Use activate_skill tool to load detailed instructions.`,
       },
+    }
+  },
+}
+
+/**
+ * Save Skill Tool
+ *
+ * Save a new skill to the project-level skills directory.
+ */
+export const saveSkillTool: Tool = {
+  definition: {
+    name: 'save_skill',
+    description: 'Save a new skill to the project skills directory. Creates a SKILL.md file with the provided content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Skill name (lowercase alphanumeric and hyphens only, max 64 chars)',
+        },
+        description: {
+          type: 'string',
+          description: 'Short description of what the skill does',
+        },
+        content: {
+          type: 'string',
+          description: 'The full skill content (markdown instructions)',
+        },
+      },
+      required: ['name', 'description', 'content'],
+    },
+  },
+  async execute(args) {
+    const name = args.name as string
+    const description = args.description as string
+    const content = args.content as string
+
+    if (!skillRegistry) {
+      return { success: false, error: 'Skill system not initialized' }
+    }
+
+    // Validate name
+    if (!/^[a-z0-9-]+$/.test(name) || name.length > 64) {
+      return {
+        success: false,
+        error: 'Skill name must match /^[a-z0-9-]+$/ and be at most 64 characters',
+      }
+    }
+
+    try {
+      const savedPath = await skillRegistry.saveSkill(name, description, content)
+      return {
+        success: true,
+        data: {
+          path: savedPath,
+          message: `Skill "${name}" saved to ${savedPath}`,
+        },
+      }
+    } catch (err: any) {
+      return { success: false, error: `Failed to save skill: ${err.message}` }
     }
   },
 }
@@ -137,4 +197,5 @@ export const listSkillsTool: Tool = {
 export const skillTools: Tool[] = [
   skillTool,
   listSkillsTool,
+  saveSkillTool,
 ]

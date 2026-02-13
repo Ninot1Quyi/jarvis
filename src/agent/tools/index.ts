@@ -6,6 +6,7 @@ import { fileTools } from './file.js'
 import { todoTools } from './todo.js'
 import { skillTools } from './skill.js'
 import { uiSearchTools } from './ui-search.js'
+import { memoryTools } from './memory.js'
 import { logger } from '../../utils/logger.js'
 
 export class ToolRegistry {
@@ -21,6 +22,7 @@ export class ToolRegistry {
     this.registerTools(systemTools)
     this.registerTools(fileTools)
     this.registerTools(todoTools)
+    this.registerTools(memoryTools)
   }
 
   registerTool(tool: Tool): void {
@@ -81,3 +83,4 @@ export { fileTools } from './file.js'
 export { todoTools } from './todo.js'
 export { skillTools, setSkillRegistry, getSkillRegistry } from './skill.js'
 export { uiSearchTools } from './ui-search.js'
+export { memoryTools, setMemorySystem, getMemorySystem } from './memory.js'

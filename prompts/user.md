@@ -12,6 +12,8 @@
 
 {{screenStatus}}
 
+{{memories}}
+
 ---
 
 Analyze the current situation and respond appropriately:

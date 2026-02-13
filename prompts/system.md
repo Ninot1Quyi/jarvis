@@ -248,14 +248,14 @@ The `<available_skills>` section lists skills with detailed instructions for spe
 - **DO**: Batch the skill loading with your first action on that application
   ```
   Example: Task requires WeChat
-  → skill("wechat") + hotkey("cmd space") + type("WeChat") + hotkey("enter") in ONE response
+  → activate_skill("wechat") + hotkey("cmd space") + type("WeChat") + hotkey("enter") in ONE response
   → Next turn you'll have both: the app open AND detailed instructions
   ```
 
 - **DON'T**: Load skill in a separate turn (wastes 10-20 seconds)
   ```
-  Bad: Turn 1: skill("wechat") → Turn 2: open WeChat
-  Good: Turn 1: skill("wechat") + open WeChat → Turn 2: start using with full knowledge
+  Bad: Turn 1: activate_skill("wechat") → Turn 2: open WeChat
+  Good: Turn 1: activate_skill("wechat") + open WeChat → Turn 2: start using with full knowledge
   ```
 
 The skill content will appear in the next message. Plan ahead and combine skill loading with your first action.
@@ -482,5 +482,7 @@ Example: WeChat notification from "Zhang San" saying "Are you free tonight?"
 ```
 
 **WRONG**: Replying to a WeChat notification via `<chat><tui>I'm free</tui></chat>` -- this sends to the terminal, NOT to WeChat. Zhang San will never see it.
+
+{{MEMORY}}
 
 ## User Instruction

@@ -213,6 +213,26 @@ export class SkillRegistry {
   }
 
   /**
+   * Save a new skill to the project-level skills directory
+   */
+  async saveSkill(name: string, description: string, content: string): Promise<string> {
+    const dir = this.directories[0]
+    if (!dir) {
+      throw new Error('No skills directory configured')
+    }
+
+    const skillDir = path.join(dir, name)
+    fs.mkdirSync(skillDir, { recursive: true })
+
+    const skillFile = path.join(skillDir, 'SKILL.md')
+    const fileContent = `---\nname: "${name}"\ndescription: "${description}"\n---\n\n${content}`
+    fs.writeFileSync(skillFile, fileContent, 'utf-8')
+
+    await this.discover()
+    return skillFile
+  }
+
+  /**
    * 清空所有已加载的skills
    */
   clear(): void {

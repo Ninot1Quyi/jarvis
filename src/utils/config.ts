@@ -104,6 +104,15 @@ export function getSystemPrompt(nativeToolCall: boolean, platform?: Platform): s
   systemPrompt = systemPrompt.replace('{{TOOLS}}', toolsPrompt)
   systemPrompt = systemPrompt.replace('{{PLATFORM}}', platformPrompt)
 
+  // 加载记忆系统提示
+  let memoryPrompt = ''
+  try {
+    memoryPrompt = getPrompt('memory')
+  } catch {
+    // memory.md 不存在时使用空字符串
+  }
+  systemPrompt = systemPrompt.replace('{{MEMORY}}', memoryPrompt)
+
   return systemPrompt
 }
 

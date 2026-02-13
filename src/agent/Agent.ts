@@ -9,6 +9,7 @@ import type {
   ProviderConfig,
 } from '../types.js'
 import { ToolRegistry, toolRegistry, setSkillRegistry } from './tools/index.js'
+import { setMemorySystem } from './tools/memory.js'
 import { config, getSystemPrompt, getPrompt, fillTemplate, ensureDir } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
@@ -19,6 +20,7 @@ import { overlayClient } from '../utils/overlay.js'
 import { type MailConfig } from '../message/mail.js'
 import type { NotificationConfig } from '../notification/types.js'
 import { captureAXSnapshot, computeAXDiff, filterDiffNoise, type AXSnapshot } from '../notification/axSnapshot.js'
+import { MemorySystem } from '../memory/index.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -66,6 +68,8 @@ export class Agent {
   private todoSummary: string = '(none)'  // TODO 摘要
   private axDiffBaseline: AXSnapshot | null = null
   private axToolDiffAdded: Map<string, number> = new Map()  // tool-caused additions to subtract
+  private memorySystem: MemorySystem | null = null  // Long-term memory system
+  private memorySearchedForTask: string = ''  // Track which task we already searched memory for
   private stopRequested: boolean = false  // Stop signal from UI
   private stopResolvers: Set<() => void> = new Set()  // Pending stop waiters
 
@@ -106,6 +110,16 @@ export class Agent {
       logger.debug(composer.getSummary())
     } catch (error) {
       logger.warn('Failed to initialize skills system:', error)
+    }
+
+    // Initialize memory system
+    try {
+      this.memorySystem = await MemorySystem.create(config.dataDir)
+      setMemorySystem(this.memorySystem)
+      const memStatus = this.memorySystem.status()
+      logger.debug(`Memory system initialized: ${memStatus.files} files, ${memStatus.chunks} chunks`)
+    } catch (error) {
+      logger.warn('Failed to initialize memory system:', error)
     }
 
     // Initialize message manager (channels + deliverers)
@@ -333,11 +347,29 @@ Focused Window: ${focusedWindow}
 Note: Screenshot is attached. If target window != focused window, first click activates window.`
       }
 
+      // Auto memory search: on new task, search once and inject relevant memories
+      let memoriesText = ''
+      if (this.memorySystem && this.currentTask && this.currentTask !== '(none)' && this.memorySearchedForTask !== this.currentTask) {
+        this.memorySearchedForTask = this.currentTask
+        try {
+          const results = this.memorySystem.search(this.currentTask, 3)
+          if (results.length > 0) {
+            memoriesText = '## Relevant Memories\n\n' + results.map(r => {
+              const loc = r.heading ? `${r.path} > ${r.heading}` : r.path
+              return `- [${loc}] (line ${r.startLine}): ${r.snippet}`
+            }).join('\n')
+          }
+        } catch (e) {
+          logger.warn('Auto memory search failed:', e)
+        }
+      }
+
       let computerContent = fillTemplate(computerTemplate, {
         task: this.currentTask || '(none)',
         todoSummary: this.todoSummary,
         recentSteps: recentStepsText,
         screenStatus,
+        memories: memoriesText,
       })
 
       // 如果本轮有 user 消息，在 computer 开头提示 LLM 同时关注
@@ -641,6 +673,16 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
         }
       }
 
+      // Pre-flush: remind agent to save memories when approaching step limit
+      if (stepCount === this.maxSteps - 5 && this.memorySystem) {
+        lastToolResults.push({
+          toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
+          result: JSON.stringify({
+            message: `<reminder>MEMORY FLUSH -- You are approaching the step limit (${stepCount}/${this.maxSteps}). If you have learned anything important during this session (user preferences, useful techniques, task outcomes), write them to data/MEMORY.md or data/memory/ NOW using write_file/edit_file. This context will be lost after the session ends.</reminder>`
+          })
+        })
+      }
+
       // 保存本轮点击信息（循环写入）
       this.roundClicks[this.roundClickIndex] = { coordinates: currentRoundClicks }
       this.roundClickIndex = (this.roundClickIndex + 1) % ROUND_CLICKS_CAPACITY
@@ -664,6 +706,12 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
     }
 
     logger.info(`Agent finished after ${stepCount} steps`)
+
+    // Cleanup memory system
+    if (this.memorySystem) {
+      this.memorySystem.close()
+      this.memorySystem = null
+    }
   }
 
   /**
