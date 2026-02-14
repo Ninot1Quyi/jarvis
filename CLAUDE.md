@@ -235,4 +235,18 @@ GUI coordinates use normalized [0, 1000] range. (0,0) = top-left, (1000,1000) = 
 </IMPORTANT>
 
 
+## Parallel Development Workflow
 
+For multi-file changes, use git worktrees to parallelize:
+
+1. **Plan first**: Identify independent change sets that touch different methods/files
+2. **Create worktrees**: `git worktree add ../jarvis-wt-{name} -b wt-{name}`
+3. **Parallel work**: Each worktree handles one change set, subagents work concurrently
+4. **Merge order**: Merge the most independent changes first, resolve conflicts incrementally
+5. **Cleanup**: `git worktree remove` + `git branch -d` after merge
+6. **Verify**: `npm run build` after each merge
+
+Split criteria:
+- Different methods in the same file = can parallelize
+- Same method in the same file = must serialize
+- Different files entirely = always parallelize

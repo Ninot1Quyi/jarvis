@@ -275,11 +275,13 @@ export class MemorySystem {
       // Save to cache
       this.db.setEmbeddingCache(cacheEntries)
 
-      // Update IndexMeta with vector dimensions
+      // Update IndexMeta with vector dimensions and create vec0 table
       const meta = this.db.getMeta() ?? { model: '', provider: '', chunkTokens: 0, chunkOverlap: 0 }
       if (!meta.vectorDims && embeddings.length > 0) {
         meta.vectorDims = embeddings[0].length
         this.db.setMeta(meta)
+        // Create vec0 table immediately so vector search works without restart
+        this.db.ensureVecTable(meta.vectorDims)
       }
     } catch (error) {
       // Embedding failures are non-fatal - BM25 search still works
