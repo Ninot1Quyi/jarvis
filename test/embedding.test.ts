@@ -20,16 +20,18 @@ import * as path from 'path'
 const configPath = path.join(import.meta.dirname, '..', 'config', 'config.json')
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as KeyConfig
 
-const doubao = config.doubao as any
-if (!doubao?.apiKey || !doubao?.embedding?.model) {
-  console.error('SKIP: doubao embedding not configured in config/config.json')
+const embeddingProviderName = (config.memory as any)?.embeddingProvider
+const providerConfig = embeddingProviderName ? config[embeddingProviderName] as any : null
+
+if (!providerConfig?.apiKey || !providerConfig?.embedding?.model) {
+  console.error(`SKIP: embedding provider "${embeddingProviderName}" not configured in config/config.json`)
   process.exit(0)
 }
 
-const API_KEY = doubao.apiKey
-const MODEL = doubao.embedding.model
-const BASE_URL = (doubao.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '')
-const API_URL = doubao.embedding.baseUrl ?? `${BASE_URL}/embeddings`
+const API_KEY = providerConfig.apiKey
+const MODEL = providerConfig.embedding.model
+const BASE_URL = (providerConfig.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '')
+const API_URL = providerConfig.embedding.baseUrl ?? `${BASE_URL}/embeddings`
 
 let passed = 0
 let failed = 0
@@ -140,8 +142,8 @@ async function testEmbedBatch() {
 async function testFactory() {
   console.log('\n[Test 4] createEmbeddingProvider factory')
 
-  const provider = createEmbeddingProvider('doubao', config)
-  assert(provider !== null, 'factory returns a provider for doubao')
+  const provider = createEmbeddingProvider(embeddingProviderName, config)
+  assert(provider !== null, `factory returns a provider for ${embeddingProviderName}`)
   assert(provider!.model === MODEL, `model = ${provider!.model}`)
 
   const embedding = await provider!.embedQuery('test factory wiring')
