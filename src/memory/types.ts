@@ -40,7 +40,7 @@ export interface EmbeddingCacheEntry {
 
 export interface MemoryConfig {
   embedding?: {
-    provider: 'openai' | 'none';
+    provider: string;
     model?: string;
     apiKey?: string;
     baseUrl?: string;

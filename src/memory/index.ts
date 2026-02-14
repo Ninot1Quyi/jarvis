@@ -4,7 +4,9 @@ import * as crypto from 'crypto'
 import { MemoryDB } from './db.js'
 import { MemoryWatcher } from './watcher.js'
 import { mergeHybridResults, DEFAULT_SEARCH_OPTIONS, type HybridSearchOptions } from './search.js'
-import type { SearchResult, MemoryFileEntry, MemoryConfig } from './types.js'
+import { createEmbeddingProvider, type EmbeddingProvider } from './embedding.js'
+import type { SearchResult, MemoryFileEntry, MemoryConfig, EmbeddingCacheEntry } from './types.js'
+import type { KeyConfig } from '../types.js'
 
 export { type SearchResult, type Chunk, type MemoryFileEntry, type IndexMeta, type EmbeddingCacheEntry, type MemoryConfig } from './types.js'
 export { type HybridSearchOptions, DEFAULT_SEARCH_OPTIONS } from './search.js'
@@ -17,6 +19,7 @@ export class MemorySystem {
   private syncingPromise: Promise<void> | null = null
   private fileSizes: Map<string, number> = new Map()
   private readonly DELTA_BYTES_THRESHOLD = 100_000
+  embeddingProvider: EmbeddingProvider | null = null
 
   private constructor(dataDir: string, db: MemoryDB) {
     this.dataDir = dataDir
@@ -24,7 +27,7 @@ export class MemorySystem {
     this.watcher = new MemoryWatcher()
   }
 
-  static async create(dataDir: string): Promise<MemorySystem> {
+  static async create(dataDir: string, keys?: KeyConfig): Promise<MemorySystem> {
     // 1. Ensure data/ and data/memory/ directories exist
     const memoryDir = path.join(dataDir, 'memory')
     if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true })
@@ -38,8 +41,18 @@ export class MemorySystem {
     // 3. Create instance
     const system = new MemorySystem(dataDir, db)
 
+    // Create embedding provider if configured
+    if (keys?.memory?.embeddingProvider) {
+      system.embeddingProvider = createEmbeddingProvider(keys.memory.embeddingProvider, keys)
+    }
+
     // 4. Initial sync
     await system.sync()
+
+    // Generate embeddings for chunks that don't have them yet
+    if (system.embeddingProvider) {
+      await system.generateEmbeddings()
+    }
 
     // 5. Start file watcher
     system.watcher.start(dataDir, {
@@ -217,10 +230,68 @@ export class MemorySystem {
     return allLines.slice(startIdx, endIdx).join('\n')
   }
 
+  // Generate embeddings for chunks that don't have them yet
+  private async generateEmbeddings(): Promise<void> {
+    if (!this.embeddingProvider) return
+
+    const chunks = this.db.getChunksForEmbedding()
+    if (chunks.length === 0) return
+
+    // Check embedding cache first
+    const cache = this.db.getEmbeddingCache(
+      this.embeddingProvider.id,
+      this.embeddingProvider.model,
+      chunks.map(c => c.hash)
+    )
+
+    const uncached: Array<{ id: string; hash: string; content: string }> = []
+    for (const chunk of chunks) {
+      const cached = cache.get(chunk.hash)
+      if (cached) {
+        this.db.updateChunkEmbedding(chunk.id, cached.embedding, this.embeddingProvider.model)
+      } else {
+        uncached.push(chunk)
+      }
+    }
+
+    if (uncached.length === 0) return
+
+    // Batch embed uncached chunks
+    try {
+      const texts = uncached.map(c => c.content)
+      const embeddings = await this.embeddingProvider.embedBatch(texts)
+
+      const cacheEntries: EmbeddingCacheEntry[] = []
+      for (let i = 0; i < uncached.length; i++) {
+        this.db.updateChunkEmbedding(uncached[i].id, embeddings[i], this.embeddingProvider.model)
+        cacheEntries.push({
+          provider: this.embeddingProvider.id,
+          model: this.embeddingProvider.model,
+          hash: uncached[i].hash,
+          embedding: embeddings[i],
+          dims: embeddings[i].length,
+        })
+      }
+
+      // Save to cache
+      this.db.setEmbeddingCache(cacheEntries)
+
+      // Update IndexMeta with vector dimensions
+      const meta = this.db.getMeta() ?? { model: '', provider: '', chunkTokens: 0, chunkOverlap: 0 }
+      if (!meta.vectorDims && embeddings.length > 0) {
+        meta.vectorDims = embeddings[0].length
+        this.db.setMeta(meta)
+      }
+    } catch (error) {
+      // Embedding failures are non-fatal - BM25 search still works
+      console.error('Failed to generate embeddings:', error)
+    }
+  }
+
   // Get system status
   status(): { files: number; chunks: number; dirty: boolean; embeddingsReady: boolean } {
     const dbStatus = this.db.status()
-    return { ...dbStatus, dirty: this.dirty, embeddingsReady: false }
+    return { ...dbStatus, dirty: this.dirty, embeddingsReady: this.embeddingProvider !== null }
   }
 
   // Clean shutdown

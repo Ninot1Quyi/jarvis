@@ -114,7 +114,7 @@ export class Agent {
 
     // Initialize memory system
     try {
-      this.memorySystem = await MemorySystem.create(config.dataDir)
+      this.memorySystem = await MemorySystem.create(config.dataDir, config.keys)
       setMemorySystem(this.memorySystem)
       const memStatus = this.memorySystem.status()
       logger.debug(`Memory system initialized: ${memStatus.files} files, ${memStatus.chunks} chunks`)

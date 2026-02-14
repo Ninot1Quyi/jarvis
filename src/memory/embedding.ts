@@ -177,19 +177,16 @@ function retryDelay(attempt: number): number {
 
 // ---- Factory ----
 
-export function createEmbeddingProvider(config: {
-  provider: 'openai' | 'none'
-  model?: string
-  apiKey?: string
-  baseUrl?: string
-}): EmbeddingProvider | null {
-  if (config.provider === 'none' || !config.apiKey) return null
-  if (config.provider === 'openai') {
-    return new OpenAIEmbeddingProvider({
-      apiKey: config.apiKey,
-      baseUrl: config.baseUrl,
-      model: config.model,
-    })
-  }
-  return null
+import type { KeyConfig, ProviderConfig } from '../types.js'
+
+export function createEmbeddingProvider(providerName: string, keys: KeyConfig): EmbeddingProvider | null {
+  if (!providerName || providerName === 'none') return null
+  const provider = keys[providerName] as ProviderConfig | undefined
+  if (!provider?.apiKey || !provider?.embedding?.model) return null
+  // All OpenAI-compatible APIs (including doubao, openai, etc.) use OpenAIEmbeddingProvider
+  return new OpenAIEmbeddingProvider({
+    apiKey: provider.apiKey,
+    baseUrl: provider.baseUrl,
+    model: provider.embedding.model,
+  })
 }

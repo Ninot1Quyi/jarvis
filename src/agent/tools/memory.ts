@@ -39,7 +39,13 @@ const memorySearchTool: Tool = {
     const limit = (args.limit as number) || 5
 
     try {
-      const results = memorySystem.search(query, limit)
+      let results
+      if (memorySystem.embeddingProvider) {
+        const queryEmbedding = await memorySystem.embeddingProvider.embedQuery(query)
+        results = memorySystem.searchHybrid(query, queryEmbedding, { maxResults: limit })
+      } else {
+        results = memorySystem.search(query, limit)
+      }
       if (results.length === 0) {
         return {
           success: true,

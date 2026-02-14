@@ -112,6 +112,7 @@ export interface ProviderConfig {
   model?: string
   nativeToolCall?: boolean
   apiType?: 'openai' | 'anthropic'
+  embedding?: { model: string }
 }
 
 export interface MailConfig {
@@ -149,7 +150,8 @@ export interface KeyConfig {
   doubao?: ProviderConfig
   mail?: MailConfig
   notification?: NotificationConfig
-  [key: string]: ProviderConfig | MailConfig | NotificationConfig | string | number | undefined
+  memory?: { embeddingProvider?: string }
+  [key: string]: ProviderConfig | MailConfig | NotificationConfig | { embeddingProvider?: string } | string | number | undefined
 }
 
 export interface JarvisConfig {
