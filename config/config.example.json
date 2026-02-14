@@ -21,7 +21,8 @@
     "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
     "model": "doubao-seed-1-8-251228",
     "apiType": "openai",
-    "nativeToolCall": false
+    "nativeToolCall": false,
+    "embedding": { "model": "your-embedding-model" }
   },
   "ollama": {
     "apiKey": "ollama",
@@ -54,5 +55,8 @@
     "appWhitelist": [],
     "appBlacklist": ["jarvis-overlay"],
     "diffApps": ["WeChat", "QQ", "Lark", "DingTalk", "Discord", "Telegram", "Slack", "WhatsApp", "Line", "Signal", "Messages"]
+  },
+  "memory": {
+    "embeddingProvider": "doubao"
   }
 }
