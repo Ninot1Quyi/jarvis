@@ -81,15 +81,18 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
   private readonly apiKey: string
   private readonly baseUrl: string
+  private readonly apiPath: string
 
   constructor(options: {
     apiKey: string
     baseUrl?: string
     model?: string
+    apiPath?: string
   }) {
     this.apiKey = options.apiKey
     this.baseUrl = (options.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '')
     this.model = options.model ?? 'text-embedding-3-small'
+    this.apiPath = options.apiPath ?? '/embeddings'
     this.dimensions = 1536
     this.maxInputTokens = 8192
   }
@@ -114,8 +117,24 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     return allEmbeddings
   }
 
+  private get isMultimodal(): boolean {
+    return this.apiPath.includes('multimodal')
+  }
+
   private async callAPI(input: string[]): Promise<number[][]> {
-    const url = `${this.baseUrl}/embeddings`
+    // Multimodal API: one embedding per call, input is [{type:"text", text:"..."}]
+    if (this.isMultimodal) {
+      const results: number[][] = []
+      for (const text of input) {
+        const emb = await this.callAPISingle(
+          [{ type: 'text' as const, text }]
+        )
+        results.push(emb)
+      }
+      return results
+    }
+
+    const url = `${this.baseUrl}${this.apiPath}`
     const body = JSON.stringify({ model: this.model, input })
 
     let lastError: Error | null = null
@@ -159,6 +178,51 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
     throw lastError ?? new Error('embedding request failed after retries')
   }
+
+  // Single-item call for multimodal API
+  private async callAPISingle(input: Array<{ type: 'text'; text: string }>): Promise<number[]> {
+    const url = `${this.baseUrl}${this.apiPath}`
+    const body = JSON.stringify({ model: this.model, input })
+
+    let lastError: Error | null = null
+
+    for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+          body,
+        })
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          const err = new Error(`Embedding API error ${res.status}: ${text}`)
+          if (isRetryable(res.status) && attempt < RETRY_MAX_ATTEMPTS - 1) {
+            lastError = err
+            await sleep(retryDelay(attempt))
+            continue
+          }
+          throw err
+        }
+
+        const json = (await res.json()) as OpenAIEmbeddingResponse
+        return l2Normalize(json.data[0].embedding)
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+        if (attempt < RETRY_MAX_ATTEMPTS - 1 && isNetworkError(lastError)) {
+          await sleep(retryDelay(attempt))
+          continue
+        }
+        if (attempt === RETRY_MAX_ATTEMPTS - 1) break
+        throw lastError
+      }
+    }
+
+    throw lastError ?? new Error('embedding request failed after retries')
+  }
 }
 
 function isNetworkError(err: Error): boolean {
@@ -188,5 +252,6 @@ export function createEmbeddingProvider(providerName: string, keys: KeyConfig): 
     apiKey: provider.apiKey,
     baseUrl: provider.baseUrl,
     model: provider.embedding.model,
+    apiPath: provider.embedding.path,
   })
 }
