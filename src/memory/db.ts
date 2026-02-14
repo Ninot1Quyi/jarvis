@@ -2,18 +2,9 @@ import Database from 'better-sqlite3'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
+import * as sqliteVec from 'sqlite-vec'
 import { chunkMarkdown, type ChunkOptions } from './chunker.js'
 import type { Chunk, SearchResult, IndexMeta, EmbeddingCacheEntry } from './types.js'
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i]
-    normA += a[i] * a[i]
-    normB += b[i] * b[i]
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1)
-}
 
 export class MemoryDB {
   private db!: Database.Database
@@ -31,6 +22,10 @@ export class MemoryDB {
     this.db = new Database(dbPath)
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+
+    // Load sqlite-vec extension
+    sqliteVec.load(this.db)
+
     this.ensureSchema()
   }
 
@@ -99,6 +94,44 @@ export class MemoryDB {
         );
       `)
     }
+
+    // vec0 virtual table for vector search
+    // Only create if we know the vector dimensions from IndexMeta
+    const meta = this.getMeta()
+    if (meta?.vectorDims) {
+      this.ensureVecTable(meta.vectorDims)
+    }
+  }
+
+  ensureVecTable(dims: number): void {
+    const vecExists = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
+    ).get()
+
+    if (!vecExists) {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE chunks_vec USING vec0(
+          chunk_id TEXT PRIMARY KEY,
+          embedding FLOAT[${dims}]
+        );
+      `)
+
+      // Backfill: insert existing embeddings into vec0
+      const rows = this.db.prepare(
+        "SELECT id, embedding FROM chunks WHERE embedding != '[]'"
+      ).all() as Array<{ id: string; embedding: string }>
+
+      if (rows.length > 0) {
+        const insert = this.db.prepare('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)')
+        const txn = this.db.transaction(() => {
+          for (const row of rows) {
+            const emb = JSON.parse(row.embedding) as number[]
+            insert.run(row.id, Buffer.from(new Float32Array(emb).buffer))
+          }
+        })
+        txn()
+      }
+    }
   }
 
   // ---- Meta ----
@@ -140,6 +173,17 @@ export class MemoryDB {
         deleteFts.run(old.id)
       }
 
+      // Delete old vec entries
+      const vecExists = this.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
+      ).get()
+      if (vecExists) {
+        const deleteVec = this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?")
+        for (const old of oldChunks) {
+          deleteVec.run(old.id)
+        }
+      }
+
       // Delete old chunks
       this.db.prepare('DELETE FROM chunks WHERE path = ?').run(relativePath)
 
@@ -175,6 +219,17 @@ export class MemoryDB {
       const deleteFts = this.db.prepare("DELETE FROM chunks_fts WHERE id = ?")
       for (const old of oldChunks) {
         deleteFts.run(old.id)
+      }
+
+      // Delete vec entries
+      const vecExists = this.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
+      ).get()
+      if (vecExists) {
+        const deleteVec = this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?")
+        for (const old of oldChunks) {
+          deleteVec.run(old.id)
+        }
       }
 
       this.db.prepare('DELETE FROM chunks WHERE path = ?').run(relativePath)
@@ -275,37 +330,73 @@ export class MemoryDB {
     this.db.prepare(
       'UPDATE chunks SET embedding = ?, model = ?, updated_at = ? WHERE id = ?'
     ).run(JSON.stringify(embedding), model, Date.now(), id)
+
+    // Also update vec0 table if it exists
+    const vecExists = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
+    ).get()
+
+    if (vecExists) {
+      const buffer = Buffer.from(new Float32Array(embedding).buffer)
+      // Use INSERT OR REPLACE - vec0 supports this
+      this.db.prepare(
+        'INSERT OR REPLACE INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)'
+      ).run(id, buffer)
+    }
   }
 
   searchVector(queryEmbedding: number[], limit: number = 10): SearchResult[] {
-    const rows = this.db.prepare(
-      "SELECT id, path, content, heading, start_line, end_line, embedding FROM chunks WHERE embedding != '[]'"
-    ).all() as Array<{
+    // Check if vec0 table exists
+    const vecExists = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
+    ).get()
+
+    if (!vecExists) {
+      // Fallback: no vec0 table yet, return empty (BM25 will handle search)
+      return []
+    }
+
+    const queryBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer)
+
+    const vecRows = this.db.prepare(`
+      SELECT chunk_id, distance FROM chunks_vec
+      WHERE embedding MATCH ?
+      ORDER BY distance
+      LIMIT ?
+    `).all(queryBuffer, limit) as Array<{ chunk_id: string; distance: number }>
+
+    if (vecRows.length === 0) return []
+
+    // Fetch chunk details
+    const ids = vecRows.map(r => r.chunk_id)
+    const distanceMap = new Map(vecRows.map(r => [r.chunk_id, r.distance]))
+    const placeholders = ids.map(() => '?').join(',')
+
+    const chunks = this.db.prepare(`
+      SELECT id, path, content, heading, start_line, end_line
+      FROM chunks WHERE id IN (${placeholders})
+    `).all(...ids) as Array<{
       id: string
       path: string
       content: string
       heading: string | null
       start_line: number
       end_line: number
-      embedding: string
     }>
 
-    const scored = rows.map(r => {
-      const emb = JSON.parse(r.embedding) as number[]
-      const score = cosineSimilarity(queryEmbedding, emb)
-      return { ...r, score }
-    })
-
-    scored.sort((a, b) => b.score - a.score)
-
-    return scored.slice(0, limit).map(r => ({
-      path: r.path,
-      heading: r.heading || null,
-      snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
-      startLine: r.start_line,
-      endLine: r.end_line,
-      score: r.score,
-    }))
+    return chunks.map(c => {
+      const distance = distanceMap.get(c.id) ?? Infinity
+      // Convert L2 distance to similarity score: 1 / (1 + distance)
+      const score = 1 / (1 + distance)
+      return {
+        path: c.path,
+        heading: c.heading || null,
+        snippet: c.content.length > 300 ? c.content.slice(0, 300) + '...' : c.content,
+        startLine: c.start_line,
+        endLine: c.end_line,
+        score,
+      }
+    }).sort((a, b) => b.score - a.score)
   }
 
   // ---- Embedding cache ----

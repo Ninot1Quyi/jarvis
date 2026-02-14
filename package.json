@@ -34,6 +34,7 @@
     "mailparser": "^3.9.3",
     "nodemailer": "^8.0.0",
     "openai": "^4.77.0",
+    "sqlite-vec": "^0.1.6",
     "ws": "^8.19.0"
   },
   "devDependencies": {
