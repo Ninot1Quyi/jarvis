@@ -39,7 +39,7 @@ const memorySearchTool: Tool = {
     const limit = (args.limit as number) || 5
 
     try {
-      const results = memorySystem.search(query, limit)
+      const results = await memorySystem.search(query, limit)
       if (results.length === 0) {
         return {
           success: true,

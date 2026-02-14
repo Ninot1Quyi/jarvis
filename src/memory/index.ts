@@ -172,20 +172,19 @@ export class MemorySystem {
     return entries
   }
 
-  // Search memory using BM25, triggers sync if dirty
-  search(query: string, limit: number = 5): SearchResult[] {
-    if (this.dirty) {
-      this.sync().catch(() => {})
-    }
+  // Search memory using BM25, awaits sync if dirty
+  async search(query: string, limit: number = 5): Promise<SearchResult[]> {
+    if (this.dirty) await this.sync()
     return this.db.searchBM25(query, limit)
   }
 
   // Hybrid search: weighted fusion of BM25 + vector results
-  searchHybrid(
+  async searchHybrid(
     query: string,
     queryEmbedding: number[] | null,
     options?: Partial<HybridSearchOptions>
-  ): SearchResult[] {
+  ): Promise<SearchResult[]> {
+    if (this.dirty) await this.sync()
     const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options }
     const candidates = Math.min(200, opts.maxResults * opts.candidateMultiplier)
 

@@ -352,7 +352,7 @@ Note: Screenshot is attached. If target window != focused window, first click ac
       if (this.memorySystem && this.currentTask && this.currentTask !== '(none)' && this.memorySearchedForTask !== this.currentTask) {
         this.memorySearchedForTask = this.currentTask
         try {
-          const results = this.memorySystem.search(this.currentTask, 3)
+          const results = await this.memorySystem.search(this.currentTask, 3)
           if (results.length > 0) {
             memoriesText = '## Relevant Memories\n\n' + results.map(r => {
               const loc = r.heading ? `${r.path} > ${r.heading}` : r.path
