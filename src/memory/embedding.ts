@@ -80,19 +80,19 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly maxInputTokens: number
 
   private readonly apiKey: string
-  private readonly baseUrl: string
-  private readonly apiPath: string
+  private readonly apiUrl: string
 
   constructor(options: {
     apiKey: string
     baseUrl?: string
     model?: string
-    apiPath?: string
+    apiUrl?: string
   }) {
     this.apiKey = options.apiKey
-    this.baseUrl = (options.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '')
+    const baseUrl = (options.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '')
     this.model = options.model ?? 'text-embedding-3-small'
-    this.apiPath = options.apiPath ?? '/embeddings'
+    // apiUrl = full endpoint URL; if not given, default to baseUrl + /embeddings
+    this.apiUrl = options.apiUrl ?? `${baseUrl}/embeddings`
     this.dimensions = 1536
     this.maxInputTokens = 8192
   }
@@ -118,7 +118,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 
   private get isMultimodal(): boolean {
-    return this.apiPath.includes('multimodal')
+    return this.apiUrl.includes('multimodal')
   }
 
   private async callAPI(input: string[]): Promise<number[][]> {
@@ -134,14 +134,13 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       return results
     }
 
-    const url = `${this.baseUrl}${this.apiPath}`
     const body = JSON.stringify({ model: this.model, input })
 
     let lastError: Error | null = null
 
     for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
       try {
-        const res = await fetch(url, {
+        const res = await fetch(this.apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -181,14 +180,13 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
   // Single-item call for multimodal API
   private async callAPISingle(input: Array<{ type: 'text'; text: string }>): Promise<number[]> {
-    const url = `${this.baseUrl}${this.apiPath}`
     const body = JSON.stringify({ model: this.model, input })
 
     let lastError: Error | null = null
 
     for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
       try {
-        const res = await fetch(url, {
+        const res = await fetch(this.apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -252,6 +250,6 @@ export function createEmbeddingProvider(providerName: string, keys: KeyConfig): 
     apiKey: provider.apiKey,
     baseUrl: provider.baseUrl,
     model: provider.embedding.model,
-    apiPath: provider.embedding.path,
+    apiUrl: provider.embedding.baseUrl,
   })
 }

@@ -112,7 +112,7 @@ export interface ProviderConfig {
   model?: string
   nativeToolCall?: boolean
   apiType?: 'openai' | 'anthropic'
-  embedding?: { model: string; path?: string }
+  embedding?: { model: string; baseUrl?: string }
 }
 
 export interface MailConfig {
