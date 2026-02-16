@@ -65,7 +65,7 @@
     "embeddingProvider": "qwen",
     "memoryAgent": {
       "provider": "qwen",
-      "model": "qwen-turbo"
+      "model": "qwen-plus"
     }
   },
   "notification": {
