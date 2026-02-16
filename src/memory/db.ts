@@ -66,15 +66,40 @@ export class MemoryDB {
       CREATE TABLE IF NOT EXISTS embedding_cache (
         provider TEXT NOT NULL,
         model TEXT NOT NULL,
+        provider_key TEXT NOT NULL DEFAULT '',
         hash TEXT NOT NULL,
         embedding TEXT NOT NULL,
         dims INTEGER,
         updated_at INTEGER NOT NULL,
-        PRIMARY KEY (provider, model, hash)
+        PRIMARY KEY (provider, model, provider_key, hash)
       );
 
       CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated ON embedding_cache(updated_at);
     `)
+
+    // Migrate: if embedding_cache lacks provider_key column, drop and recreate
+    try {
+      const cols = this.db.prepare("PRAGMA table_info(embedding_cache)").all() as Array<{ name: string }>
+      const hasProviderKey = cols.some(c => c.name === 'provider_key')
+      if (!hasProviderKey) {
+        this.db.exec("DROP TABLE IF EXISTS embedding_cache")
+        this.db.exec(`
+          CREATE TABLE embedding_cache (
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            provider_key TEXT NOT NULL DEFAULT '',
+            hash TEXT NOT NULL,
+            embedding TEXT NOT NULL,
+            dims INTEGER,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (provider, model, provider_key, hash)
+          );
+          CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated ON embedding_cache(updated_at);
+        `)
+      }
+    } catch {
+      // table might not exist yet (first run), ignore
+    }
 
     // FTS5 virtual table -- manual sync, no triggers (TEXT primary key)
     const ftsExists = this.db.prepare(
@@ -134,6 +159,16 @@ export class MemoryDB {
     }
   }
 
+  resetAllEmbeddings(): void {
+    this.db.exec("UPDATE chunks SET embedding = '[]', model = NULL")
+    const vecExists = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
+    ).get()
+    if (vecExists) {
+      this.db.exec('DROP TABLE chunks_vec')
+    }
+  }
+
   // ---- Meta ----
 
   getMeta(): IndexMeta | null {
@@ -154,45 +189,31 @@ export class MemoryDB {
 
   // ---- File indexing ----
 
-  indexFile(absolutePath: string, relativePath: string, chunkOptions?: ChunkOptions): boolean {
-    const content = fs.readFileSync(absolutePath, 'utf-8')
-    const hash = crypto.createHash('sha256').update(content).digest('hex')
-    const stat = fs.statSync(absolutePath)
+  private _purgeChunks(filePath: string): void {
+    const oldChunks = this.db.prepare('SELECT id FROM chunks WHERE path = ?').all(filePath) as Array<{ id: string }>
+    if (oldChunks.length === 0) return
 
-    const existing = this.db.prepare('SELECT hash FROM files WHERE path = ?').get(relativePath) as { hash: string } | undefined
-    if (existing && existing.hash === hash) return false
+    const deleteFts = this.db.prepare("DELETE FROM chunks_fts WHERE id = ?")
+    for (const old of oldChunks) deleteFts.run(old.id)
 
-    const chunks = chunkMarkdown(content, chunkOptions)
+    const vecExists = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'").get()
+    if (vecExists) {
+      const deleteVec = this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?")
+      for (const old of oldChunks) deleteVec.run(old.id)
+    }
+
+    this.db.prepare('DELETE FROM chunks WHERE path = ?').run(filePath)
+  }
+
+  private _replaceChunks(filePath: string, source: string, hash: string, mtime: number, size: number, chunks: Chunk[]): void {
     const now = Date.now()
-
     const txn = this.db.transaction(() => {
-      // Delete old FTS entries for this path
-      const oldChunks = this.db.prepare('SELECT id FROM chunks WHERE path = ?').all(relativePath) as Array<{ id: string }>
-      const deleteFts = this.db.prepare("DELETE FROM chunks_fts WHERE id = ?")
-      for (const old of oldChunks) {
-        deleteFts.run(old.id)
-      }
+      this._purgeChunks(filePath)
 
-      // Delete old vec entries
-      const vecExists = this.db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
-      ).get()
-      if (vecExists) {
-        const deleteVec = this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?")
-        for (const old of oldChunks) {
-          deleteVec.run(old.id)
-        }
-      }
-
-      // Delete old chunks
-      this.db.prepare('DELETE FROM chunks WHERE path = ?').run(relativePath)
-
-      // Upsert file record
       this.db.prepare(
         'INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)'
-      ).run(relativePath, 'memory', hash, stat.mtimeMs, stat.size)
+      ).run(filePath, source, hash, mtime, size)
 
-      // Insert new chunks + FTS
       const insertChunk = this.db.prepare(
         'INSERT INTO chunks (id, path, source, chunk_index, start_line, end_line, heading, hash, model, content, embedding, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
@@ -202,37 +223,38 @@ export class MemoryDB {
 
       for (let i = 0; i < chunks.length; i++) {
         const c = chunks[i]
-        const chunkId = `${relativePath}:${i}`
+        const chunkId = `${filePath}:${i}`
         const chunkHash = c.hash ?? crypto.createHash('sha256').update(c.content).digest('hex')
-        insertChunk.run(chunkId, relativePath, 'memory', i, c.startLine, c.endLine, c.heading, chunkHash, '', c.content, '[]', now)
-        insertFts.run(c.content, c.heading ?? '', chunkId, relativePath, 'memory', c.startLine, c.endLine)
+        insertChunk.run(chunkId, filePath, source, i, c.startLine, c.endLine, c.heading, chunkHash, '', c.content, '[]', now)
+        insertFts.run(c.content, c.heading ?? '', chunkId, filePath, source, c.startLine, c.endLine)
       }
     })
     txn()
+  }
+
+  indexFile(absolutePath: string, relativePath: string, chunkOptions?: ChunkOptions, source: string = 'memory'): boolean {
+    const content = fs.readFileSync(absolutePath, 'utf-8')
+    const hash = crypto.createHash('sha256').update(content).digest('hex')
+    const stat = fs.statSync(absolutePath)
+
+    const existing = this.db.prepare('SELECT hash FROM files WHERE path = ?').get(relativePath) as { hash: string } | undefined
+    if (existing && existing.hash === hash) return false
+
+    this._replaceChunks(relativePath, source, hash, stat.mtimeMs, stat.size, chunkMarkdown(content, chunkOptions))
+    return true
+  }
+
+  indexTaskEntry(entry: { path: string; absPath: string; mtimeMs: number; size: number; hash: string; content: string; lineMap: number[] }): boolean {
+    const existing = this.db.prepare('SELECT hash FROM files WHERE path = ?').get(entry.path) as { hash: string } | undefined
+    if (existing && existing.hash === entry.hash) return false
+
+    this._replaceChunks(entry.path, 'tasks', entry.hash, entry.mtimeMs, entry.size, chunkMarkdown(entry.content))
     return true
   }
 
   removeFile(relativePath: string): void {
     const txn = this.db.transaction(() => {
-      // Remove FTS entries
-      const oldChunks = this.db.prepare('SELECT id FROM chunks WHERE path = ?').all(relativePath) as Array<{ id: string }>
-      const deleteFts = this.db.prepare("DELETE FROM chunks_fts WHERE id = ?")
-      for (const old of oldChunks) {
-        deleteFts.run(old.id)
-      }
-
-      // Delete vec entries
-      const vecExists = this.db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
-      ).get()
-      if (vecExists) {
-        const deleteVec = this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?")
-        for (const old of oldChunks) {
-          deleteVec.run(old.id)
-        }
-      }
-
-      this.db.prepare('DELETE FROM chunks WHERE path = ?').run(relativePath)
+      this._purgeChunks(relativePath)
       this.db.prepare('DELETE FROM files WHERE path = ?').run(relativePath)
     })
     txn()
@@ -252,6 +274,7 @@ export class MemoryDB {
         SELECT
           f.id,
           f.path,
+          f.source,
           f.content,
           f.heading,
           f.start_line,
@@ -264,6 +287,7 @@ export class MemoryDB {
       `).all(ftsQuery, limit) as Array<{
         id: string
         path: string
+        source: string
         content: string
         heading: string | null
         start_line: number
@@ -274,6 +298,7 @@ export class MemoryDB {
       if (rows.length > 0) {
         return rows.map(r => ({
           path: r.path,
+          source: r.source as 'memory' | 'tasks',
           heading: r.heading || null,
           snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
           startLine: r.start_line,
@@ -290,12 +315,13 @@ export class MemoryDB {
     const likeParams: string[] = tokens.map(t => `%${t}%`)
 
     const rows = this.db.prepare(`
-      SELECT c.path, c.content, c.heading, c.start_line, c.end_line
+      SELECT c.path, c.source, c.content, c.heading, c.start_line, c.end_line
       FROM chunks c
       WHERE ${likeClauses}
       LIMIT ?
     `).all(...likeParams, limit) as Array<{
       path: string
+      source: string
       content: string
       heading: string | null
       start_line: number
@@ -304,6 +330,7 @@ export class MemoryDB {
 
     return rows.map((r, i) => ({
       path: r.path,
+      source: r.source as 'memory' | 'tasks',
       heading: r.heading || null,
       snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
       startLine: r.start_line,
@@ -314,16 +341,16 @@ export class MemoryDB {
 
   // ---- Vector search ----
 
-  getChunksForEmbedding(paths?: string[]): Array<{ id: string; hash: string; content: string }> {
+  getChunksForEmbedding(paths?: string[]): Array<{ id: string; hash: string; content: string; path: string }> {
     if (paths && paths.length > 0) {
       const placeholders = paths.map(() => '?').join(',')
       return this.db.prepare(
-        `SELECT id, hash, content FROM chunks WHERE embedding = '[]' AND path IN (${placeholders})`
-      ).all(...paths) as Array<{ id: string; hash: string; content: string }>
+        `SELECT id, hash, content, path FROM chunks WHERE embedding = '[]' AND path IN (${placeholders})`
+      ).all(...paths) as Array<{ id: string; hash: string; content: string; path: string }>
     }
     return this.db.prepare(
-      "SELECT id, hash, content FROM chunks WHERE embedding = '[]'"
-    ).all() as Array<{ id: string; hash: string; content: string }>
+      "SELECT id, hash, content, path FROM chunks WHERE embedding = '[]'"
+    ).all() as Array<{ id: string; hash: string; content: string; path: string }>
   }
 
   updateChunkEmbedding(id: string, embedding: number[], model: string): void {
@@ -358,50 +385,39 @@ export class MemoryDB {
 
     const queryBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer)
 
-    const vecRows = this.db.prepare(`
-      SELECT chunk_id, distance FROM chunks_vec
-      WHERE embedding MATCH ?
-      ORDER BY distance
-      LIMIT ?
-    `).all(queryBuffer, limit) as Array<{ chunk_id: string; distance: number }>
-
-    if (vecRows.length === 0) return []
-
-    // Fetch chunk details
-    const ids = vecRows.map(r => r.chunk_id)
-    const distanceMap = new Map(vecRows.map(r => [r.chunk_id, r.distance]))
-    const placeholders = ids.map(() => '?').join(',')
-
-    const chunks = this.db.prepare(`
-      SELECT id, path, content, heading, start_line, end_line
-      FROM chunks WHERE id IN (${placeholders})
-    `).all(...ids) as Array<{
+    // Use vec_distance_cosine for exact cosine similarity (full scan, precise results)
+    const rows = this.db.prepare(`
+      SELECT c.id, c.path, c.source, c.content, c.heading, c.start_line, c.end_line,
+             vec_distance_cosine(v.embedding, ?) AS dist
+        FROM chunks_vec v
+        JOIN chunks c ON c.id = v.chunk_id
+       ORDER BY dist ASC
+       LIMIT ?
+    `).all(queryBuffer, limit) as Array<{
       id: string
       path: string
+      source: string
       content: string
       heading: string | null
       start_line: number
       end_line: number
+      dist: number
     }>
 
-    return chunks.map(c => {
-      const distance = distanceMap.get(c.id) ?? Infinity
-      // Convert L2 distance to similarity score: 1 / (1 + distance)
-      const score = 1 / (1 + distance)
-      return {
-        path: c.path,
-        heading: c.heading || null,
-        snippet: c.content.length > 300 ? c.content.slice(0, 300) + '...' : c.content,
-        startLine: c.start_line,
-        endLine: c.end_line,
-        score,
-      }
-    }).sort((a, b) => b.score - a.score)
+    return rows.map(r => ({
+      path: r.path,
+      source: r.source as 'memory' | 'tasks',
+      heading: r.heading || null,
+      snippet: r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content,
+      startLine: r.start_line,
+      endLine: r.end_line,
+      score: 1 - r.dist,
+    }))
   }
 
   // ---- Embedding cache ----
 
-  getEmbeddingCache(provider: string, model: string, hashes: string[]): Map<string, EmbeddingCacheEntry> {
+  getEmbeddingCache(provider: string, model: string, providerKey: string, hashes: string[]): Map<string, EmbeddingCacheEntry> {
     const result = new Map<string, EmbeddingCacheEntry>()
     if (hashes.length === 0) return result
 
@@ -410,13 +426,14 @@ export class MemoryDB {
       const batch = hashes.slice(i, i + batchSize)
       const placeholders = batch.map(() => '?').join(',')
       const rows = this.db.prepare(
-        `SELECT hash, embedding, dims FROM embedding_cache WHERE provider = ? AND model = ? AND hash IN (${placeholders})`
-      ).all(provider, model, ...batch) as Array<{ hash: string; embedding: string; dims: number }>
+        `SELECT hash, embedding, dims FROM embedding_cache WHERE provider = ? AND model = ? AND provider_key = ? AND hash IN (${placeholders})`
+      ).all(provider, model, providerKey, ...batch) as Array<{ hash: string; embedding: string; dims: number }>
 
       for (const row of rows) {
         result.set(row.hash, {
           provider,
           model,
+          providerKey,
           hash: row.hash,
           embedding: JSON.parse(row.embedding) as number[],
           dims: row.dims,
@@ -431,13 +448,13 @@ export class MemoryDB {
     if (entries.length === 0) return
 
     const stmt = this.db.prepare(
-      'INSERT OR REPLACE INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT OR REPLACE INTO embedding_cache (provider, model, provider_key, hash, embedding, dims, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
     const now = Date.now()
 
     const txn = this.db.transaction(() => {
       for (const e of entries) {
-        stmt.run(e.provider, e.model, e.hash, JSON.stringify(e.embedding), e.dims, now)
+        stmt.run(e.provider, e.model, e.providerKey, e.hash, JSON.stringify(e.embedding), e.dims, now)
       }
     })
     txn()
@@ -466,16 +483,16 @@ export class MemoryDB {
       tempDb = new MemoryDB(tempPath)
 
       // Copy embedding cache from current DB to temp
-      const cacheRows = this.db.prepare('SELECT provider, model, hash, embedding, dims, updated_at FROM embedding_cache').all() as Array<{
-        provider: string; model: string; hash: string; embedding: string; dims: number; updated_at: number
+      const cacheRows = this.db.prepare('SELECT provider, model, provider_key, hash, embedding, dims, updated_at FROM embedding_cache').all() as Array<{
+        provider: string; model: string; provider_key: string; hash: string; embedding: string; dims: number; updated_at: number
       }>
       if (cacheRows.length > 0) {
         const insertCache = tempDb.db.prepare(
-          'INSERT OR REPLACE INTO embedding_cache (provider, model, hash, embedding, dims, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+          'INSERT OR REPLACE INTO embedding_cache (provider, model, provider_key, hash, embedding, dims, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
         )
         const txn = tempDb.db.transaction(() => {
           for (const row of cacheRows) {
-            insertCache.run(row.provider, row.model, row.hash, row.embedding, row.dims, row.updated_at)
+            insertCache.run(row.provider, row.model, row.provider_key, row.hash, row.embedding, row.dims, row.updated_at)
           }
         })
         txn()

@@ -112,7 +112,7 @@ export interface ProviderConfig {
   model?: string
   nativeToolCall?: boolean
   apiType?: 'openai' | 'anthropic'
-  embedding?: { model: string; baseUrl?: string }
+  embedding?: { model: string; baseUrl?: string; apiType?: 'openai' | 'dashscope'; dimensions?: number }
 }
 
 export interface MailConfig {
@@ -150,8 +150,8 @@ export interface KeyConfig {
   doubao?: ProviderConfig
   mail?: MailConfig
   notification?: NotificationConfig
-  memory?: { embeddingProvider?: string }
-  [key: string]: ProviderConfig | MailConfig | NotificationConfig | { embeddingProvider?: string } | string | number | undefined
+  memory?: { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } }
+  [key: string]: ProviderConfig | MailConfig | NotificationConfig | { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } } | string | number | undefined
 }
 
 export interface JarvisConfig {
@@ -162,4 +162,5 @@ export interface JarvisConfig {
   screenshotDir: string
   dataDir: string
   workspace: string
+  autonomousMode?: boolean
 }

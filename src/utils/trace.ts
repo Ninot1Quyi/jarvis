@@ -8,7 +8,7 @@ import * as path from 'path'
 const TRACES_DIR = path.join(process.cwd(), 'data', 'traces')
 
 interface TraceMessage {
-  role: 'system' | 'user' | 'assistant'
+  role: 'system' | 'user' | 'assistant' | 'computer'
   content: string
   images?: TraceImage[]
   toolCalls?: string[]
@@ -63,6 +63,13 @@ class TraceLogger {
   }
 
   /**
+   * Temporarily suppress tracing (e.g. for internal LLM calls)
+   */
+  disable(): void {
+    this.enabled = false
+  }
+
+  /**
    * Get the full path to the trace file
    */
   getTracePath(): string {
@@ -70,10 +77,23 @@ class TraceLogger {
   }
 
   /**
+   * Get the full path to the JSONL trace file
+   */
+  getJsonlPath(): string {
+    return path.join(TRACES_DIR, this.sessionId + '.jsonl')
+  }
+
+  private appendJsonl(record: object): void {
+    if (!this.enabled) return
+    fs.appendFileSync(this.getJsonlPath(), JSON.stringify(record) + '\n')
+  }
+
+  /**
    * Add system message
    */
   addSystem(content: string): void {
     if (!this.enabled) return
+    this.appendJsonl({ type: 'message', message: { role: 'system', content } })
     this.messages.push({ role: 'system', content })
     this.save()
   }
@@ -99,7 +119,30 @@ class TraceLogger {
       }
     }
 
+    this.appendJsonl({ type: 'message', message: { role: 'user', content, images: traceImages.length > 0 ? traceImages : undefined } })
     this.messages.push({ role: 'user', content, images: traceImages.length > 0 ? traceImages : undefined })
+    this.save()
+  }
+
+  /**
+   * Add computer message (tool results + screenshots)
+   */
+  addComputer(content: string, images?: { name?: string; path?: string }[]): void {
+    if (!this.enabled) return
+
+    const traceImages: TraceImage[] = []
+
+    if (images) {
+      for (const img of images) {
+        if (img.path) {
+          const relativePath = path.relative(TRACES_DIR, img.path)
+          traceImages.push({ name: img.name, path: relativePath })
+        }
+      }
+    }
+
+    this.appendJsonl({ type: 'message', message: { role: 'computer', content, images: traceImages.length > 0 ? traceImages : undefined } })
+    this.messages.push({ role: 'computer', content, images: traceImages.length > 0 ? traceImages : undefined })
     this.save()
   }
 
@@ -111,6 +154,7 @@ class TraceLogger {
 
     const toolCallStrs = toolCalls?.map(tc => `${tc.name}(${JSON.stringify(tc.arguments)})`)
 
+    this.appendJsonl({ type: 'message', message: { role: 'assistant', content, toolCalls: toolCalls } })
     this.messages.push({ role: 'assistant', content, toolCalls: toolCallStrs })
     this.save()
   }
@@ -128,7 +172,7 @@ class TraceLogger {
 
       if (i > 0) {
         lines.push('')
-        lines.push('---')
+        lines.push('===')
         lines.push('')
       }
 

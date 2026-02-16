@@ -45,6 +45,7 @@ export function loadConfig(): JarvisConfig {
     screenshotDir: path.join(ROOT_DIR, 'data', 'memory', 'screenshots'),
     dataDir: path.join(ROOT_DIR, 'data'),
     workspace,
+    autonomousMode: (keys as Record<string, unknown>).autonomousMode === true,
   }
 }
 

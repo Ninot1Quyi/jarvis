@@ -63,6 +63,7 @@ export class Agent {
   private overlay: boolean = false  // 是否启用 overlay UI
   private interactive: boolean = false  // 交互模式
   private lastHadToolCall: boolean = false  // 上一轮是否有工具调用
+  private autonomous: boolean = false
   private screenEnabled: boolean = true  // 屏幕截图开关，默认开启
   private currentTask: string = ''  // 当前任务
   private todoSummary: string = '(none)'  // TODO 摘要
@@ -207,6 +208,7 @@ export class Agent {
       // 1. 检查消息队列，获取新的用户消息
       const pendingMessages = messageManager.getInbound()
       let hasUserMessage = false
+      let userMessageText = ''
 
       if (pendingMessages.length > 0) {
         // 有新消息，立刻标记为 processing（从 UI pending queue 移除）
@@ -226,60 +228,67 @@ export class Agent {
 
           logger.info(`Received ${pendingMessages.length} new message(s)`)
           hasUserMessage = true
+          userMessageText = chatContent
+          this.autonomous = false
         }
 
         // 重置无工具调用计数
         this.noToolCallCount = 0
         this.lastHadToolCall = true  // 有新消息时视为需要继续
       } else if (stepCount === 0 || (!this.lastHadToolCall && this.noToolCallCount >= 2)) {
-        // Idle wait: messages will be consumed immediately on break,
-        // suppress push notifications to avoid flashing pending UI.
-        messageManager.setPushNotify(false)
-
-        // Idle wait: poll every 1s for new messages AND AX diff on whitelisted focused apps
-        const diffApps = (config.keys.notification as NotificationConfig)?.diffApps || []
-        let idleBaseline: AXSnapshot | null = null
-        if (diffApps.length > 0) {
-          const snap = await captureAXSnapshot()
-          if (snap && diffApps.some(app => snap.appName.toLowerCase().includes(app.toLowerCase()))) {
-            idleBaseline = snap
+        if (config.autonomousMode && stepCount > 0) {
+          // Autonomous mode: brief check for messages, then continue ReAct loop
+          const hasMsg = await this.waitForMessages(500)
+          if (hasMsg) {
+            this.noToolCallCount = 0
+            this.lastHadToolCall = true
+            continue
           }
-        }
 
-        // Poll loop: check messages + AX diff every 1s
-        while (true) {
-          // Check for stop signal
-          if (this.stopRequested) break
+          this.autonomous = true
+          this.noToolCallCount = 0
+          this.lastHadToolCall = true
+        } else {
+          // Idle-wait: poll for new messages and AX diff
+          messageManager.setPushNotify(false)
 
-          const hasMsg = await this.waitForMessages(1000)
-          if (hasMsg) break
-
-          // AX diff check on whitelisted focused app
-          if (diffApps.length > 0) {
+          const diffAppsIdle = (config.keys.notification as NotificationConfig)?.diffApps || []
+          let idleBaseline: AXSnapshot | null = null
+          if (diffAppsIdle.length > 0) {
             const snap = await captureAXSnapshot()
-            if (snap && diffApps.some(app => snap.appName.toLowerCase().includes(app.toLowerCase()))) {
-              if (idleBaseline && snap.bundleId === idleBaseline.bundleId) {
-                const diff = computeAXDiff(idleBaseline.lines, snap.lines)
-                const genuine = filterDiffNoise(diff)
-                if (genuine.length > 0) {
-                  const diffLines = genuine.map(l => `+ ${l}`)
-                  const formatted = `[App: ${snap.appName}] [AX Change: +${genuine.length}]\n${diffLines.join('\n')}`
-                  messageManager.pushInbound('notification', formatted)
-                  logger.info(`[AX-diff] idle: ${snap.appName} +${diff.added.length}`)
-                  // Clear the main-loop baseline so the external diff check
-                  // at the top of the loop doesn't duplicate this detection
-                  this.axDiffBaseline = null
-                  break
-                }
-              }
-              // Update baseline to current focused app (may have switched)
+            if (snap && diffAppsIdle.some(app => snap.appName.toLowerCase().includes(app.toLowerCase()))) {
               idleBaseline = snap
             }
           }
-        }
 
-        messageManager.setPushNotify(true)
-        continue
+          while (true) {
+            if (this.stopRequested) break
+            const hasMsg = await this.waitForMessages(1000)
+            if (hasMsg) break
+
+            if (diffAppsIdle.length > 0) {
+              const snap = await captureAXSnapshot()
+              if (snap && diffAppsIdle.some(app => snap.appName.toLowerCase().includes(app.toLowerCase()))) {
+                if (idleBaseline && snap.bundleId === idleBaseline.bundleId) {
+                  const diff = computeAXDiff(idleBaseline.lines, snap.lines)
+                  const genuine = filterDiffNoise(diff)
+                  if (genuine.length > 0) {
+                    const diffLines = genuine.map(l => `+ ${l}`)
+                    const formatted = `[App: ${snap.appName}] [AX Change: +${genuine.length}]\n${diffLines.join('\n')}`
+                    messageManager.pushInbound('notification', formatted)
+                    logger.info(`[AX-diff] idle: ${snap.appName} +${diff.added.length}`)
+                    this.axDiffBaseline = null
+                    break
+                  }
+                }
+                idleBaseline = snap
+              }
+            }
+          }
+
+          messageManager.setPushNotify(true)
+          continue
+        }
       }
 
       stepCount++
@@ -347,20 +356,39 @@ Focused Window: ${focusedWindow}
 Note: Screenshot is attached. If target window != focused window, first click activates window.`
       }
 
-      // Auto memory search: on new task, search once and inject relevant memories
+      // Auto memory search: on new task OR new user message, search and inject relevant memories
       let memoriesText = ''
-      if (this.memorySystem && this.currentTask && this.currentTask !== '(none)' && this.memorySearchedForTask !== this.currentTask) {
-        this.memorySearchedForTask = this.currentTask
-        try {
-          const results = await this.memorySystem.search(this.currentTask, 3)
-          if (results.length > 0) {
-            memoriesText = '## Relevant Memories\n\n' + results.map(r => {
-              const loc = r.heading ? `${r.path} > ${r.heading}` : r.path
-              return `- [${loc}] (line ${r.startLine}): ${r.snippet}`
-            }).join('\n')
+      if (this.memorySystem) {
+        let memoryQuery = ''
+        // New task: search once per task
+        if (this.currentTask && this.currentTask !== '(none)' && this.memorySearchedForTask !== this.currentTask) {
+          this.memorySearchedForTask = this.currentTask
+          memoryQuery = this.currentTask
+        }
+        // User message: always search (strip XML tags for clean query)
+        if (hasUserMessage && userMessageText) {
+          memoryQuery = userMessageText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+        }
+        if (memoryQuery) {
+          try {
+            let queryEmbedding: number[] | null = null
+            if (this.memorySystem.embeddingProvider) {
+              try {
+                queryEmbedding = await this.memorySystem.embeddingProvider.embedQuery(memoryQuery)
+              } catch (e) {
+                logger.warn('Auto memory embedding failed, falling back to BM25:', e)
+              }
+            }
+            const results = await this.memorySystem.searchHybrid(memoryQuery, queryEmbedding, { maxResults: 3 })
+            if (results.length > 0) {
+              memoriesText = '## Relevant Memories\n\n' + results.map(r => {
+                const loc = r.heading ? `${r.path} > ${r.heading}` : r.path
+                return `- [${loc}] (line ${r.startLine}): ${r.snippet}`
+              }).join('\n')
+            }
+          } catch (e) {
+            logger.warn('Auto memory search failed:', e)
           }
-        } catch (e) {
-          logger.warn('Auto memory search failed:', e)
         }
       }
 
@@ -375,6 +403,10 @@ Note: Screenshot is attached. If target window != focused window, first click ac
       // 如果本轮有 user 消息，在 computer 开头提示 LLM 同时关注
       if (hasUserMessage) {
         computerContent = `<quote>The previous message has role=user. It was sent together with this computer feedback. Pay attention to both messages and decide whether to update tasks, update the TODO list, or respond to the user's new message.</quote>\n\n` + computerContent
+      }
+
+      if (this.autonomous) {
+        computerContent += '\n\n## Autonomous Mode\n\nNo pending tasks. You are free to:\n- Review and organize your memories (memory_search, memory_write)\n- Explore interesting topics on the computer\n- Practice skills or learn something new\n- Rest (call wait tool with longer intervals)\n- Check on ongoing projects\n\nWhen a new task arrives, you will be notified automatically.'
       }
 
       // 添加上一轮的工具执行结果
@@ -539,11 +571,16 @@ Fix the JSON and retry.</error>`
           logger.info('No tool call for 2 consecutive rounds, task confirmed complete.')
 
           if (this.interactive) {
-            // Interactive mode: reset task state but keep noToolCallCount/lastHadToolCall
-            // so the loop falls into the idle-wait branch on continue
             this.currentTask = ''
             lastToolResults = []
-            logger.info('Task done, waiting for new messages...')
+            if (config.autonomousMode) {
+              this.autonomous = true
+              this.noToolCallCount = 0
+              this.lastHadToolCall = true
+              logger.info('Task done, entering autonomous mode...')
+            } else {
+              logger.info('Task done, waiting for new messages...')
+            }
           } else {
             finished = true
           }
@@ -633,6 +670,19 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
           if (data.taskSet) {
             this.currentTask = (data.taskContent as string) || ''
             logger.info(`Task ${this.currentTask ? 'set: ' + this.currentTask : 'cleared'}`)
+            // Sync memory on every recordTask call (task start + task end)
+            if (this.memorySystem) {
+              this.memorySystem.sync().catch(() => {})
+            }
+          }
+
+          if (data.taskSet && !data.taskContent && this.memorySystem) {
+            lastToolResults.push({
+              toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
+              result: JSON.stringify({
+                message: '<reminder>TASK CLEARED -- The current task has been completed and cleared. If you learned anything important during this task (user preferences, useful techniques, task outcomes, errors encountered), save them now using memory_write before the context fades.</reminder>'
+              })
+            })
           }
 
           // 处理 todo_write 工具的摘要更新
@@ -709,7 +759,7 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
 
     // Cleanup memory system
     if (this.memorySystem) {
-      this.memorySystem.close()
+      await this.memorySystem.close()
       this.memorySystem = null
     }
   }

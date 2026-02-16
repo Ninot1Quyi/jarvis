@@ -11,7 +11,7 @@
  * 5. createEmbeddingProvider factory wires config correctly
  */
 
-import { OpenAIEmbeddingProvider, createEmbeddingProvider } from '../src/memory/embedding.js'
+import { OpenAIEmbeddingProvider, DashscopeEmbeddingProvider, createEmbeddingProvider } from '../src/memory/embedding.js'
 import type { KeyConfig } from '../src/types.js'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -50,17 +50,32 @@ function assert(condition: boolean, msg: string): void {
 async function testRawFetch() {
   console.log('\n[Test 1] Raw fetch - verify request/response format')
 
-  const isMultimodal = API_URL.includes('multimodal')
-  const input = isMultimodal
-    ? [{ type: 'text', text: 'hello world' }]
-    : ['hello world']
+  const embCfg = providerConfig.embedding
+  const isDashscope = embCfg.apiType === 'dashscope'
 
-  const body = JSON.stringify({ model: MODEL, input })
+  let url: string
+  let body: string
 
-  console.log(`  URL: ${API_URL}`)
+  if (isDashscope) {
+    url = 'https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding'
+    body = JSON.stringify({
+      model: MODEL,
+      input: { contents: [{ text: 'hello world' }] },
+      parameters: { dimension: embCfg.dimensions ?? 1024 },
+    })
+  } else {
+    url = API_URL
+    const isMultimodal = API_URL.includes('multimodal')
+    const input = isMultimodal
+      ? [{ type: 'text', text: 'hello world' }]
+      : ['hello world']
+    body = JSON.stringify({ model: MODEL, input })
+  }
+
+  console.log(`  URL: ${url}`)
   console.log(`  Body: ${body}`)
 
-  const res = await fetch(API_URL, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -73,24 +88,41 @@ async function testRawFetch() {
   assert(res.ok, `HTTP ${res.status} should be 200`)
 
   const json = await res.json() as any
-  console.log(`  Response keys: ${Object.keys(json).join(', ')}`)
-  console.log(`  data length: ${json.data?.length}`)
 
-  assert(Array.isArray(json.data), 'response.data should be an array')
-  assert(json.data.length > 0, 'response.data should have at least 1 entry')
-
-  const embedding = json.data[0].embedding
-  assert(Array.isArray(embedding), 'data[0].embedding should be an array')
-  assert(embedding.length > 0, `embedding dimension = ${embedding.length}`)
-  assert(typeof embedding[0] === 'number', 'embedding values should be numbers')
-
-  console.log(`  Embedding dims: ${embedding.length}`)
-  console.log(`  First 5 values: [${embedding.slice(0, 5).map((v: number) => v.toFixed(6)).join(', ')}]`)
+  if (isDashscope) {
+    console.log(`  Response keys: ${Object.keys(json).join(', ')}`)
+    assert(json.output !== undefined, 'response should have output field')
+    const embeddings = json.output.embeddings
+    assert(Array.isArray(embeddings), 'output.embeddings should be an array')
+    assert(embeddings.length > 0, 'output.embeddings should have at least 1 entry')
+    const embedding = embeddings[0].embedding
+    assert(Array.isArray(embedding), 'embeddings[0].embedding should be an array')
+    assert(embedding.length > 0, `embedding dimension = ${embedding.length}`)
+    assert(typeof embedding[0] === 'number', 'embedding values should be numbers')
+    console.log(`  Embedding dims: ${embedding.length}`)
+    console.log(`  First 5 values: [${embedding.slice(0, 5).map((v: number) => v.toFixed(6)).join(', ')}]`)
+  } else {
+    console.log(`  Response keys: ${Object.keys(json).join(', ')}`)
+    console.log(`  data length: ${json.data?.length}`)
+    assert(Array.isArray(json.data), 'response.data should be an array')
+    assert(json.data.length > 0, 'response.data should have at least 1 entry')
+    const embedding = json.data[0].embedding
+    assert(Array.isArray(embedding), 'data[0].embedding should be an array')
+    assert(embedding.length > 0, `embedding dimension = ${embedding.length}`)
+    assert(typeof embedding[0] === 'number', 'embedding values should be numbers')
+    console.log(`  Embedding dims: ${embedding.length}`)
+    console.log(`  First 5 values: [${embedding.slice(0, 5).map((v: number) => v.toFixed(6)).join(', ')}]`)
+  }
 }
 
 // ---- Test 2: OpenAIEmbeddingProvider.embedQuery (single text) ----
 async function testEmbedQuery() {
   console.log('\n[Test 2] OpenAIEmbeddingProvider.embedQuery')
+
+  if (providerConfig.embedding.apiType === 'dashscope') {
+    console.log('  SKIP: dashscope provider uses DashscopeEmbeddingProvider, not OpenAI')
+    return
+  }
 
   const provider = new OpenAIEmbeddingProvider({
     apiKey: API_KEY,
@@ -111,6 +143,11 @@ async function testEmbedQuery() {
 // ---- Test 3: embedBatch (multiple texts) ----
 async function testEmbedBatch() {
   console.log('\n[Test 3] OpenAIEmbeddingProvider.embedBatch')
+
+  if (providerConfig.embedding.apiType === 'dashscope') {
+    console.log('  SKIP: dashscope provider uses DashscopeEmbeddingProvider, not OpenAI')
+    return
+  }
 
   const provider = new OpenAIEmbeddingProvider({
     apiKey: API_KEY,
@@ -161,6 +198,11 @@ async function testFactory() {
 async function testEmptyBatch() {
   console.log('\n[Test 5] Empty batch edge case')
 
+  if (providerConfig.embedding.apiType === 'dashscope') {
+    console.log('  SKIP: dashscope provider uses DashscopeEmbeddingProvider, not OpenAI')
+    return
+  }
+
   const provider = new OpenAIEmbeddingProvider({
     apiKey: API_KEY,
     model: MODEL,
@@ -169,6 +211,122 @@ async function testEmptyBatch() {
 
   const result = await provider.embedBatch([])
   assert(result.length === 0, 'empty input returns empty output')
+}
+
+// ---- Test 6: DashscopeEmbeddingProvider text-only ----
+async function testDashscopeTextOnly() {
+  console.log('\n[Test 6] DashscopeEmbeddingProvider text-only')
+
+  const embCfg = providerConfig.embedding
+  if (embCfg.apiType !== 'dashscope') {
+    console.log('  SKIP: current provider is not dashscope')
+    return
+  }
+
+  const { DashscopeEmbeddingProvider } = await import('../src/memory/embedding.js')
+  const provider = new DashscopeEmbeddingProvider({
+    apiKey: API_KEY,
+    model: MODEL,
+    dimensions: embCfg.dimensions,
+  })
+
+  const embedding = await provider.embedQuery('Linux kernel memory management')
+  assert(Array.isArray(embedding), 'embedQuery returns an array')
+  assert(embedding.length > 0, `dimension = ${embedding.length}`)
+
+  const norm = Math.sqrt(embedding.reduce((s, v) => s + v * v, 0))
+  assert(Math.abs(norm - 1.0) < 0.01, `L2 norm = ${norm.toFixed(6)} (should be ~1.0)`)
+}
+
+// ---- Test 7: DashscopeEmbeddingProvider multimodal ----
+async function testDashscopeMultimodal() {
+  console.log('\n[Test 7] DashscopeEmbeddingProvider multimodal (text + image)')
+
+  const embCfg = providerConfig.embedding
+  if (embCfg.apiType !== 'dashscope') {
+    console.log('  SKIP: current provider is not dashscope')
+    return
+  }
+
+  const { DashscopeEmbeddingProvider } = await import('../src/memory/embedding.js')
+  const provider = new DashscopeEmbeddingProvider({
+    apiKey: API_KEY,
+    model: MODEL,
+    dimensions: embCfg.dimensions,
+  })
+
+  // Create a tiny 1x1 red PNG as test image
+  const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=='
+  const dataUri = `data:image/png;base64,${tinyPng}`
+
+  const inputs = [
+    { text: 'A screenshot of the desktop', images: [dataUri] },
+    { text: 'Pure text without images' },
+  ]
+
+  const embeddings = await provider.embedMultimodal(inputs)
+  assert(embeddings.length === 2, `got ${embeddings.length} embeddings for 2 inputs`)
+
+  for (let i = 0; i < embeddings.length; i++) {
+    assert(embeddings[i].length > 0, `embedding[${i}] has dimension ${embeddings[i].length}`)
+    const norm = Math.sqrt(embeddings[i].reduce((s, v) => s + v * v, 0))
+    assert(Math.abs(norm - 1.0) < 0.01, `embedding[${i}] L2 norm = ${norm.toFixed(6)}`)
+  }
+
+  const dims = new Set(embeddings.map(e => e.length))
+  assert(dims.size === 1, `all embeddings have same dimension: ${[...dims].join(', ')}`)
+}
+
+// ---- Test 8: Factory creates DashscopeEmbeddingProvider for apiType='dashscope' ----
+async function testFactoryDashscope() {
+  console.log('\n[Test 8] Factory creates DashscopeEmbeddingProvider for dashscope apiType')
+
+  const embCfg = providerConfig.embedding
+  if (embCfg.apiType !== 'dashscope') {
+    console.log('  SKIP: current provider is not dashscope')
+    return
+  }
+
+  const provider = createEmbeddingProvider(embeddingProviderName, config)
+  assert(provider !== null, 'factory returns a provider')
+  assert(provider!.id === 'dashscope', `provider.id = ${provider!.id} (expected dashscope)`)
+  assert(provider!.multimodal === true, `provider.multimodal = ${provider!.multimodal}`)
+  assert(provider!.model === MODEL, `model = ${provider!.model}`)
+}
+
+// ---- Test 9: DashscopeEmbeddingProvider embedBatch ----
+async function testDashscopeBatch() {
+  console.log('\n[Test 9] DashscopeEmbeddingProvider.embedBatch')
+
+  const embCfg = providerConfig.embedding
+  if (embCfg.apiType !== 'dashscope') {
+    console.log('  SKIP: current provider is not dashscope')
+    return
+  }
+
+  const { DashscopeEmbeddingProvider } = await import('../src/memory/embedding.js')
+  const provider = new DashscopeEmbeddingProvider({
+    apiKey: API_KEY,
+    model: MODEL,
+    dimensions: embCfg.dimensions,
+  })
+
+  const texts = [
+    'Process scheduling in operating systems',
+    'Virtual memory page tables',
+    'File system inode structure',
+  ]
+
+  const embeddings = await provider.embedBatch(texts)
+  assert(embeddings.length === texts.length, `got ${embeddings.length} embeddings for ${texts.length} texts`)
+
+  for (let i = 0; i < embeddings.length; i++) {
+    const norm = Math.sqrt(embeddings[i].reduce((s, v) => s + v * v, 0))
+    assert(Math.abs(norm - 1.0) < 0.01, `embedding[${i}] L2 norm = ${norm.toFixed(6)}`)
+  }
+
+  const emptyResult = await provider.embedBatch([])
+  assert(emptyResult.length === 0, 'empty input returns empty output')
 }
 
 // ---- Run all ----
@@ -183,6 +341,10 @@ async function main() {
     await testEmbedBatch()
     await testFactory()
     await testEmptyBatch()
+    await testDashscopeTextOnly()
+    await testDashscopeMultimodal()
+    await testFactoryDashscope()
+    await testDashscopeBatch()
   } catch (err) {
     console.error('\nUNEXPECTED ERROR:', err)
     failed++

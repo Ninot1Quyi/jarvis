@@ -1,4 +1,6 @@
 import type { Tool } from '../../types.js'
+import * as fs from 'fs'
+import * as path from 'path'
 
 // MemorySystem will be injected at runtime
 let memorySystem: any = null
@@ -97,8 +99,8 @@ const memoryReadTool: Tool = {
     const lines = args.lines as number | undefined
 
     // Security: only allow MEMORY.md and memory/*.md
-    if (!relPath.match(/^(MEMORY\.md|memory\/[^/]+\.md|traces\/[^/]+\.md)$/)) {
-      return { success: false, error: 'Invalid path. Only MEMORY.md, memory/*.md, and traces/*.md are allowed.' }
+    if (!relPath.match(/^(MEMORY\.md|memory\/[^/]+\.md|traces\/[^/]+\.(md|jsonl))$/)) {
+      return { success: false, error: 'Invalid path. Only MEMORY.md, memory/*.md, and traces/*.{md,jsonl} are allowed.' }
     }
 
     try {
@@ -113,4 +115,55 @@ const memoryReadTool: Tool = {
   },
 }
 
-export const memoryTools: Tool[] = [memorySearchTool, memoryReadTool]
+const memoryWriteTool: Tool = {
+  definition: {
+    name: 'memory_write',
+    description: 'Write important information to long-term memory. Use for saving learnings, preferences, task outcomes, or any knowledge worth remembering.',
+    parameters: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description: 'Memory content to write (markdown format)',
+        },
+        file: {
+          type: 'string',
+          description: 'Target file: "MEMORY.md" for persistent notes, or omit for daily log',
+        },
+      },
+      required: ['content'],
+    },
+  },
+  async execute(args) {
+    if (!memorySystem) {
+      return { success: false, error: 'Memory system not initialized' }
+    }
+    const content = args.content as string
+    const file = args.file as string | undefined
+
+    try {
+      const dataDir = memorySystem.dataDir || path.join(process.cwd(), 'data')
+      const now = new Date()
+      const timeHeader = `### ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+      const block = `\n${timeHeader}\n\n${content}\n`
+
+      let targetPath: string
+      if (file === 'MEMORY.md') {
+        targetPath = path.join(dataDir, 'MEMORY.md')
+      } else {
+        const dateStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`
+        const memoryDir = path.join(dataDir, 'memory')
+        if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true })
+        targetPath = path.join(memoryDir, `${dateStr}.md`)
+      }
+
+      fs.appendFileSync(targetPath, block)
+      const relPath = path.relative(dataDir, targetPath)
+      return { success: true, message: `Written to ${relPath}` }
+    } catch (error) {
+      return { success: false, error: `Memory write failed: ${(error as Error).message}` }
+    }
+  },
+}
+
+export const memoryTools: Tool[] = [memorySearchTool, memoryReadTool, memoryWriteTool]

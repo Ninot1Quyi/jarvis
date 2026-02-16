@@ -1,12 +1,16 @@
 // ---- Interfaces ----
 
+import type { MultimodalInput } from './types.js'
+
 export interface EmbeddingProvider {
   readonly id: string
   readonly model: string
   readonly dimensions: number
   readonly maxInputTokens: number
+  readonly multimodal?: boolean
   embedQuery(text: string): Promise<number[]>
   embedBatch(texts: string[]): Promise<number[][]>
+  embedMultimodal?(inputs: MultimodalInput[]): Promise<number[][]>
 }
 
 // ---- Constants ----
@@ -15,8 +19,21 @@ const EMBEDDING_BATCH_MAX_TOKENS = 8000
 const RETRY_MAX_ATTEMPTS = 3
 const RETRY_BASE_DELAY_MS = 500
 const RETRY_MAX_DELAY_MS = 8000
+const EMBEDDING_QUERY_TIMEOUT_MS = 60_000
+const EMBEDDING_BATCH_TIMEOUT_MS = 120_000
 
 // ---- Helpers ----
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
@@ -98,8 +115,11 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedQuery(text: string): Promise<number[]> {
-    const results = await this.embedBatch([text])
-    return results[0]
+    return withTimeout(
+      this.embedBatch([text]).then(r => r[0]),
+      EMBEDDING_QUERY_TIMEOUT_MS,
+      `embedding query timed out after ${Math.round(EMBEDDING_QUERY_TIMEOUT_MS / 1000)}s`
+    )
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -109,12 +129,19 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     const batches = groupIntoBatches(truncated)
     const allEmbeddings: number[][] = []
 
-    for (const batch of batches) {
-      const embeddings = await this.callAPI(batch)
-      allEmbeddings.push(...embeddings)
+    const work = async () => {
+      for (const batch of batches) {
+        const embeddings = await this.callAPI(batch)
+        allEmbeddings.push(...embeddings)
+      }
+      return allEmbeddings
     }
 
-    return allEmbeddings
+    return withTimeout(
+      work(),
+      EMBEDDING_BATCH_TIMEOUT_MS,
+      `embedding batch timed out after ${Math.round(EMBEDDING_BATCH_TIMEOUT_MS / 1000)}s`
+    )
   }
 
   private get isMultimodal(): boolean {
@@ -237,6 +264,175 @@ function retryDelay(attempt: number): number {
   return Math.round(capped * jitter)
 }
 
+// ---- Dashscope Multimodal Provider ----
+
+interface DashscopeEmbeddingResponse {
+  output: {
+    embeddings: Array<{ index: number; embedding: number[]; type: string }>
+  }
+}
+
+export class DashscopeEmbeddingProvider implements EmbeddingProvider {
+  readonly id = 'dashscope'
+  readonly model: string
+  readonly dimensions: number
+  readonly maxInputTokens = 8192
+  readonly multimodal = true
+
+  private readonly apiKey: string
+  private readonly apiUrl = 'https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding'
+
+  constructor(options: { apiKey: string; model?: string; dimensions?: number }) {
+    this.apiKey = options.apiKey
+    this.model = options.model ?? 'qwen3-vl-embedding'
+    this.dimensions = options.dimensions ?? 1024
+  }
+
+  async embedQuery(text: string): Promise<number[]> {
+    return withTimeout(
+      this.callAPI([{ text }]).then(r => r[0]),
+      EMBEDDING_QUERY_TIMEOUT_MS,
+      `dashscope embedding query timed out after ${Math.round(EMBEDDING_QUERY_TIMEOUT_MS / 1000)}s`
+    )
+  }
+
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) return []
+    const contents = texts.map(t => ({ text: truncateToMaxTokens(t, this.maxInputTokens) }))
+    return withTimeout(
+      this.callAPI(contents),
+      EMBEDDING_BATCH_TIMEOUT_MS,
+      `dashscope embedding batch timed out after ${Math.round(EMBEDDING_BATCH_TIMEOUT_MS / 1000)}s`
+    )
+  }
+
+  async embedMultimodal(inputs: MultimodalInput[]): Promise<number[][]> {
+    if (inputs.length === 0) return []
+
+    const work = async (): Promise<number[][]> => {
+      const contents: Array<Record<string, string>> = []
+      // Track which original input index each content entry maps to
+      const indexMap: number[] = []
+
+      for (let i = 0; i < inputs.length; i++) {
+        const inp = inputs[i]
+        const text = truncateToMaxTokens(inp.text, this.maxInputTokens)
+
+        if (!inp.images || inp.images.length === 0) {
+          contents.push({ text })
+          indexMap.push(i)
+        } else {
+          // First image fused with text
+          contents.push({ text, image: inp.images[0] })
+          indexMap.push(i)
+          // Additional images as standalone entries (rare, but handle it)
+          for (let j = 1; j < inp.images.length; j++) {
+            contents.push({ image: inp.images[j] })
+            indexMap.push(i)
+          }
+        }
+      }
+
+      const rawEmbeddings = await this.callAPI(contents)
+
+      // Merge: if multiple entries map to the same input, average them
+      const result: number[][] = new Array(inputs.length)
+      const counts: number[] = new Array(inputs.length).fill(0)
+
+      for (let k = 0; k < rawEmbeddings.length; k++) {
+        const idx = indexMap[k]
+        if (counts[idx] === 0) {
+          result[idx] = rawEmbeddings[k]
+        } else {
+          for (let d = 0; d < rawEmbeddings[k].length; d++) {
+            result[idx][d] += rawEmbeddings[k][d]
+          }
+        }
+        counts[idx]++
+      }
+
+      // Normalize averaged vectors
+      for (let i = 0; i < result.length; i++) {
+        if (counts[i] > 1) {
+          result[i] = result[i].map(v => v / counts[i])
+        }
+        result[i] = l2Normalize(result[i])
+      }
+
+      return result
+    }
+
+    return withTimeout(
+      work(),
+      EMBEDDING_BATCH_TIMEOUT_MS,
+      `dashscope multimodal embedding timed out after ${Math.round(EMBEDDING_BATCH_TIMEOUT_MS / 1000)}s`
+    )
+  }
+
+  private async callAPI(contents: Array<Record<string, string>>): Promise<number[][]> {
+    // Dashscope batches up to 20 contents per request
+    const BATCH_SIZE = 20
+    const allEmbeddings: number[][] = []
+
+    for (let i = 0; i < contents.length; i += BATCH_SIZE) {
+      const batch = contents.slice(i, i + BATCH_SIZE)
+      const embeddings = await this.callAPISingle(batch)
+      allEmbeddings.push(...embeddings)
+    }
+
+    return allEmbeddings
+  }
+
+  private async callAPISingle(contents: Array<Record<string, string>>): Promise<number[][]> {
+    const body = JSON.stringify({
+      model: this.model,
+      input: { contents },
+      parameters: { dimension: this.dimensions },
+    })
+
+    let lastError: Error | null = null
+
+    for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(this.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+          body,
+        })
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          const err = new Error(`Dashscope embedding API error ${res.status}: ${text}`)
+          if (isRetryable(res.status) && attempt < RETRY_MAX_ATTEMPTS - 1) {
+            lastError = err
+            await sleep(retryDelay(attempt))
+            continue
+          }
+          throw err
+        }
+
+        const json = (await res.json()) as DashscopeEmbeddingResponse
+        // Sort by index to ensure correct order
+        const sorted = json.output.embeddings.sort((a, b) => a.index - b.index)
+        return sorted.map(d => l2Normalize(d.embedding))
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+        if (attempt < RETRY_MAX_ATTEMPTS - 1 && isNetworkError(lastError)) {
+          await sleep(retryDelay(attempt))
+          continue
+        }
+        if (attempt === RETRY_MAX_ATTEMPTS - 1) break
+        throw lastError
+      }
+    }
+
+    throw lastError ?? new Error('dashscope embedding request failed after retries')
+  }
+}
+
 // ---- Factory ----
 
 import type { KeyConfig, ProviderConfig } from '../types.js'
@@ -245,11 +441,21 @@ export function createEmbeddingProvider(providerName: string, keys: KeyConfig): 
   if (!providerName || providerName === 'none') return null
   const provider = keys[providerName] as ProviderConfig | undefined
   if (!provider?.apiKey || !provider?.embedding?.model) return null
-  // All OpenAI-compatible APIs (including doubao, openai, etc.) use OpenAIEmbeddingProvider
+
+  const embCfg = provider.embedding
+  if (embCfg.apiType === 'dashscope') {
+    return new DashscopeEmbeddingProvider({
+      apiKey: provider.apiKey,
+      model: embCfg.model,
+      dimensions: embCfg.dimensions,
+    })
+  }
+
+  // Default: OpenAI-compatible
   return new OpenAIEmbeddingProvider({
     apiKey: provider.apiKey,
     baseUrl: provider.baseUrl,
-    model: provider.embedding.model,
-    apiUrl: provider.embedding.baseUrl,
+    model: embCfg.model,
+    apiUrl: embCfg.baseUrl,
   })
 }

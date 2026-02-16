@@ -3,10 +3,13 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import { MemoryDB } from './db.js'
 import { MemoryWatcher } from './watcher.js'
+import { logger } from '../utils/logger.js'
 import { mergeHybridResults, DEFAULT_SEARCH_OPTIONS, type HybridSearchOptions } from './search.js'
 import { createEmbeddingProvider, type EmbeddingProvider } from './embedding.js'
-import type { SearchResult, MemoryFileEntry, MemoryConfig, EmbeddingCacheEntry } from './types.js'
+import type { SearchResult, MemoryFileEntry, MemoryConfig, EmbeddingCacheEntry, MultimodalInput } from './types.js'
 import type { KeyConfig } from '../types.js'
+import { MemoryAgent, type MemoryAgentConfig } from './memory-agent.js'
+import { buildTaskEntry, listTaskFiles, type IncrementalState } from './task-files.js'
 
 export { type SearchResult, type Chunk, type MemoryFileEntry, type IndexMeta, type EmbeddingCacheEntry, type MemoryConfig } from './types.js'
 export { type HybridSearchOptions, DEFAULT_SEARCH_OPTIONS } from './search.js'
@@ -17,9 +20,12 @@ export class MemorySystem {
   private dataDir: string
   private dirty: boolean = false
   private syncingPromise: Promise<void> | null = null
-  private fileSizes: Map<string, number> = new Map()
-  private readonly DELTA_BYTES_THRESHOLD = 100_000
+  private taskStates: Map<string, IncrementalState> = new Map()
+  private syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly SYNC_DEBOUNCE_MS = 5000
   embeddingProvider: EmbeddingProvider | null = null
+  private memoryAgent: MemoryAgent | null = null
+  private providerKey: string = ''
 
   private constructor(dataDir: string, db: MemoryDB) {
     this.dataDir = dataDir
@@ -44,6 +50,22 @@ export class MemorySystem {
     // Create embedding provider if configured
     if (keys?.memory?.embeddingProvider) {
       system.embeddingProvider = createEmbeddingProvider(keys.memory.embeddingProvider, keys)
+      system.providerKey = system.computeProviderKey(keys)
+    }
+
+    if (keys?.memory?.memoryAgent) {
+      system.memoryAgent = new MemoryAgent(keys.memory.memoryAgent as MemoryAgentConfig, keys)
+    }
+
+    // Detect dimension change: if provider dimensions differ from stored, reset all embeddings
+    if (system.embeddingProvider) {
+      const meta = db.getMeta()
+      if (meta?.vectorDims && meta.vectorDims !== system.embeddingProvider.dimensions) {
+        console.log(`Embedding dimensions changed (${meta.vectorDims} -> ${system.embeddingProvider.dimensions}), rebuilding vector index...`)
+        db.resetAllEmbeddings()
+        meta.vectorDims = undefined
+        db.setMeta(meta)
+      }
     }
 
     // 4. Initial sync
@@ -59,25 +81,22 @@ export class MemorySystem {
       onFileChanged: (absolutePath: string) => {
         const relativePath = path.relative(dataDir, absolutePath)
 
-        // Delta threshold for trace files: only re-index if file grew significantly
-        if (relativePath.startsWith('traces/')) {
-          try {
-            const stat = fs.statSync(absolutePath)
-            const prevSize = system.fileSizes.get(relativePath) ?? 0
-            if (stat.size - prevSize < system.DELTA_BYTES_THRESHOLD) return
-            system.fileSizes.set(relativePath, stat.size)
-          } catch { return }
+        if (relativePath.startsWith('traces/') && relativePath.endsWith('.jsonl')) {
+          // Debounce: reset timer on every change, sync after pause
+          if (system.syncDebounceTimer) clearTimeout(system.syncDebounceTimer)
+          system.syncDebounceTimer = setTimeout(() => {
+            system.syncDebounceTimer = null
+            logger.info('Memory: debounce sync triggered')
+            system.syncTasks().catch((e) => logger.warn(`Memory: debounce sync failed: ${e}`))
+          }, system.SYNC_DEBOUNCE_MS)
+          system.dirty = true
+          return
         }
 
         try {
-          const chunkOpts = relativePath.startsWith('traces/')
-            ? { onlyHeadings: ['USER', 'ASSISTANT'] }
-            : undefined
-          system.db.indexFile(absolutePath, relativePath, chunkOpts)
+          system.db.indexFile(absolutePath, relativePath)
           system.dirty = true
-        } catch {
-          // Silently ignore indexing errors from watcher
-        }
+        } catch {}
       },
       onFileRemoved: (absolutePath: string) => {
         const relativePath = path.relative(dataDir, absolutePath)
@@ -107,22 +126,16 @@ export class MemorySystem {
     // Index new/changed files
     for (const entry of memoryFiles) {
       const relativePath = path.relative(this.dataDir, entry.path)
-      const chunkOpts = relativePath.startsWith('traces/')
-        ? { onlyHeadings: ['USER', 'ASSISTANT'] }
-        : undefined
-      this.db.indexFile(entry.path, relativePath, chunkOpts)
+      this.db.indexFile(entry.path, relativePath)
       indexedPaths.delete(relativePath)
-
-      // Track file sizes for delta threshold
-      if (relativePath.startsWith('traces/')) {
-        this.fileSizes.set(relativePath, entry.size)
-      }
     }
 
     // Remove stale entries (files that no longer exist)
     for (const stalePath of indexedPaths) {
       this.db.removeFile(stalePath)
     }
+
+    await this.syncTasks()
 
     this.dirty = false
   }
@@ -163,26 +176,35 @@ export class MemorySystem {
       }
     }
 
-    // 3. traces/*.md (session transcripts)
+    return entries
+  }
+
+  private async syncTasks(): Promise<void> {
     const tracesDir = path.join(this.dataDir, 'traces')
-    if (fs.existsSync(tracesDir)) {
-      const dirEntries = fs.readdirSync(tracesDir, { withFileTypes: true })
-      for (const entry of dirEntries) {
-        if (entry.isFile() && entry.name.endsWith('.md')) {
-          const filePath = path.join(tracesDir, entry.name)
-          const stat = fs.statSync(filePath)
-          const content = fs.readFileSync(filePath, 'utf-8')
-          entries.push({
-            path: filePath,
-            hash: crypto.createHash('sha256').update(content).digest('hex'),
-            mtime: stat.mtimeMs,
-            size: stat.size,
-          })
-        }
+    const jsonlFiles = listTaskFiles(tracesDir)
+    const indexedPaths = new Set(
+      this.db.getIndexedPaths().filter(p => p.startsWith('traces/') && p.endsWith('.jsonl'))
+    )
+
+    for (const absPath of jsonlFiles) {
+      const relativePath = path.relative(this.dataDir, absPath)
+      const compressor = this.memoryAgent
+        ? this.memoryAgent.compressToolCalls.bind(this.memoryAgent)
+        : undefined
+      const prevState = this.taskStates.get(absPath)
+      const { entry, state } = await buildTaskEntry(absPath, compressor, prevState)
+      this.taskStates.set(absPath, state)
+      if (!entry) {
+        indexedPaths.delete(relativePath)
+        continue
       }
+      this.db.indexTaskEntry(entry)
+      indexedPaths.delete(relativePath)
     }
 
-    return entries
+    for (const stalePath of indexedPaths) {
+      this.db.removeFile(stalePath)
+    }
   }
 
   // Search memory using BM25, awaits sync if dirty
@@ -240,10 +262,11 @@ export class MemorySystem {
     const cache = this.db.getEmbeddingCache(
       this.embeddingProvider.id,
       this.embeddingProvider.model,
+      this.providerKey,
       chunks.map(c => c.hash)
     )
 
-    const uncached: Array<{ id: string; hash: string; content: string }> = []
+    const uncached: Array<{ id: string; hash: string; content: string; path: string }> = []
     for (const chunk of chunks) {
       const cached = cache.get(chunk.hash)
       if (cached) {
@@ -257,8 +280,17 @@ export class MemorySystem {
 
     // Batch embed uncached chunks
     try {
-      const texts = uncached.map(c => c.content)
-      const embeddings = await this.embeddingProvider.embedBatch(texts)
+      let embeddings: number[][]
+
+      if (this.embeddingProvider.multimodal && this.embeddingProvider.embedMultimodal) {
+        // Multimodal path: extract images from markdown, build MultimodalInput
+        const inputs = uncached.map(c => this.extractImages(c.content, c.path))
+        embeddings = await this.embeddingProvider.embedMultimodal(inputs)
+      } else {
+        // Text-only path
+        const texts = uncached.map(c => c.content)
+        embeddings = await this.embeddingProvider.embedBatch(texts)
+      }
 
       const cacheEntries: EmbeddingCacheEntry[] = []
       for (let i = 0; i < uncached.length; i++) {
@@ -266,6 +298,7 @@ export class MemorySystem {
         cacheEntries.push({
           provider: this.embeddingProvider.id,
           model: this.embeddingProvider.model,
+          providerKey: this.providerKey,
           hash: uncached[i].hash,
           embedding: embeddings[i],
           dims: embeddings[i].length,
@@ -289,14 +322,62 @@ export class MemorySystem {
     }
   }
 
+  // Extract image references from markdown content and read them as base64
+  private extractImages(content: string, chunkPath: string): MultimodalInput {
+    const images: string[] = []
+    const text = content.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt: string, imgPath: string) => {
+      const resolved = this.resolveImagePath(imgPath, chunkPath)
+      if (resolved && fs.existsSync(resolved)) {
+        try {
+          const ext = path.extname(resolved).slice(1).toLowerCase() || 'png'
+          const mime = ext === 'jpg' ? 'jpeg' : ext
+          const b64 = fs.readFileSync(resolved).toString('base64')
+          images.push(`data:image/${mime};base64,${b64}`)
+        } catch {
+          // File read failed, skip this image
+        }
+      }
+      return alt || ''
+    })
+    return { text: text.trim(), images: images.length > 0 ? images : undefined }
+  }
+
+  // Resolve a relative image path from a markdown file to an absolute path
+  private resolveImagePath(imgPath: string, chunkPath: string): string | null {
+    if (imgPath.startsWith('data:') || imgPath.startsWith('http')) return null
+    const fileDir = path.dirname(path.join(this.dataDir, chunkPath))
+    return path.resolve(fileDir, imgPath)
+  }
+
   // Get system status
   status(): { files: number; chunks: number; dirty: boolean; embeddingsReady: boolean } {
     const dbStatus = this.db.status()
     return { ...dbStatus, dirty: this.dirty, embeddingsReady: this.embeddingProvider !== null }
   }
 
+  // Compute a stable key from provider config to isolate embedding caches across different API endpoints
+  private computeProviderKey(keys: KeyConfig): string {
+    if (!this.embeddingProvider) return ''
+    const providerName = keys.memory?.embeddingProvider ?? ''
+    const providerConfig = keys[providerName] as Record<string, unknown> | undefined
+    const raw = JSON.stringify({
+      provider: this.embeddingProvider.id,
+      model: this.embeddingProvider.model,
+      baseUrl: providerConfig?.baseUrl ?? '',
+      apiType: providerConfig?.apiType ?? '',
+    })
+    return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16)
+  }
+
   // Clean shutdown
-  close(): void {
+  async close(): Promise<void> {
+    if (this.syncDebounceTimer) {
+      clearTimeout(this.syncDebounceTimer)
+      this.syncDebounceTimer = null
+    }
+    logger.info('Memory: final sync before close...')
+    await this.syncTasks().catch((e) => logger.warn(`Memory: final sync failed: ${e}`))
+    logger.info('Memory: closed')
     this.watcher.close()
     this.db.close()
   }

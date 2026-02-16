@@ -1,3 +1,5 @@
+export type MemorySource = 'memory' | 'tasks'
+
 export interface MemoryFileEntry {
   path: string;      // absolute path
   hash: string;      // SHA-256 hex
@@ -20,6 +22,7 @@ export interface SearchResult {
   startLine: number;
   endLine: number;
   score: number;            // 0-1 normalized
+  source?: MemorySource;
 }
 
 export interface IndexMeta {
@@ -30,9 +33,15 @@ export interface IndexMeta {
   vectorDims?: number;
 }
 
+export interface MultimodalInput {
+  text: string
+  images?: string[]  // base64 data URIs: "data:image/png;base64,..."
+}
+
 export interface EmbeddingCacheEntry {
   provider: string;
   model: string;
+  providerKey: string;
   hash: string;
   embedding: number[];
   dims: number;

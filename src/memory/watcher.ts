@@ -13,7 +13,7 @@ export class MemoryWatcher {
     const watchPaths = [
       path.join(dataDir, 'MEMORY.md'),
       path.join(dataDir, 'memory', '*.md'),
-      path.join(dataDir, 'traces', '*.md'),
+      path.join(dataDir, 'traces', '*.jsonl'),
     ]
 
     this.watcher = watch(watchPaths, {

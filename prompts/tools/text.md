@@ -18,7 +18,7 @@
 ## Available Tools
 
 ### Skill Tools
-- skill: Load a skill to get detailed instructions. Args: {"name": "skill_name"}
+- activate_skill: Load a skill to get detailed instructions. Args: {"name": "skill_name"}
 - list_skills: List all available skills with descriptions. Args: {}
 
 ### UI Search Tools

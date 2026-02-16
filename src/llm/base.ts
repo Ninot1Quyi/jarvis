@@ -84,11 +84,11 @@ export abstract class BaseLLMProvider implements LLMProvider {
     const systemMessage = messages.find(m => m.role === 'system')
     const nonSystemMessages = messages.filter(m => m.role !== 'system')
 
-    // Find last user message index (for image attachment)
-    let lastUserIndex = -1
+    // Find last user/computer message index (for image attachment)
+    let lastInputIndex = -1
     for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
-      if (nonSystemMessages[i].role === 'user') {
-        lastUserIndex = i
+      if (nonSystemMessages[i].role === 'user' || nonSystemMessages[i].role === 'computer') {
+        lastInputIndex = i
         break
       }
     }
@@ -126,7 +126,7 @@ export abstract class BaseLLMProvider implements LLMProvider {
       const content = this.formatContent(msg.content)
 
       // Check if this message has images
-      const hasImages = i === lastUserIndex && images.length > 0
+      const hasImages = i === lastInputIndex && images.length > 0
 
       // Log to console
       logger.debug(`${color}[MSG ${msgIndex}] ${role}:\n${content}${RESET}`)
@@ -150,6 +150,15 @@ export abstract class BaseLLMProvider implements LLMProvider {
             traceLogger.addUser(content, traceImages.length > 0 ? traceImages : undefined)
           } else {
             traceLogger.addUser(content)
+          }
+        } else if (msg.role === 'computer') {
+          if (hasImages) {
+            const traceImages = images
+              .filter(img => img.type === 'path')
+              .map(img => ({ name: img.name, path: img.data }))
+            traceLogger.addComputer(content, traceImages.length > 0 ? traceImages : undefined)
+          } else {
+            traceLogger.addComputer(content)
           }
         }
       }
