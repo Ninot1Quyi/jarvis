@@ -1,7 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
-import type { KeyConfig, JarvisConfig } from '../types.js'
+import type { KeyConfig, JarvisConfig, ProviderConfig } from '../types.js'
+import { logger } from './logger.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.resolve(__dirname, '..', '..')
@@ -123,6 +124,162 @@ export function fillTemplate(template: string, vars: Record<string, string>): st
     result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value)
   }
   return result
+}
+
+// ---- Context window resolution ----
+
+const FETCH_TIMEOUT = 8000  // ms
+
+// ---- Layer 1: Provider's own /models API ----
+
+interface ProviderModelEntry {
+  id: string
+  token_limits?: { context_window?: number }
+  context_length?: number
+}
+
+/**
+ * Fetch context_window from the provider's own /models endpoint.
+ * Supports OpenAI-compatible APIs (doubao, qwen, openai, ollama, etc).
+ * Looks for token_limits.context_window (doubao) or context_length (others).
+ */
+async function fetchProviderContextWindow(providerConfig: ProviderConfig, model: string): Promise<number | undefined> {
+  if (!providerConfig.baseUrl || !model) return undefined
+  // Only try for OpenAI-compatible providers
+  if (providerConfig.apiType === 'anthropic') return undefined
+
+  const url = `${providerConfig.baseUrl}/models`
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT)
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'Authorization': `Bearer ${providerConfig.apiKey}` },
+    })
+    clearTimeout(timer)
+
+    if (!res.ok) return undefined
+
+    const json = await res.json() as { data: ProviderModelEntry[] }
+    if (!json.data || !Array.isArray(json.data)) return undefined
+
+    const entry = json.data.find(m => m.id === model)
+    if (!entry) return undefined
+
+    // doubao style: token_limits.context_window
+    if (entry.token_limits?.context_window) {
+      return entry.token_limits.context_window
+    }
+    // OpenRouter/others style: context_length
+    if (entry.context_length) {
+      return entry.context_length
+    }
+
+    return undefined
+  } catch {
+    // Network error, timeout, parse error - all fine, just fall through
+    return undefined
+  }
+}
+
+// ---- Layer 2: OpenRouter lookup ----
+
+const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models'
+
+let openRouterCache: Map<string, number> | null = null
+
+/**
+ * Fetch all models from OpenRouter and cache as Map<modelShortName, context_length>.
+ * Returns empty map on failure (network error, timeout, etc).
+ */
+async function fetchOpenRouterModels(): Promise<Map<string, number>> {
+  if (openRouterCache) return openRouterCache
+
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT)
+    const res = await fetch(OPENROUTER_MODELS_URL, { signal: controller.signal })
+    clearTimeout(timer)
+
+    const json = await res.json() as { data: Array<{ id: string; context_length: number }> }
+    const map = new Map<string, number>()
+    for (const m of json.data) {
+      map.set(m.id, m.context_length)
+      const slash = m.id.indexOf('/')
+      if (slash !== -1) {
+        map.set(m.id.slice(slash + 1), m.context_length)
+      }
+    }
+    openRouterCache = map
+    logger.info(`[contextWindow] OpenRouter: cached ${map.size} model entries`)
+    return map
+  } catch (err) {
+    logger.warn(`[contextWindow] OpenRouter fetch failed: ${err instanceof Error ? err.message : err}`)
+    return new Map()
+  }
+}
+
+/**
+ * Look up model in OpenRouter cache. Tries exact match on short name,
+ * then prefix match (our model starts with a cached name, or vice versa).
+ */
+function lookupOpenRouter(models: Map<string, number>, modelName: string): number | undefined {
+  if (models.size === 0) return undefined
+
+  const exact = models.get(modelName)
+  if (exact !== undefined) return exact
+
+  let bestMatch: number | undefined
+  let bestLen = 0
+  for (const [id, ctxLen] of models) {
+    if (modelName.startsWith(id) && id.length > bestLen) {
+      bestMatch = ctxLen
+      bestLen = id.length
+    } else if (id.startsWith(modelName) && modelName.length > bestLen) {
+      bestMatch = ctxLen
+      bestLen = modelName.length
+    }
+  }
+  return bestMatch
+}
+
+// ---- Resolve: config > provider API > OpenRouter > fallback ----
+
+/**
+ * Resolve context window size for a provider (async).
+ * Priority: explicit config > provider /models API > OpenRouter > fallback 128000.
+ */
+export async function resolveContextWindow(keys: KeyConfig, providerName: string): Promise<number> {
+  const providerConfig = keys[providerName] as ProviderConfig | undefined
+  const model = providerConfig?.model || ''
+
+  // Priority 1: explicit config value
+  if (providerConfig?.contextWindow) {
+    logger.info(`[contextWindow] ${providerName}: ${providerConfig.contextWindow} (from config)`)
+    return providerConfig.contextWindow
+  }
+
+  // Priority 2: provider's own /models API
+  if (providerConfig) {
+    const providerValue = await fetchProviderContextWindow(providerConfig, model)
+    if (providerValue !== undefined) {
+      logger.info(`[contextWindow] ${providerName}: ${providerValue} (from provider API, model="${model}")`)
+      return providerValue
+    }
+  }
+
+  // Priority 3: OpenRouter lookup
+  const models = await fetchOpenRouterModels()
+  const orValue = lookupOpenRouter(models, model)
+  if (orValue !== undefined) {
+    logger.info(`[contextWindow] ${providerName}: ${orValue} (from OpenRouter, model="${model}")`)
+    return orValue
+  }
+
+  // Priority 4: fallback
+  const fallback = 128000
+  logger.warn(`[contextWindow] ${providerName}: model "${model || 'unknown'}" not found anywhere, using fallback ${fallback}`)
+  return fallback
 }
 
 export const config = loadConfig()

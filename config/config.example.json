@@ -8,27 +8,31 @@
     "baseUrl": "https://api.anthropic.com",
     "model": "claude-opus-4-6-kiro",
     "apiType": "anthropic",
-    "nativeToolCall": true
+    "nativeToolCall": true,
+    "contextWindow": 200000
   },
   "openai": {
     "apiKey": "your-openai-api-key",
     "baseUrl": "https://api.openai.com/v1",
     "model": "gpt-4o",
     "apiType": "openai",
-    "nativeToolCall": true
+    "nativeToolCall": true,
+    "contextWindow": 128000
   },
   "doubao": {
     "apiKey": "your-doubao-api-key",
     "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
     "model": "doubao-seed-2-0-pro-260215",
     "apiType": "openai",
-    "nativeToolCall": false
+    "nativeToolCall": false,
+    "contextWindow": 128000
   },
   "qwen": {
     "apiKey": "your-qwen-api-key",
     "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "apiType": "openai",
     "nativeToolCall": false,
+    "contextWindow": 131072,
     "embedding": {
       "model": "qwen3-vl-embedding",
       "apiType": "dashscope",
@@ -40,7 +44,8 @@
     "baseUrl": "http://127.0.0.1:11434/v1",
     "model": "your-model-name",
     "apiType": "openai",
-    "nativeToolCall": false
+    "nativeToolCall": false,
+    "contextWindow": 128000
   },
   "mail": {
     "smtp": {

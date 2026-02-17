@@ -56,6 +56,7 @@ export interface LLMProvider {
     options?: ChatOptions
   ): Promise<ChatResponse>
   abort(): void
+  resetMessageCount(): void
 }
 
 // ============ Tool Types ============
@@ -112,6 +113,7 @@ export interface ProviderConfig {
   model?: string
   nativeToolCall?: boolean
   apiType?: 'openai' | 'anthropic'
+  contextWindow?: number
   embedding?: { model: string; baseUrl?: string; apiType?: 'openai' | 'dashscope'; dimensions?: number }
 }
 

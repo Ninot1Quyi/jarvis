@@ -10,9 +10,20 @@ import type {
 } from '../types.js'
 import { ToolRegistry, toolRegistry, setSkillRegistry } from './tools/index.js'
 import { setMemorySystem } from './tools/memory.js'
-import { config, getSystemPrompt, getPrompt, fillTemplate, ensureDir } from '../utils/config.js'
+import { config, getSystemPrompt, getPrompt, fillTemplate, ensureDir, resolveContextWindow } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
+import {
+  trimOldToolResults,
+  compactMessages,
+  emergencyTruncate,
+  shouldCompact,
+  isContextOverflowError,
+  resetOverflowRetry,
+  incrementOverflowRetry,
+  getOverflowRetryCount,
+  MAX_OVERFLOW_RETRIES,
+} from './compaction.js'
 import { screenshotTool } from './tools/system.js'
 import { initSkills, getCurrentPlatform, type PromptComposer, type SkillRegistry as SkillRegistryType } from '../skills/index.js'
 import { messageManager } from '../message/MessageManager.js'
@@ -73,21 +84,26 @@ export class Agent {
   private memorySearchedForTask: string = ''  // Track which task we already searched memory for
   private stopRequested: boolean = false  // Stop signal from UI
   private stopResolvers: Set<() => void> = new Set()  // Pending stop waiters
+  private contextWindow: number = 128000
+  private providerName: string
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
     this.overlay = options.overlay || false
     this.interactive = options.interactive || false
-    const providerName = options.provider || config.defaultProvider
-    this.llm = createProvider(providerName, config.keys)
+    this.providerName = options.provider || config.defaultProvider
+    this.llm = createProvider(this.providerName, config.keys)
     this.tools = toolRegistry
 
     // 获取当前 provider 的 nativeToolCall 配置
-    const providerConfig = config.keys[providerName] as ProviderConfig | undefined
+    const providerConfig = config.keys[this.providerName] as ProviderConfig | undefined
     this.nativeToolCall = providerConfig?.nativeToolCall !== false
   }
 
   async run(taskDescription?: string): Promise<void> {
+    // Resolve context window (async: config > OpenRouter > fallback)
+    this.contextWindow = await resolveContextWindow(config.keys, this.providerName)
+
     // Reset any messages stuck in 'processing' from a previous crashed run
     messageManager.resetProcessing()
 
@@ -494,7 +510,10 @@ Note: Screenshot is attached. If target window != focused window, first click ac
         }
       }
 
-      // 4. 调用 LLM
+      // 4. Layer 1: Trim old tool results before LLM call (zero cost)
+      trimOldToolResults(messages)
+
+      // 5. 调用 LLM
       let response: ChatResponse
       try {
         response = await this.llm.chatWithVisionAndTools(
@@ -511,10 +530,33 @@ Note: Screenshot is attached. If target window != focused window, first click ac
           messages.pop()
           continue
         }
+        // Layer 3: Emergency truncation on context overflow
+        if (isContextOverflowError(err) && incrementOverflowRetry() <= MAX_OVERFLOW_RETRIES) {
+          emergencyTruncate(messages)
+          this.llm.resetMessageCount()
+          logger.warn(`Context overflow detected, emergency truncation applied (retry ${getOverflowRetryCount()}/${MAX_OVERFLOW_RETRIES})`)
+          continue
+        }
         throw err  // Re-throw unexpected errors
       }
 
+      // Reset overflow retry counter on successful call
+      resetOverflowRetry()
+
       logger.debug(`Tokens: ${response.usage.inputTokens} in, ${response.usage.outputTokens} out`)
+
+      // Layer 2: LLM Compaction when approaching context limit
+      if (shouldCompact(response.usage.inputTokens, this.contextWindow)) {
+        const compacted = await compactMessages(messages, this.llm, this.contextWindow)
+        if (compacted) {
+          this.llm.resetMessageCount()
+          logger.info('Context compacted successfully')
+        } else {
+          emergencyTruncate(messages)
+          this.llm.resetMessageCount()
+          logger.warn('Compaction failed, emergency truncation applied')
+        }
+      }
 
       // Check stop signal after LLM call returns (may have waited a long time)
       if (this.stopRequested) {
