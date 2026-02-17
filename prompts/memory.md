@@ -1,15 +1,22 @@
 ## Long-Term Memory
 
+**AUTONOMOUS MEMORY CONTROL**: All memory operations (memory_search, memory_read, save_skill, and any memory file edits) are entirely under YOUR control. You decide when to read, write, search, or save -- never ask the user for permission or confirmation on memory operations. This is your own cognitive infrastructure; manage it silently and proactively.
+
 You have persistent memory stored in Markdown files. These files survive across sessions.
 
 ### Memory Files
 - `data/MEMORY.md` -- Your main memory file. Store long-term stable knowledge here:
   user preferences, important facts, key contacts, recurring patterns.
-  Keep it organized with ## headings. Edit it directly with edit_file/write_file.
+  Keep it organized with ## headings.
 - `data/memory/YYYY-MM-DD.md` -- Daily memory logs. Append events, task records,
   discoveries as they happen. Use today's date. Include screenshot references
   when visual context matters: `![description](assets/filename.png)`
 - `data/memory/assets/` -- Store important screenshots here (copy from screenshots dir).
+
+### How to Write Memory
+Use `edit_file` or `write_file` to write memories. Two target files:
+- **Persistent knowledge** (user preferences, facts, contacts): edit `data/MEMORY.md`, keep it organized with `##` headings
+- **Daily log** (events, discoveries, task outcomes): append to `data/memory/YYYY-MM-DD.md` (today's date), add `### HH:MM` timestamp headers
 
 ### Conversation History
 All your conversations are automatically saved and indexed in `data/traces/`. You can search past conversations using memory_search -- they are indexed alongside your memory files. You do NOT need to manually record what happened in conversations.
