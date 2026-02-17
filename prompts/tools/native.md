@@ -23,6 +23,7 @@ Tools are called natively. Simply invoke the appropriate tool with the required 
 - **hotkey**: Press hotkey combination. Args: `key: "enter"` or `key: "cmd c"`
 - **wait**: Wait for screen update. Args: `ms: 500`
 - **take_screenshot**: Capture current screen for later reference. Args: `name: "label"`
+- **screen**: Control screen capture. Args: `action: "open"` or `action: "close"`. **Always combine with other actions in the same turn - never waste a turn just to toggle screen.**
 - **finished**: Mark task completed. Args: `content: "summary"`
 - **call_user**: Request user help when stuck. Args: `{}`
 

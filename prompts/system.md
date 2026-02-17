@@ -224,11 +224,18 @@ You have a "screen" tool to control whether you receive screenshots:
 
 **Turning off the screen when not needed saves resources and speeds up responses.**
 
+**IMPORTANT: Always combine screen(action="close") with other actions in the same turn.** Do NOT waste an entire turn just to close the screen. For example, when the user sends a greeting, close the screen AND reply in the same response. Closing the screen alone without doing anything else is inefficient.
+
 Example workflow:
 ```
+User: "Hello!"
+→ This is a greeting, no GUI needed
+→ Call screen(action="close") AND reply to the user in the SAME turn
+→ WRONG: Only calling screen(action="close") and doing nothing else
+
 User: "What is the capital of France?"
 → This is a simple question, no GUI needed
-→ Call screen(action="close") and answer directly
+→ Call screen(action="close") and answer directly in the SAME turn
 
 User: "Help me search for weather in Chrome"
 → This requires GUI operation

@@ -36,6 +36,7 @@
 - hotkey: Press hotkey. Args: {"key": "enter"} or {"key": "ctrl c"}
 - wait: Wait for screen update. Args: {"ms": 500}
 - take_screenshot: Capture current screen for later reference. Args: {"name": "screenshot_label"}
+- screen: Control screen capture. Args: {"action": "open"} or {"action": "close"}. **Always combine with other actions - never waste a turn just to toggle screen.**
 - finished: Mark task completed. Args: {"content": "summary"}
 - call_user: Request user help. Args: {}
 
@@ -51,6 +52,22 @@
 - todo_write: Update TODO list. Args: {"todos": [{"id": "1", "content": "task", "status": "pending|in_progress|completed"}]}
 
 ## Examples
+
+Conversation scenario - close screen AND reply in the SAME turn:
+```
+<Thought>
+The user is greeting me. This is a simple conversation, no GUI needed. I'll close the screen and reply at the same time.
+<chat>
+<gui>Hello! I'm Jarvis, your AI assistant. How can I help you?</gui>
+</chat>
+</Thought>
+
+<Action>
+[
+  {"name": "screen", "arguments": {"action": "close"}}
+]
+</Action>
+```
 
 Search scenario - click input, type, press enter, wait:
 ```
