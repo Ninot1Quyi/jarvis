@@ -30,15 +30,21 @@ This is macOS system behavior - the first click on an inactive window ONLY bring
 - `cmd m` → Minimize current window (**WARNING**: This is a system-level shortcut that CANNOT be overridden by applications. Do NOT use `cmd m` for app-specific functions like "new slide" in PowerPoint - it will minimize the window instead!)
 
 ### Spotlight Search (cmd space)
-**IMPORTANT**: When using Spotlight to open applications:
-- Always type the **FULL application name** (e.g., "Microsoft Word", "Visual Studio Code", "Google Chrome")
+**IMPORTANT**: Spotlight is the MOST RELIABLE way to launch applications on macOS.
+
+**Key principle: If an app is installed and you type its FULL CORRECT name, it WILL appear as the first result.** Have confidence in Spotlight — if it doesn't find the app, the app is genuinely not installed.
+
+When using Spotlight to open applications:
+- Always type the **FULL application name** (e.g., "Microsoft Word", "Visual Studio Code", "Google Chrome", "WeChat")
 - If you type a partial name, Spotlight may show files/documents containing that name instead of the application
 - Example: typing "Word" may show Word documents; type "Microsoft Word" to ensure the app appears first
 - **After typing, add `wait(500)` before pressing `enter`** to ensure results appear correctly.
+- **After pressing enter, add `wait(1500)` and CHECK the Focused Window** to verify the correct app opened
 
 **Correct Spotlight sequence**:
 ```
-hotkey("cmd space") → wait(300) → type("Application Name") → wait(500) → hotkey("enter")
+hotkey("cmd space") → wait(300) → type("Application Name") → wait(500) → hotkey("enter") → wait(1500)
+→ CHECK: Is Focused Window the expected app? If not, the app may not be installed — use bash to verify.
 ```
 
 **Selecting results**:
