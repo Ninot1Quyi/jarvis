@@ -20,7 +20,6 @@ export class MemorySystem {
   private dataDir: string
   private dirty: boolean = false
   private syncingPromise: Promise<void> | null = null
-  private taskStates: Map<string, IncrementalState> = new Map()
   private syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private readonly SYNC_DEBOUNCE_MS = 5000
   embeddingProvider: EmbeddingProvider | null = null
@@ -34,6 +33,8 @@ export class MemorySystem {
   }
 
   static async create(dataDir: string, keys?: KeyConfig): Promise<MemorySystem> {
+    logger.info('[Memory] Creating memory system...')
+
     // 1. Ensure data/ and data/memory/ directories exist
     const memoryDir = path.join(dataDir, 'memory')
     if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true })
@@ -70,11 +71,16 @@ export class MemorySystem {
 
     // 4. Initial sync
     await system.sync()
+    logger.info('[Memory] Sync complete')
 
     // Generate embeddings for chunks that don't have them yet
     if (system.embeddingProvider) {
+      logger.info('[Memory] Starting embedding generation...')
       await system.generateEmbeddings()
+      logger.info('[Memory] Embedding generation complete')
     }
+
+    logger.info('[Memory] Memory system ready')
 
     // 5. Start file watcher
     system.watcher.start(dataDir, {
@@ -186,14 +192,53 @@ export class MemorySystem {
       this.db.getIndexedPaths().filter(p => p.startsWith('traces/') && p.endsWith('.jsonl'))
     )
 
+    // First pass: check which files need processing (同步)
+    const filesToProcess: Array<{ absPath: string; relativePath: string; savedState: { processedLines: number; hash: string } | null; currentHash: string }> = []
+
     for (const absPath of jsonlFiles) {
       const relativePath = path.relative(this.dataDir, absPath)
-      const compressor = this.memoryAgent
-        ? this.memoryAgent.compressToolCalls.bind(this.memoryAgent)
-        : undefined
-      const prevState = this.taskStates.get(absPath)
-      const { entry, state } = await buildTaskEntry(absPath, compressor, prevState)
-      this.taskStates.set(absPath, state)
+      const savedState = this.db.getTaskState(absPath)
+      const currentHash = crypto.createHash('sha256').update(fs.readFileSync(absPath, 'utf-8')).digest('hex')
+
+      // Skip if file unchanged
+      if (savedState && savedState.hash === currentHash) {
+        logger.debug(`[Memory] Skip unchanged: ${relativePath}`)
+        indexedPaths.delete(relativePath)
+        continue
+      }
+
+      filesToProcess.push({ absPath, relativePath, savedState, currentHash })
+    }
+
+    logger.info(`[Memory] Processing ${filesToProcess.length} new/changed trace files (concurrent)...`)
+
+    if (filesToProcess.length === 0) {
+      logger.info('[Memory] All trace files up to date')
+      return
+    }
+
+    // 并发处理所有需要处理的文件
+    const compressor = this.memoryAgent
+      ? this.memoryAgent.compressToolCalls.bind(this.memoryAgent)
+      : undefined
+
+    const results = await Promise.all(
+      filesToProcess.map(async ({ absPath, relativePath, savedState, currentHash }) => {
+        logger.info(`[Memory] Processing trace: ${relativePath}`)
+        const prevState = savedState ? { processedLines: savedState.processedLines, outputLines: [], lineMap: [], pendingToolCalls: [] } : undefined
+        const result = await buildTaskEntry(absPath, compressor, prevState)
+        return { absPath, relativePath, currentHash, result }
+      })
+    )
+
+    // 保存结果到 DB
+    for (const { absPath, relativePath, currentHash, result } of results) {
+      const { entry, state } = result
+
+      if (state && state.processedLines > 0) {
+        this.db.setTaskState(absPath, state.processedLines, currentHash)
+      }
+
       if (!entry) {
         indexedPaths.delete(relativePath)
         continue
@@ -202,9 +247,7 @@ export class MemorySystem {
       indexedPaths.delete(relativePath)
     }
 
-    for (const stalePath of indexedPaths) {
-      this.db.removeFile(stalePath)
-    }
+    logger.info('[Memory] All trace files processed')
   }
 
   // Search memory using BM25, awaits sync if dirty
@@ -256,7 +299,12 @@ export class MemorySystem {
     if (!this.embeddingProvider) return
 
     const chunks = this.db.getChunksForEmbedding()
-    if (chunks.length === 0) return
+    if (chunks.length === 0) {
+      logger.info('[Memory] All chunks already have embeddings')
+      return
+    }
+
+    logger.info(`[Memory] Generating embeddings for ${chunks.length} chunks...`)
 
     // Check embedding cache first
     const cache = this.db.getEmbeddingCache(
@@ -307,6 +355,7 @@ export class MemorySystem {
 
       // Save to cache
       this.db.setEmbeddingCache(cacheEntries)
+      logger.info(`[Memory] Generated ${embeddings.length} embeddings, cached for future use`)
 
       // Update IndexMeta with vector dimensions and create vec0 table
       const meta = this.db.getMeta() ?? { model: '', provider: '', chunkTokens: 0, chunkOverlap: 0 }

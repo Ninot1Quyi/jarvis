@@ -75,6 +75,14 @@ export class MemoryDB {
       );
 
       CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated ON embedding_cache(updated_at);
+
+      -- Task trace processing state (for incremental processing)
+      CREATE TABLE IF NOT EXISTS task_states (
+        path TEXT PRIMARY KEY,
+        processed_lines INTEGER NOT NULL DEFAULT 0,
+        hash TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `)
 
     // Migrate: if embedding_cache lacks provider_key column, drop and recreate
@@ -185,6 +193,20 @@ export class MemoryDB {
     this.db.prepare(
       "INSERT OR REPLACE INTO meta (key, value) VALUES ('index_meta', ?)"
     ).run(JSON.stringify(meta))
+  }
+
+  // ---- Task state (for incremental trace processing) ----
+
+  getTaskState(filePath: string): { processedLines: number; hash: string } | null {
+    const row = this.db.prepare('SELECT processed_lines, hash FROM task_states WHERE path = ?').get(filePath) as { processed_lines: number; hash: string } | undefined
+    if (!row) return null
+    return { processedLines: row.processed_lines, hash: row.hash }
+  }
+
+  setTaskState(filePath: string, processedLines: number, hash: string): void {
+    this.db.prepare(
+      'INSERT OR REPLACE INTO task_states (path, processed_lines, hash, updated_at) VALUES (?, ?, ?, ?)'
+    ).run(filePath, processedLines, hash, Date.now())
   }
 
   // ---- File indexing ----

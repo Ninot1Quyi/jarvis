@@ -208,10 +208,22 @@ async function main() {
   try {
     const agent = new Agent({ provider, overlay, interactive })
     await agent.run(task || undefined)
-  } catch (error) {
-    logger.error('Agent error:', error)
+  } catch (error: any) {
+    // 增强错误日志输出
+    const err = error as any
+    logger.error('Agent error:')
+    logger.error(`  Message: ${err.message || err.error?.message || 'Unknown error'}`)
+    logger.error(`  Status: ${err.status || err.error?.status || 'N/A'}`)
+    logger.error(`  Type: ${err.error?.type || err.type || 'N/A'}`)
+    logger.error(`  Request ID: ${err.error?.['x-request-id'] || err.headers?.['x-request-id'] || 'N/A'}`)
+
+    // 如果是 API 错误，打印详细信息
+    if (err.error?.error) {
+      logger.error(`  API Error: ${JSON.stringify(err.error.error)}`)
+    }
+
     if (overlay) {
-      overlayClient.sendError(`Agent error: ${error}`)
+      overlayClient.sendError(`Agent error: ${err.message || err.error?.message || error}`)
     }
     process.exit(1)
   }

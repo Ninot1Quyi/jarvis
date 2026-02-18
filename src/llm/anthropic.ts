@@ -9,6 +9,7 @@ import type {
 } from '../types.js'
 import { BaseLLMProvider } from './base.js'
 import { parseToolCallsFromText } from '../agent/tools/utils/parseToolCalls.js'
+import { logger } from '../utils/logger.js'
 import * as fs from 'fs'
 
 type MediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
@@ -121,13 +122,17 @@ export class AnthropicProvider extends BaseLLMProvider {
       } else if (msg.role === 'tool') {
         // Only use native tool_result blocks if nativeToolCall is enabled
         if (this.nativeToolCall) {
+          // 验证 tool_call_id 存在
+          if (!msg.toolCallId) {
+            logger.warn(`Tool result missing tool_call_id, msg: ${JSON.stringify(msg).slice(0, 200)}`)
+          }
           anthropicMessages.push({
             role: 'user',
             content: [
               {
                 type: 'tool_result',
-                tool_use_id: msg.toolCallId!,
-                content: msg.content,
+                tool_use_id: msg.toolCallId || 'unknown',
+                content: msg.content || '',
               },
             ],
           })
@@ -169,7 +174,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     // Only add tools if using native tool call
     if (this.nativeToolCall && anthropicTools.length > 0) {
       requestParams.tools = anthropicTools
-      requestParams.tool_choice = { type: 'any' }
+      requestParams.tool_choice = { type: 'auto' }
     }
 
     const response = await this.client.messages.create(requestParams, {

@@ -97,7 +97,7 @@ export class Agent {
 
     // 获取当前 provider 的 nativeToolCall 配置
     const providerConfig = config.keys[this.providerName] as ProviderConfig | undefined
-    this.nativeToolCall = providerConfig?.nativeToolCall !== false
+    this.nativeToolCall = providerConfig?.nativeToolCall === true
   }
 
   async run(taskDescription?: string): Promise<void> {
@@ -130,6 +130,7 @@ export class Agent {
     }
 
     // Initialize memory system
+    logger.debug('Initializing memory system...')
     try {
       this.memorySystem = await MemorySystem.create(config.dataDir, config.keys)
       setMemorySystem(this.memorySystem)
@@ -138,6 +139,7 @@ export class Agent {
     } catch (error) {
       logger.warn('Failed to initialize memory system:', error)
     }
+    logger.debug('Memory system init complete')
 
     // Initialize message manager (channels + deliverers)
     messageManager.init({
@@ -159,7 +161,7 @@ export class Agent {
 
     // 获取组合后的系统提示（根据nativeToolCall和平台自动选择）
     const platform = getCurrentPlatform()
-    let systemPrompt = getSystemPrompt(this.nativeToolCall, platform)
+    let systemPrompt = getSystemPrompt(this.nativeToolCall, platform, this.tools.getDefinitions())
 
     // 使用Skills系统增强system prompt（追加用户自定义skills）
     if (this.skillComposer) {
@@ -180,6 +182,8 @@ export class Agent {
     let finished = false
 
     while (stepCount < this.maxSteps && !(finished && !this.interactive)) {
+      logger.debug('Main loop iteration start')
+
       // Handle stop signal: reset task state and go back to idle wait
       if (this.stopRequested) {
         logger.info('Stop signal received, aborting current task...')
@@ -222,6 +226,7 @@ export class Agent {
       }
 
       // 1. 检查消息队列，获取新的用户消息
+      logger.debug('Checking for inbound messages...')
       const pendingMessages = messageManager.getInbound()
       let hasUserMessage = false
       let userMessageText = ''
@@ -311,6 +316,7 @@ export class Agent {
       logger.info(`Step ${stepCount}/${this.maxSteps}`)
 
       // 2. 截图（仅当屏幕开启时）
+      logger.debug('Taking screenshot...')
       let screenshotData: {
         path: string
         screenWidth: number
@@ -426,7 +432,18 @@ Note: Screenshot is attached. If target window != focused window, first click ac
       }
 
       // 添加上一轮的工具执行结果
-      if (lastToolResults.length > 0) {
+      // 在 native 模式下，需要单独发送 tool role 消息（API 要求 tool_result 必须在 tool_use 之后）
+      if (this.nativeToolCall && lastToolResults.length > 0) {
+        for (const { toolCall, result } of lastToolResults) {
+          messages.push({
+            role: 'tool',
+            toolCallId: toolCall.id,
+            content: result,
+          })
+        }
+        // 清空，准备下一轮
+        lastToolResults = []
+      } else if (lastToolResults.length > 0) {
         computerContent += '\n\n---\n\n## Tool Execution Results\n'
         for (const { toolCall, result } of lastToolResults) {
           // 简化参数显示
@@ -514,6 +531,7 @@ Note: Screenshot is attached. If target window != focused window, first click ac
       trimOldToolResults(messages)
 
       // 5. 调用 LLM
+      logger.debug('Calling LLM...')
       let response: ChatResponse
       try {
         response = await this.llm.chatWithVisionAndTools(

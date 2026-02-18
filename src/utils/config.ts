@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
-import type { KeyConfig, JarvisConfig, ProviderConfig } from '../types.js'
+import type { KeyConfig, JarvisConfig, ProviderConfig, ToolDefinition } from '../types.js'
 import { logger } from './logger.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -71,18 +71,27 @@ export function getPrompt(name: string): string {
  *
  * @param nativeToolCall 是否使用原生工具调用
  * @param platform 目标平台（默认当前平台）
+ * @param toolDefinitions 工具定义列表（PE 模式下动态生成工具描述）
  * @returns 组合后的系统提示
  */
-export function getSystemPrompt(nativeToolCall: boolean, platform?: Platform): string {
+export function getSystemPrompt(nativeToolCall: boolean, platform?: Platform, toolDefinitions?: ToolDefinition[]): string {
   const currentPlatform = platform || process.platform as Platform
 
   // 加载基础模板
   let systemPrompt = getPrompt('system')
 
   // 加载工具说明
-  const toolsPrompt = nativeToolCall
-    ? getPrompt('tools/native')
-    : getPrompt('tools/text')
+  let toolsPrompt: string
+  if (nativeToolCall) {
+    // Native mode: tools are sent via API, prompt only needs brief instructions
+    toolsPrompt = getPrompt('tools/native')
+  } else {
+    // PE mode: load format template, then append dynamic tool descriptions
+    toolsPrompt = getPrompt('tools/text')
+    if (toolDefinitions && toolDefinitions.length > 0) {
+      toolsPrompt = toolsPrompt + '\n\n' + generateToolDescriptions(toolDefinitions)
+    }
+  }
 
   // 加载平台特定内容
   let platformPrompt = ''
@@ -106,6 +115,15 @@ export function getSystemPrompt(nativeToolCall: boolean, platform?: Platform): s
   systemPrompt = systemPrompt.replace('{{TOOLS}}', toolsPrompt)
   systemPrompt = systemPrompt.replace('{{PLATFORM}}', platformPrompt)
 
+  // 加载工具使用指南
+  let toolsGuide = ''
+  try {
+    toolsGuide = getPrompt('tools/guide')
+  } catch {
+    // guide.md 不存在时使用空字符串
+  }
+  systemPrompt = systemPrompt.replace('{{TOOLS_GUIDE}}', toolsGuide)
+
   // 加载记忆系统提示
   let memoryPrompt = ''
   try {
@@ -116,6 +134,36 @@ export function getSystemPrompt(nativeToolCall: boolean, platform?: Platform): s
   systemPrompt = systemPrompt.replace('{{MEMORY}}', memoryPrompt)
 
   return systemPrompt
+}
+
+/**
+ * Generate tool descriptions from ToolDefinition[] for PE mode prompts.
+ * This is the single source of truth -- no more manually maintained tool lists.
+ */
+function generateToolDescriptions(tools: ToolDefinition[]): string {
+  const lines: string[] = ['## Available Tools', '']
+
+  for (const tool of tools) {
+    lines.push(`- **${tool.name}**: ${tool.description}`)
+
+    const props = tool.parameters?.properties
+    if (props && Object.keys(props).length > 0) {
+      const required = new Set(tool.parameters.required || [])
+      const argParts: string[] = []
+      for (const [key, schema] of Object.entries(props)) {
+        const s = schema as Record<string, unknown>
+        const opt = required.has(key) ? '' : '?'
+        let desc = (s.description as string) || ''
+        if (s.enum) {
+          desc += ` (${(s.enum as string[]).map(v => `"${v}"`).join('|')})`
+        }
+        argParts.push(`\`${key}${opt}\`: ${desc}`)
+      }
+      lines.push(`  Args: ${argParts.join(', ')}`)
+    }
+  }
+
+  return lines.join('\n')
 }
 
 export function fillTemplate(template: string, vars: Record<string, string>): string {
@@ -129,6 +177,49 @@ export function fillTemplate(template: string, vars: Record<string, string>): st
 // ---- Context window resolution ----
 
 const FETCH_TIMEOUT = 8000  // ms
+const MODELS_CACHE_FILE = 'config/models-cache.json'
+
+interface ModelsCache {
+  providers: Record<string, Record<string, number>>  // provider -> { model -> contextWindow }
+  openrouter: Record<string, number>  // model -> contextWindow
+  updatedAt: number
+}
+
+// Load models cache from file
+function loadModelsCache(): ModelsCache | null {
+  const cachePath = path.join(ROOT_DIR, MODELS_CACHE_FILE)
+  try {
+    if (fs.existsSync(cachePath)) {
+      const content = fs.readFileSync(cachePath, 'utf-8')
+      return JSON.parse(content) as ModelsCache
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return null
+}
+
+// Save models cache to file
+function saveModelsCache(cache: ModelsCache): void {
+  const cachePath = path.join(ROOT_DIR, MODELS_CACHE_FILE)
+  try {
+    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2))
+  } catch {
+    // Ignore write errors
+  }
+}
+
+// In-memory cache
+let modelsCache: ModelsCache | null = null
+
+// Initialize cache on module load
+function initModelsCache(): void {
+  modelsCache = loadModelsCache()
+  if (!modelsCache) {
+    modelsCache = { providers: {}, openrouter: {}, updatedAt: 0 }
+  }
+}
+initModelsCache()
 
 // ---- Layer 1: Provider's own /models API ----
 
@@ -148,6 +239,12 @@ async function fetchProviderContextWindow(providerConfig: ProviderConfig, model:
   // Only try for OpenAI-compatible providers
   if (providerConfig.apiType === 'anthropic') return undefined
 
+  // Check cache first
+  const providerName = providerConfig.baseUrl
+  if (modelsCache?.providers[providerName]?.[model]) {
+    return modelsCache.providers[providerName][model]
+  }
+
   const url = `${providerConfig.baseUrl}/models`
   try {
     const controller = new AbortController()
@@ -163,19 +260,30 @@ async function fetchProviderContextWindow(providerConfig: ProviderConfig, model:
     const json = await res.json() as { data: ProviderModelEntry[] }
     if (!json.data || !Array.isArray(json.data)) return undefined
 
-    const entry = json.data.find(m => m.id === model)
-    if (!entry) return undefined
-
-    // doubao style: token_limits.context_window
-    if (entry.token_limits?.context_window) {
-      return entry.token_limits.context_window
+    // Build model map and cache it
+    const modelMap: Record<string, number> = {}
+    for (const entry of json.data) {
+      let ctxLen: number | undefined
+      if (entry.token_limits?.context_window) {
+        ctxLen = entry.token_limits.context_window
+      } else if (entry.context_length) {
+        ctxLen = entry.context_length
+      }
+      if (ctxLen) {
+        modelMap[entry.id] = ctxLen
+      }
     }
-    // OpenRouter/others style: context_length
-    if (entry.context_length) {
-      return entry.context_length
+
+    // Update cache
+    if (modelsCache) {
+      if (!modelsCache.providers[providerName]) {
+        modelsCache.providers[providerName] = {}
+      }
+      Object.assign(modelsCache.providers[providerName], modelMap)
+      saveModelsCache(modelsCache)
     }
 
-    return undefined
+    return modelMap[model]
   } catch {
     // Network error, timeout, parse error - all fine, just fall through
     return undefined
@@ -186,15 +294,38 @@ async function fetchProviderContextWindow(providerConfig: ProviderConfig, model:
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models'
 
-let openRouterCache: Map<string, number> | null = null
-
 /**
  * Fetch all models from OpenRouter and cache as Map<modelShortName, context_length>.
  * Returns empty map on failure (network error, timeout, etc).
  */
 async function fetchOpenRouterModels(): Promise<Map<string, number>> {
-  if (openRouterCache) return openRouterCache
+  // If we have cached data, return it first
+  if (modelsCache?.openrouter && Object.keys(modelsCache.openrouter).length > 0) {
+    const map = new Map(Object.entries(modelsCache.openrouter))
 
+    // Async update in background (won't block startup)
+    // This will update the cache for future use
+    fetchOpenRouterModelsAsync().catch(() => {})  // Fire and forget
+
+    return map
+  }
+
+  // No cache - fetch synchronously
+  try {
+    const map = await fetchOpenRouterModelsSync()
+    if (map.size > 0 && modelsCache) {
+      modelsCache.openrouter = Object.fromEntries(map)
+      modelsCache.updatedAt = Date.now()
+      saveModelsCache(modelsCache)
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+// Sync fetch from OpenRouter
+async function fetchOpenRouterModelsSync(): Promise<Map<string, number>> {
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT)
@@ -210,12 +341,26 @@ async function fetchOpenRouterModels(): Promise<Map<string, number>> {
         map.set(m.id.slice(slash + 1), m.context_length)
       }
     }
-    openRouterCache = map
     logger.info(`[contextWindow] OpenRouter: cached ${map.size} model entries`)
     return map
   } catch (err) {
     logger.warn(`[contextWindow] OpenRouter fetch failed: ${err instanceof Error ? err.message : err}`)
     return new Map()
+  }
+}
+
+// Async fetch from OpenRouter (for background updates)
+async function fetchOpenRouterModelsAsync(): Promise<void> {
+  try {
+    const map = await fetchOpenRouterModelsSync()
+    if (map.size > 0) {
+      modelsCache!.openrouter = Object.fromEntries(map)
+      modelsCache!.updatedAt = Date.now()
+      saveModelsCache(modelsCache!)
+      logger.info(`[contextWindow] OpenRouter: async updated ${map.size} model entries`)
+    }
+  } catch {
+    // Ignore async errors
   }
 }
 
@@ -253,13 +398,13 @@ export async function resolveContextWindow(keys: KeyConfig, providerName: string
   const providerConfig = keys[providerName] as ProviderConfig | undefined
   const model = providerConfig?.model || ''
 
-  // Priority 1: explicit config value
+  // Priority 1: explicit config value - use directly, skip all API requests
   if (providerConfig?.contextWindow) {
-    logger.info(`[contextWindow] ${providerName}: ${providerConfig.contextWindow} (from config)`)
+    logger.info(`[contextWindow] ${providerName}: ${providerConfig.contextWindow} (from config, skip API lookup)`)
     return providerConfig.contextWindow
   }
 
-  // Priority 2: provider's own /models API
+  // Priority 2: provider's own /models API (with cache)
   if (providerConfig) {
     const providerValue = await fetchProviderContextWindow(providerConfig, model)
     if (providerValue !== undefined) {
@@ -268,7 +413,7 @@ export async function resolveContextWindow(keys: KeyConfig, providerName: string
     }
   }
 
-  // Priority 3: OpenRouter lookup
+  // Priority 3: OpenRouter lookup (with cache)
   const models = await fetchOpenRouterModels()
   const orValue = lookupOpenRouter(models, model)
   if (orValue !== undefined) {
