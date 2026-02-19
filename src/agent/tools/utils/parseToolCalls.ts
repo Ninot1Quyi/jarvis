@@ -1,11 +1,4 @@
-import type { ToolCall, ToolDefinition } from '../../../types.js'
-
-/**
- * Build tools prompt for prompt engineering mode
- */
-export function buildToolsPrompt(_tools: ToolDefinition[]): string {
-  return ''
-}
+import type { ToolCall } from '../../../types.js'
 
 /**
  * Remove comments from JSON string, preserving content inside quoted strings.

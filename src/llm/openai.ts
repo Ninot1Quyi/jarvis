@@ -8,7 +8,7 @@ import type {
   ToolCall,
 } from '../types.js'
 import { BaseLLMProvider } from './base.js'
-import { buildToolsPrompt, parseToolCallsFromText } from '../agent/tools/utils/parseToolCalls.js'
+import { parseToolCallsFromText } from '../agent/tools/utils/parseToolCalls.js'
 import * as fs from 'fs'
 
 export class OpenAIProvider extends BaseLLMProvider {
@@ -33,10 +33,8 @@ export class OpenAIProvider extends BaseLLMProvider {
   protected buildMessages(
     messages: Message[],
     images: ImageInput[],
-    tools?: ToolDefinition[]
   ): OpenAI.ChatCompletionMessageParam[] {
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = []
-    const toolsPrompt = !this.nativeToolCall && tools ? buildToolsPrompt(tools) : ''
 
     // Find the last user/computer message (not tool result converted to user)
     let lastUserMsgIndex = -1
@@ -51,8 +49,7 @@ export class OpenAIProvider extends BaseLLMProvider {
       const msg = messages[i]
 
       if (msg.role === 'system') {
-        const content = toolsPrompt ? msg.content + '\n' + toolsPrompt : msg.content
-        openaiMessages.push({ role: 'system', content })
+        openaiMessages.push({ role: 'system', content: msg.content })
       } else if (msg.role === 'user' || msg.role === 'computer') {
         // 'computer' role is treated as 'user' for API, but semantically different
         const content: OpenAI.ChatCompletionContentPart[] = []
@@ -142,7 +139,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     tools: ToolDefinition[],
     options?: ChatOptions
   ): Promise<ChatResponse> {
-    const openaiMessages = this.buildMessages(messages, images, tools)
+    const openaiMessages = this.buildMessages(messages, images)
 
     if (this.nativeToolCall) {
       return this.chatWithNativeTools(openaiMessages, tools, options)
@@ -173,7 +170,7 @@ export class OpenAIProvider extends BaseLLMProvider {
       max_tokens: options?.maxTokens || 4096,
       messages,
       tools: openaiTools,
-      tool_choice: 'required',
+      tool_choice: 'auto',
     } as any, {
       signal: this.getAbortSignal(),
     })
