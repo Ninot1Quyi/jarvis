@@ -22,10 +22,52 @@ async function copyToClipboard(text: string): Promise<void> {
       proc.stdin.write(utf16leBuffer)
       proc.stdin.end()
     } else {
-      // Linux: try xclip or xsel
-      proc = spawn('xclip', ['-selection', 'clipboard'])
-      proc.stdin.write(text)
-      proc.stdin.end()
+      // Linux: 检测 Wayland 或 X11
+      const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' ||
+        process.env.WAYLAND_DISPLAY !== undefined
+
+      if (isWayland) {
+        // Wayland: 优先使用 wl-copy，失败则尝试 xclip (XWayland)
+        proc = spawn('wl-copy', ['--foreground'])
+        proc.stdin.write(text)
+        proc.stdin.end()
+        proc.on('error', () => {
+          // wl-copy 失败，尝试 XWayland xclip
+          const fallback = spawn('xclip', ['-selection', 'clipboard'])
+          fallback.stdin.write(text)
+          fallback.stdin.end()
+          fallback.on('close', (code) => {
+            if (code === 0) resolve()
+            else reject(new Error(`clipboard fallback failed with code ${code}`))
+          })
+          fallback.on('error', reject)
+        })
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else if (code !== undefined) reject(new Error(`wl-copy failed with code ${code}`))
+        })
+        return
+      } else {
+        // X11: 尝试 xclip，失败则尝试 xsel
+        proc = spawn('xclip', ['-selection', 'clipboard'])
+        proc.stdin.write(text)
+        proc.stdin.end()
+        proc.on('error', () => {
+          const fallback = spawn('xsel', ['--clipboard', '--input'])
+          fallback.stdin.write(text)
+          fallback.stdin.end()
+          fallback.on('close', (code) => {
+            if (code === 0) resolve()
+            else reject(new Error(`xsel fallback failed with code ${code}`))
+          })
+          fallback.on('error', reject)
+        })
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else if (code !== undefined) reject(new Error(`xclip failed with code ${code}`))
+        })
+        return
+      }
     }
 
     proc.on('close', (code) => {

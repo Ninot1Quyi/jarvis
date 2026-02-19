@@ -21,19 +21,75 @@ async function getScreenLogicalSize(): Promise<{ width: number; height: number }
 // IMPORTANT: Screenshots MUST include the mouse cursor for LLM to calibrate click positions
 async function captureScreen(filepath: string): Promise<void> {
   const os = await import('os')
+  const { exec } = await import('child_process')
+  const { promisify } = await import('util')
+  const execAsync = promisify(exec)
+
   if (os.platform() === 'darwin') {
     // macOS: use screencapture with -C (include cursor) and -x (no sound)
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execAsync = promisify(exec)
     await execAsync(`screencapture -C -x "${filepath}"`)
+  } else if (os.platform() === 'win32') {
+    // Windows: use PowerShell with cursor capture
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms
+      Add-Type -AssemblyName System.Drawing
+      $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+      $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
+      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+      $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+      $cursor = [System.Windows.Forms.Cursor]::Current
+      $cursorPos = [System.Windows.Forms.Cursor]::Position
+      $graphics.FillRectangle([System.Drawing.Brushes]::Red, $cursorPos.X, $cursorPos.Y, 20, 20)
+      $graphics.Dispose()
+      $bitmap.Save("${filepath.replace(/\\/g, '\\\\')}", [System.Drawing.Imaging.ImageFormat]::Png)
+      $bitmap.Dispose()
+    `
+    await execAsync(`powershell -Command "${ps.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`)
   } else {
-    // TODO: Other platforms - MUST include mouse cursor in screenshot
-    // Windows: consider using PowerShell or native API that captures cursor
-    // Linux: consider using scrot with cursor option or similar
-    const { screen, saveImage } = await import('@computer-use/nut-js')
-    const image = await screen.grab()
-    await saveImage({ image, path: filepath })
+    // Linux: 尝试多种截图工具，包含光标
+    const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' ||
+      process.env.WAYLAND_DISPLAY !== undefined
+
+    try {
+      if (isWayland) {
+        // Wayland: 优先使用 gnome-screenshot (需要 gnome-screenshot > 3.38)
+        // 或使用 wl-shot
+        try {
+          await execAsync('gnome-screenshot -f "' + filepath + '"')
+          logger.debug('[Linux] gnome-screenshot succeeded')
+        } catch {
+          // 尝试 wl-shot
+          try {
+            await execAsync('wl-copy < /dev/null') // 确保 wl-copy 可用
+            await execAsync('grim -g "$(slurp)" "' + filepath + '"')
+          } catch {
+            // 最后尝试 scrot
+            await execAsync('scrot "' + filepath + '"')
+          }
+        }
+      } else {
+        // X11: 优先使用 scrot (支持 -m 包含光标)
+        try {
+          await execAsync('scrot -m "' + filepath + '"')
+          logger.debug('[Linux] scrot -m succeeded')
+        } catch {
+          // 尝试 gnome-screenshot
+          try {
+            await execAsync('gnome-screenshot -f "' + filepath + '"')
+          } catch {
+            // 最后回退到 nut-js
+            const { screen, saveImage } = await import('@computer-use/nut-js')
+            const image = await screen.grab()
+            await saveImage({ image, path: filepath })
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn('[Linux] All screenshot methods failed, falling back to nut-js')
+      const { screen, saveImage } = await import('@computer-use/nut-js')
+      const image = await screen.grab()
+      await saveImage({ image, path: filepath })
+    }
   }
 }
 
@@ -203,7 +259,7 @@ export const taskTool: Tool = {
 export const screenTool: Tool = {
   definition: {
     name: 'screen',
-    description: 'Control screen capture. Screen is ON by default. Use "close" to stop receiving screenshots (for pure conversation), "open" to resume (for GUI tasks). Turning off screen when not needed saves resources.',
+    description: 'Control screen capture. Screen is ON by default. Use "close" to stop receiving screenshots (for pure conversation), "open" to resume (for GUI tasks). Always combine with other actions - never waste a turn just to toggle screen.',
     parameters: {
       type: 'object',
       properties: {
