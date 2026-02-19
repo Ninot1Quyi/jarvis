@@ -1,39 +1,5 @@
 ## Tool Usage
 
-Tools are called natively. Simply invoke the appropriate tool with the required arguments.
+Tools are called natively via the API. Simply invoke the appropriate tool with the required arguments.
 
-### Available Tools
-
-#### Skill Tools
-- **activate_skill**: Load a skill to get detailed instructions. Args: `name: "skill_name"`
-- **list_skills**: List all available skills with descriptions
-
-#### UI Search Tools
-- **find_element**: Search for UI elements by keyword when unsure about position. Args: `keyword: "Insert"`, `max_results?: 5`. Use this to find the exact **center coordinates** of buttons, menus, or other UI elements instead of guessing. Returned coordinates can be used directly for clicking.
-- **locate**: Pre-locate UI element for next action. Args: `name: "Insert"`. **Call this as the LAST action in each response** to search for the element you plan to click next. Returns precise coordinates from accessibility tree. Combine with visual analysis for accurate clicking.
-
-#### GUI Tools
-- **click**: Click at position. Args: `coordinate: [x, y]`, `desc?: "element name"`, `modifiers?: ["cmd"]`. The `desc` should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree. Use `modifiers` for special clicks: `["cmd"]` for cmd+click (multi-select), `["shift"]` for shift+click (range select), `["cmd", "shift"]` for cmd+shift+click.
-- **left_double**: Double click. Args: `coordinate: [x, y]`, `desc?: "element name"`. Same as click.
-- **right_single**: Right click for context menu. Args: `coordinate: [x, y]`, `desc?: "element name"`. Same as click.
-- **middle_click**: Middle click to open link in new tab. Args: `coordinate: [x, y]`, `desc?: "element name"`. Same as click.
-- **drag**: Drag from start to end. Args: `startCoordinate: [x1, y1], endCoordinate: [x2, y2]`
-- **scroll**: Scroll at position. Args: `coordinate: [x, y], direction: "up"|"down"|"left"|"right"`
-- **type**: Type text (supports `\n` for newline, `\t` for tab). Args: `text: "content"`
-- **hotkey**: Press hotkey combination. Args: `key: "enter"` or `key: "cmd c"`
-- **wait**: Wait for screen update. Args: `ms: 500`
-- **take_screenshot**: Capture current screen for later reference. Args: `name: "label"`
-- **screen**: Control screen capture. Args: `action: "open"` or `action: "close"`. **Always combine with other actions in the same turn - never waste a turn just to toggle screen.**
-- **finished**: Mark task completed. Args: `content: "summary"`
-- **call_user**: Request user help when stuck. Args: `{}`
-
-#### File Tools
-- **read_file**: Read file contents. Args: `file_path, offset?, limit?`
-- **write_file**: Write/create file. Args: `file_path, content`
-- **edit_file**: Replace text in file. Args: `file_path, old_string, new_string, replace_all?`
-- **grep**: Search file contents (regex). Args: `pattern, path, case_insensitive?`
-- **bash**: Execute shell command. Args: `command, cwd?, timeout?`
-
-#### Task Tools
-- **todo_read**: Read current TODO list
-- **todo_write**: Update TODO list. Args: `todos: [{id, content, status}]`
+You can call multiple tools in a single response. The tools and their parameters are defined in the API tool schemas.

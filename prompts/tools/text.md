@@ -15,42 +15,6 @@
 
 **IMPORTANT: <Action> must contain valid JSON only. NO comments allowed inside <Action>.**
 
-## Available Tools
-
-### Skill Tools
-- activate_skill: Load a skill to get detailed instructions. Args: {"name": "skill_name"}
-- list_skills: List all available skills with descriptions. Args: {}
-
-### UI Search Tools
-- find_element: Search for UI elements by keyword when unsure about position. Args: {"keyword": "Insert", "max_results": 5}. Use this to find exact **center coordinates** instead of guessing. Returned coordinates can be used directly for clicking.
-- locate: Pre-locate UI element for next action. Args: {"name": "Insert"}. **Call this as the LAST action in each response** to search for the element you plan to click next. Returns precise coordinates from accessibility tree.
-
-### GUI Tools
-- click: Click at position. Args: {"coordinate": [x, y], "desc": "element name", "modifiers": ["cmd"]}. The `desc` should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree. Use `modifiers` for special clicks: ["cmd"] for cmd+click (multi-select), ["shift"] for shift+click.
-- left_double: Double click. Args: {"coordinate": [x, y], "desc": "element name"}
-- right_single: Right click. Args: {"coordinate": [x, y], "desc": "element name"}
-- middle_click: Middle click to open link in new tab. Args: {"coordinate": [x, y], "desc": "element name"}
-- drag: Drag from start to end. Args: {"startCoordinate": [x1, y1], "endCoordinate": [x2, y2]}
-- scroll: Scroll at position. Args: {"coordinate": [x, y], "direction": "up|down|left|right"}
-- type: Type text. Supports \\n for newline, \\t for tab. Args: {"text": "line1\\nline2"}
-- hotkey: Press hotkey. Args: {"key": "enter"} or {"key": "ctrl c"}
-- wait: Wait for screen update. Args: {"ms": 500}
-- take_screenshot: Capture current screen for later reference. Args: {"name": "screenshot_label"}
-- screen: Control screen capture. Args: {"action": "open"} or {"action": "close"}. **Always combine with other actions - never waste a turn just to toggle screen.**
-- finished: Mark task completed. Args: {"content": "summary"}
-- call_user: Request user help. Args: {}
-
-### File Tools
-- read_file: Read file contents. Args: {"file_path": "/path/to/file", "offset": 1, "limit": 100}
-- write_file: Write/create file. Args: {"file_path": "/path/to/file", "content": "..."}
-- edit_file: Replace text in file. Args: {"file_path": "/path", "old_string": "...", "new_string": "...", "replace_all": false}
-- grep: Search file contents (regex). Args: {"pattern": "search", "path": "/dir", "case_insensitive": false}
-- bash: Execute shell command. Args: {"command": "ls -la", "cwd": "/path", "timeout": 30000}
-
-### Task Tools
-- todo_read: Read current TODO list. Args: {}
-- todo_write: Update TODO list. Args: {"todos": [{"id": "1", "content": "task", "status": "pending|in_progress|completed"}]}
-
 ## Examples
 
 Conversation scenario - close screen AND reply in the SAME turn:
