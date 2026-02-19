@@ -244,3 +244,8 @@ sudo apt install -y wmctrl
 - 确保 VM 中的 "Accessibility Access" 已启用（系统设置 → 辅助功能）
 - VMware 共享文件夹可用于快速传输大文件
 - Linux 下可能需要额外配置 Display 变量（DISPLAY=:0）
+
+## 相关文档
+
+- [平台适配开发规范](技能/platform-adaptation.md) - Linux 平台开发规范和环境要求
+- [测试规格](技能/test-spec.md) - 测试用例和验证清单
