@@ -9,13 +9,206 @@ description: This skill is used when testing Jarvis on Linux virtual machine, sy
 
 ## 环境信息
 
-- VM: VMware Fusion (Ubuntu 22.04 LTS / 24.04 LTS)
-- VM IP: 192.168.199.131 (VMware NAT 模式)
-- VM 用户: jarvis, 密码: 123456
-- 宿主机代理: 192.168.199.1:7897
+- VM: VMware Fusion (Ubuntu 22.04 LTS ARM64)
+- VM 路径: `/Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx`
+- VM IP: 动态获取 (通过 `vmrun getGuestIPAddress`)
+- OSWorld Server: 端口 5000 (已预装)
+- SSH 用户: user
+- SSH 密码: jarvis.linux.123
+- 宿主机代理: 192.168.236.1:7897
 - Jarvis 路径 (宿主机): /Users/Ninot/NinotQuyi/jarvis
-- Jarvis 路径 (VM): ~/jarvis
-- Node.js: /usr/bin/node (v20+)
+- Jarvis 路径 (VM): /home/user/jarvis
+- Node.js: 通过 nvm 管理，使用 v22
+
+## 快速启动
+
+```bash
+# 启动 VM 并等待就绪
+./vm-start.sh --wait
+
+# 或分步执行
+./vm-start.sh                  # 启动 VM
+./vm-start.sh -i               # 获取 VM IP
+./vm-start.sh --no-start      # 查看连接信息
+```
+
+## 代码同步
+
+```bash
+VM_IP="192.168.236.129"  # 替换为实际 IP
+PASSWORD="jarvis.linux.123"
+
+# 同步代码到 VM (排除不需要的目录)
+sshpass -p "$PASSWORD" rsync -avz \
+  --exclude node_modules --exclude .git --exclude dist --exclude target \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
+  /Users/Ninot/NinotQuyi/jarvis/ \
+  user@${VM_IP}:~/jarvis/
+
+# 只同步 prompts 目录 (更快)
+sshpass -p "$PASSWORD" rsync -avz \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
+  /Users/Ninot/NinotQuyi/jarvis/prompts/ \
+  user@${VM_IP}:~/jarvis/prompts/
+```
+
+## 初始化 VM (首次设置)
+
+### 1. 启动 VM
+
+```bash
+# 方法1: 使用脚本
+./vm-start.sh
+
+# 方法2: 手动启动
+vmrun -T fusion start /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx
+sleep 15
+VM_IP=$(vmrun -T fusion getGuestIPAddress /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx -wait)
+echo "VM IP: $VM_IP"
+```
+
+### 2. 验证 OSWorld Server
+
+```bash
+VM_IP="192.168.236.129"  # 替换为实际 IP
+curl -s http://$VM_IP:5000/screenshot -o /tmp/vm_screenshot.png
+```
+
+### 3. 配置 SSH 访问
+
+**通过 OSWorld API 设置用户密码**（在 VM 终端里执行）:
+
+```bash
+# 在 VM 的终端窗口中:
+sudo passwd user
+# 输入新密码: jarvis.linux.123
+```
+
+**通过 OSWorld API 配置 SSH**:
+```bash
+VM_IP="192.168.236.129"
+SERVER="http://$VM_IP:5000"
+PASSWORD="jarvis.linux.123"
+
+# 配置 SSH 允许密码登录
+curl -s -X POST "$SERVER/execute" \
+  -H "Content-Type: application/json" \
+  -d "{\"command\": [\"bash\", \"-c\", \"echo '$PASSWORD' | sudo -S sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config\"], \"shell\": false}"
+
+# 重启 SSH
+curl -s -X POST "$SERVER/execute" \
+  -H "Content-Type: application/json" \
+  -d "{\"command\": [\"bash\", \"-c\", \"echo '$PASSWORD' | sudo -S systemctl restart ssh\"], \"shell\": false}"
+```
+
+### 4. 同步源代码到 VM
+
+**重要：源代码在宿主机修改，VM 仅用于测试和编译**
+
+```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
+# 同步源代码 (排除 node_modules, dist, .git)
+sshpass -p "$PASSWORD" rsync -avz \
+  --exclude node_modules --exclude .git --exclude dist --exclude target \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
+  /Users/Ninot/NinotQuyi/jarvis/src/ \
+  user@${VM_IP}:~/jarvis/src/
+
+# 同步配置文件
+sshpass -p "$PASSWORD" rsync -avz \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
+  /Users/Ninot/NinotQuyi/jarvis/config/ \
+  user@${VM_IP}:~/jarvis/config/
+
+# 同步 prompts (如果修改了)
+sshpass -p "$PASSWORD" rsync -avz \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
+  /Users/Ninot/NinotQuyi/jarvis/prompts/ \
+  user@${VM_IP}:~/jarvis/prompts/
+```
+
+### 5. 在 VM 中编译
+
+```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+PROXY="http://192.168.236.1:7897"
+
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "export http_proxy=$PROXY && https_proxy=$PROXY && export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\" && nvm use 22 && cd /home/user/jarvis && npm run build"
+```
+
+### 6. 在 VM 中运行测试
+
+```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+PROXY="http://192.168.236.1:7897"
+
+# 测试截图功能
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "export http_proxy=$PROXY && https_proxy=$PROXY && export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\" && nvm use 22 && cd /home/user/jarvis && export DISPLAY=:0 && node dist/cli/main.js --no-ui '截取当前屏幕截图'"
+
+# 查看截图结果
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "ls -la /home/user/jarvis/workspace/screenshots/"
+```
+
+## 开发循环流程
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. 在宿主机修改代码 (src/, prompts/, config/)            │
+│                          ↓                                  │
+│  2. 同步到 VM: rsync src/ user@VM:~/jarvis/src/         │
+│                          ↓                                  │
+│  3. 在 VM 中编译: npm run build                           │
+│                          ↓                                  │
+│  4. 在 VM 中测试: node dist/cli/main.js --no-ui "任务"   │
+│                          ↓                                  │
+│  5. 检查结果: screenshots/, traces/                       │
+│                          ↓                                  │
+│  6. 如需修改 → 回到步骤 1                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## 常用命令
+
+### 启动 VM
+```bash
+vmrun -T fusion start /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx
+```
+
+### 获取 VM IP
+```bash
+vmrun -T fusion getGuestIPAddress /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx -wait
+```
+
+### SSH 连接到 VM
+```bash
+sshpass -p 'jarvis.linux.123' ssh -o StrictHostKeyChecking=no user@192.168.236.129
+```
+
+### 在 VM 中运行 jarvis
+```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+PROXY="http://192.168.236.1:7897"
+
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "export http_proxy=$PROXY && export https_proxy=$PROXY && export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\" && nvm use 22 && cd /home/user/jarvis && export DISPLAY=:0 && node dist/cli/main.js --no-ui '你的任务'"
+```
+
+### 快照管理
+```bash
+# 创建快照
+vmrun -T fusion snapshot /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx "clean_state"
+
+# 恢复快照
+vmrun -T fusion revertToSnapshot /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx "clean_state"
+```
 
 ## 完整评测流程
 

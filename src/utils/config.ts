@@ -36,7 +36,19 @@ export function loadConfig(): JarvisConfig {
   }
 
   // Workspace defaults to data directory if not specified
-  const workspace = keys.workspace || path.join(ROOT_DIR, 'workspace')
+  // Auto-fix hardcoded paths for cross-platform compatibility
+  const hostWorkspace = keys.workspace
+  const isRemotePath = hostWorkspace?.startsWith('/Users/') || hostWorkspace?.startsWith('C:\\')
+  const currentPlatform = process.platform
+
+  // If running on Linux and config has Mac/Windows path, auto-detect local path
+  let workspace: string
+  if (isRemotePath && currentPlatform === 'linux') {
+    // Use ROOT_DIR-based path on Linux
+    workspace = path.join(ROOT_DIR, 'workspace')
+  } else {
+    workspace = hostWorkspace || path.join(ROOT_DIR, 'workspace')
+  }
 
   return {
     keys,
