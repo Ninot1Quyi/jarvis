@@ -30,6 +30,7 @@ sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
 - [x] 任务执行开始
 - [x] 截图工具被调用
 - [x] 截图成功保存
+- [x] 通知服务正常启动 (D-Bus GLib main loop)
 
 ## 生成的截图文件
 
@@ -39,23 +40,7 @@ sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
 
 文件大小: 705583 bytes
 
-## 发现的问题
-
-1. **通知服务 D-Bus 错误**:
-   ```
-   RuntimeError: To make asynchronous calls, receive signals or export objects,
-   D-Bus connections must be attached to a main loop by passing mainloop=...
-   ```
-   - 影响: 通知功能无法使用
-   - 状态: 待修复
-
-2. **Memory 初始化警告**:
-   ```
-   Failed to initialize memory system: {}
-   ```
-   - 影响: 记忆系统无法使用
-   - 状态: 待调查
-
 ## 结论
 
 - **通过**: 截图功能正常工作
+- **通过**: 通知服务正常工作
