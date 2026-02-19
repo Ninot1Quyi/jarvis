@@ -15,7 +15,7 @@ import {
 export const findElementTool: Tool = {
   definition: {
     name: 'find_element',
-    description: 'Search for UI elements by keyword in the focused application. Use this when you are unsure about the exact position of a UI element. Returns matching elements with their coordinates.',
+    description: 'Search for UI elements by keyword in the focused application. Use this to find exact center coordinates instead of guessing. Returns matching elements with their coordinates, which can be used directly for clicking.',
     parameters: {
       type: 'object',
       properties: {

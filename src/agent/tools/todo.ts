@@ -59,7 +59,7 @@ function generateSummary(todos: TodoItem[]): string {
 export const todoWriteTool: Tool = {
   definition: {
     name: 'todo_write',
-    description: 'Create or update TODO list for task planning and tracking progress',
+    description: 'Create or update TODO list for task planning and tracking progress. Example: {"todos": [{"id": "1", "content": "task", "status": "pending|in_progress|completed"}]}',
     parameters: {
       type: 'object',
       properties: {

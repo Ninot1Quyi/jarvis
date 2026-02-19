@@ -253,7 +253,7 @@ async function appendNearbyElements(
 export const clickTool: Tool = {
   definition: {
     name: 'click',
-    description: 'Click at the specified position. Coordinates are in range [0, 1000]. Supports modifier keys for special clicks (e.g., cmd+click for multi-select).',
+    description: 'Click at the specified position. Coordinates are in range [0, 1000]. The desc should be the exact UI text/label (e.g., "Save", "Insert"), searched in accessibility tree for auto-correction. Use modifiers for special clicks: ["cmd"] for cmd+click (multi-select), ["shift"] for shift+click.',
     parameters: {
       type: 'object',
       properties: {
