@@ -9,7 +9,7 @@ import type { NotificationProvider, NotificationEvent, Platform } from '../types
  *
  * Requires:
  * - notify-send (libnotify-bin on Ubuntu)
- * - Python3 with dbus python bindings
+ * - Python3 with dbus python bindings and GLib
  */
 
 const RESTART_DELAY = 5000
@@ -49,11 +49,16 @@ export class LinuxNotificationProvider implements NotificationProvider {
   private spawn(): void {
     if (this.stopped) return
 
-    // Use a Python script to monitor D-Bus for notifications
+    // Use Python with GLib main loop for D-Bus monitoring
     const pythonScript = `
 import dbus
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
 import json
 import sys
+
+# Set up GLib main loop for async D-Bus
+DBusGMainLoop(set_as_default=True)
 
 bus = dbus.SessionBus()
 
@@ -64,7 +69,7 @@ interface = dbus.Interface(obj, 'org.freedesktop.Notifications')
 # Listen for notifications
 def notify_callback(id, app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout):
     event = {
-        "id": id,
+        "id": str(id),
         "appName": app_name,
         "title": summary,
         "body": body,
@@ -72,20 +77,11 @@ def notify_callback(id, app_name, replaces_id, app_icon, summary, body, actions,
     }
     print(json.dumps(event), flush=True)
 
-interface.connect_to_signal("NotificationClosed", lambda id, reason: None)
-interface.connect_to_signal("ActionInvoked", lambda id, action: None)
+interface.connect_to_signal("Notify", notify_callback)
 
-# Use the new API for receiving notifications
-try:
-    # Register for notifications using the Matches API
-    pass
-except:
-    pass
-
-# Alternative: just keep the process alive and poll
-import time
-while True:
-    time.sleep(1)
+# Keep the loop running
+print("[NotificationProvider:linux] Listening for notifications...", flush=True)
+GLib.MainLoop().run()
 `
 
     try {
@@ -97,24 +93,35 @@ while True:
         const line = chunk.toString().trim()
         if (!line) return
 
+        // Skip debug messages
+        if (line.startsWith('[') && line.includes('Listening')) {
+          console.log(`[NotificationProvider:linux] ${line}`)
+          return
+        }
+
         try {
           const data = JSON.parse(line)
-          const event: NotificationEvent = {
-            type: 'notification',
-            id: String(data.id),
-            appName: data.appName || '',
-            title: data.title || '',
-            body: data.body || '',
-            timestamp: Date.now(),
+          if (data.id && data.appName !== undefined) {
+            const event: NotificationEvent = {
+              type: 'notification',
+              id: String(data.id),
+              appName: data.appName || '',
+              title: data.title || '',
+              body: data.body || '',
+              timestamp: Date.now(),
+            }
+            this.onNotification?.(event)
           }
-          this.onNotification?.(event)
         } catch {
           // Not JSON, ignore
         }
       })
 
       this.process.stderr?.on('data', (chunk: Buffer) => {
-        console.error(`[NotificationProvider:linux] stderr: ${chunk.toString().trim()}`)
+        const msg = chunk.toString().trim()
+        if (msg) {
+          console.error(`[NotificationProvider:linux] stderr: ${msg}`)
+        }
       })
 
       this.process.on('exit', (code: number | null) => {
