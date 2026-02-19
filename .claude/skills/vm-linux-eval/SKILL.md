@@ -247,5 +247,5 @@ sudo apt install -y wmctrl
 
 ## 相关文档
 
-- [平台适配开发规范](技能/platform-adaptation.md) - Linux 平台开发规范和环境要求
-- [测试规格](技能/test-spec.md) - 测试用例和验证清单
+- [平台适配开发规范](platform-adaptation.md) - Linux 平台开发规范和环境要求
+- [测试规格](test-spec.md) - 测试用例和验证清单
