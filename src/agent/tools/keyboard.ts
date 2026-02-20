@@ -36,6 +36,9 @@ async function execCommand(command: string): Promise<string> {
 
 // 将文本写入剪贴板（跨平台）
 async function copyToClipboard(text: string): Promise<void> {
+  // For Linux, ensure DISPLAY is set
+  const env = isLinux ? { ...process.env, DISPLAY: process.env.DISPLAY || ':0' } : undefined
+
   return new Promise((resolve, reject) => {
     let proc
     if (isMac) {
@@ -56,12 +59,12 @@ async function copyToClipboard(text: string): Promise<void> {
 
       if (isWayland) {
         // Wayland: 优先使用 wl-copy，失败则尝试 xclip (XWayland)
-        proc = spawn('wl-copy', ['--foreground'])
+        proc = spawn('wl-copy', ['--foreground'], { env })
         proc.stdin.write(text)
         proc.stdin.end()
         proc.on('error', () => {
           // wl-copy 失败，尝试 XWayland xclip
-          const fallback = spawn('xclip', ['-selection', 'clipboard'])
+          const fallback = spawn('xclip', ['-selection', 'clipboard'], { env })
           fallback.stdin.write(text)
           fallback.stdin.end()
           fallback.on('close', (code) => {
@@ -77,11 +80,11 @@ async function copyToClipboard(text: string): Promise<void> {
         return
       } else {
         // X11: 尝试 xclip，失败则尝试 xsel
-        proc = spawn('xclip', ['-selection', 'clipboard'])
+        proc = spawn('xclip', ['-selection', 'clipboard'], { env })
         proc.stdin.write(text)
         proc.stdin.end()
         proc.on('error', () => {
-          const fallback = spawn('xsel', ['--clipboard', '--input'])
+          const fallback = spawn('xsel', ['--clipboard', '--input'], { env })
           fallback.stdin.write(text)
           fallback.stdin.end()
           fallback.on('close', (code) => {
