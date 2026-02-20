@@ -5,6 +5,29 @@ import { logger } from '../../utils/logger.js'
 
 // 使用 nut-js 获取屏幕尺寸（跨平台）
 async function getScreenLogicalSize(): Promise<{ width: number; height: number }> {
+  // Linux: use xrandr as fallback (nut-js doesn't work on ARM64)
+  if (process.platform === 'linux') {
+    try {
+      const { exec } = await import('child_process')
+      const { promisify } = await import('util')
+      const execAsync = promisify(exec)
+      const { stdout } = await execAsync('xrandr | grep "current" | head -1')
+      // Parse "current 1191 x 712" or "current 1920 x 1080, ..."
+      const match = stdout.match(/current\s+(\d+)\s+x\s+(\d+)/)
+      if (match) {
+        const width = parseInt(match[1], 10)
+        const height = parseInt(match[2], 10)
+        logger.debug(`Screen logical size (xrandr): ${width}x${height}`)
+        return { width, height }
+      }
+    } catch (e) {
+      logger.debug(`xrandr failed: ${e}`)
+    }
+    // Fallback to common values
+    return { width: 1920, height: 1080 }
+  }
+
+  // macOS/Windows: use nut-js
   try {
     const { screen } = await import('@computer-use/nut-js')
     const width = await screen.width()
