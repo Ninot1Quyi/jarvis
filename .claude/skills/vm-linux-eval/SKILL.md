@@ -309,6 +309,8 @@ tmux send-keys -t work "bash /tmp/run_task.sh" Enter
 
 ### Step 6: 持续监控执行过程
 
+**重要：如果 60 秒内没有任何输出变化，说明 Jarvis 卡住了，需要停止并排查问题！**
+
 循环读取 tmux 输出，跟踪 Jarvis 的每一步：
 
 ```bash
@@ -317,6 +319,30 @@ tmux capture-pane -t work -b buf && tmux save-buffer -b buf -
 
 # 建议每 15-30 秒读取一次，根据任务复杂度调整间隔
 sleep 20 && tmux capture-pane -t work -b buf && tmux save-buffer -b buf -
+```
+
+**卡住检测：如果 60 秒内没有新的日志输出，执行以下步骤：**
+
+```bash
+# 1. 停止当前任务
+tmux send-keys -t work C-c
+
+# 2. 查看 VM 屏幕截图
+sshpass -p "$PASSWORD" ssh user@$VM_IP "DISPLAY=:0 gnome-screenshot -f /tmp/screenshot.png"
+sshpass -p "$PASSWORD" scp user@$VM_IP:/tmp/screenshot.png /tmp/vm_screenshot.png
+
+# 3. 获取 VM 状态
+sshpass -p "$PASSWORD" ssh user@$VM_IP "ps aux | grep -E 'node|firefox'"
+
+# 4. 查看最新 trace 日志
+sshpass -p "$PASSWORD" ssh user@$VM_IP "ls -lt ~/jarvis/data/traces/ | head -3"
+sshpass -p "$PASSWORD" ssh user@$VM_IP "tail -50 ~/jarvis/data/traces/$(ls -t ~/jarvis/data/traces/ | head -1)"
+
+# 5. 反思问题
+# - 检查日志中的错误信息
+# - 检查截图中的 GUI 状态
+# - 检查工具调用是否失败
+# - 必要时修改代码
 ```
 
 关注的关键信息：

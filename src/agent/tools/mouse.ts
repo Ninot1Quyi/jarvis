@@ -27,8 +27,15 @@ async function execCommand(command: string): Promise<string> {
   const { exec } = await import('child_process')
   const { promisify } = await import('util')
   const execAsync = promisify(exec)
+
+  // For Linux, ensure DISPLAY is set
+  const env = { ...process.env }
+  if (isLinux && !env.DISPLAY) {
+    env.DISPLAY = ':0'
+  }
+
   try {
-    const { stdout, stderr } = await execAsync(command)
+    const { stdout, stderr } = await execAsync(command, { env })
     if (stderr) {
       logger.debug(`xdotool stderr: ${stderr}`)
     }
