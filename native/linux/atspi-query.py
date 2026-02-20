@@ -171,25 +171,50 @@ def query_at_point(x: int, y: int) -> Dict[str, Any]:
     # Get desktop
     desktop = Atspi.get_desktop(0)
 
-    # Try to get element at point
-    try:
-        element = desktop.get_element_at_point(x, y)
-        if element:
-            element_info = get_element_info(element, x, y)
-            element_info['similarity'] = 1.0 if element_info['distance'] < 50 else 0.5
-    except Exception as e:
-        # Fallback: search through all applications
-        element = None
-        for app in desktop:
-            try:
-                for window in app:
-                    element = window.get_element_at_point(x, y)
-                    if element and element.get_role_name():
-                        element_info = get_element_info(element, x, y)
-                        element_info['similarity'] = 1.0 if element_info['distance'] < 50 else 0.5
-                        break
-            except:
+    element = None
+    element_info = None
+
+    # Search through all applications using get_child_at_index
+    child_count = desktop.get_child_count()
+    for i in range(child_count):
+        try:
+            app = desktop.get_child_at_index(i)
+            if not app:
                 continue
+
+            # Get element at point from this app
+            try:
+                # Try to get element at point - using get_accessible_at_point
+                el = app.get_accessible_at_point(x, y, Atspi.CoordType.screen)
+                if el:
+                    element = el
+                    element_info = get_element_info(element, x, y)
+                    element_info['similarity'] = 1.0 if element_info['distance'] < 50 else 0.5
+                    break
+            except:
+                pass
+
+            # Also check windows (children of app)
+            window_count = app.get_child_count()
+            for j in range(window_count):
+                try:
+                    window = app.get_child_at_index(j)
+                    if not window:
+                        continue
+
+                    try:
+                        el = window.get_accessible_at_point(x, y, Atspi.CoordType.screen)
+                        if el:
+                            element = el
+                            element_info = get_element_info(element, x, y)
+                            element_info['similarity'] = 1.0 if element_info['distance'] < 50 else 0.5
+                            break
+                    except:
+                        continue
+                except:
+                    continue
+        except:
+            continue
 
     if not element:
         return {
@@ -205,9 +230,12 @@ def query_at_point(x: int, y: int) -> Dict[str, Any]:
     # Get nearby elements
     nearby = []
     try:
-        # Get all applications and search for elements near the point
-        for app in desktop:
+        # Search through all applications for nearby elements
+        for i in range(child_count):
             try:
+                app = desktop.get_child_at_index(i)
+                if not app:
+                    continue
                 _collect_nearby_elements(app, x, y, 100, nearby)
             except:
                 continue
@@ -235,11 +263,16 @@ def _collect_nearby_elements(element: Atspi.Accessible, x: int, y: int, max_dist
         if info['distance'] < max_distance and info['role'] != 'unknown':
             results.append(info)
 
-        # Traverse children
+        # Traverse children using get_child_at_index
         try:
-            children = element.get_children()
-            for child in children:
-                _collect_nearby_elements(child, x, y, max_distance, results)
+            child_count = element.get_child_count()
+            for i in range(child_count):
+                try:
+                    child = element.get_child_at_index(i)
+                    if child:
+                        _collect_nearby_elements(child, x, y, max_distance, results)
+                except:
+                    continue
         except:
             pass
     except:
@@ -253,8 +286,13 @@ def search_by_keyword(keyword: str) -> Dict[str, Any]:
 
     results = []
 
-    for app in desktop:
+    # Use get_child_at_index to iterate applications
+    child_count = desktop.get_child_count()
+    for i in range(child_count):
         try:
+            app = desktop.get_child_at_index(i)
+            if not app:
+                continue
             _search_element(app, keyword.lower(), results)
         except:
             continue
@@ -287,11 +325,16 @@ def _search_element(element: Atspi.Accessible, keyword: str, results: List[Dict]
             info['distance'] = 0
             results.append(info)
 
-        # Continue searching children
+        # Continue searching children using get_child_at_index
         try:
-            children = element.get_children()
-            for child in children:
-                _search_element(child, keyword, results)
+            child_count = element.get_child_count()
+            for i in range(child_count):
+                try:
+                    child = element.get_child_at_index(i)
+                    if child:
+                        _search_element(child, keyword, results)
+                except:
+                    continue
         except:
             pass
     except:
@@ -305,17 +348,32 @@ def get_desktop_state() -> Dict[str, Any]:
 
     apps = []
 
-    for app in desktop:
+    # Get applications from desktop children
+    child_count = desktop.get_child_count()
+
+    for i in range(child_count):
         try:
+            app = desktop.get_child_at_index(i)
+            if not app:
+                continue
+
             name = app.get_name()
-            if not name:
+            role = app.get_role_name()
+
+            # Only process applications
+            if role != 'application':
                 continue
 
             # Get windows for this app
             windows = []
             try:
-                for window in app:
+                window_count = app.get_child_count()
+                for j in range(window_count):
                     try:
+                        window = app.get_child_at_index(j)
+                        if not window:
+                            continue
+
                         comp = window.queryComponent()
                         if comp:
                             extents = comp.getExtents(Atspi.CoordType.screen)
@@ -338,9 +396,15 @@ def get_desktop_state() -> Dict[str, Any]:
         except:
             continue
 
-    # Get focused application
-    focused_app = Atspi.get_focused_application()
-    focused_name = focused_app.get_name() if focused_app else ''
+    # Get focused application - use desktop tree traversal
+    focused_name = ""
+    try:
+        # Try to find focused element and get its root app
+        # Note: get_focused_application is not available in this pyatspi version
+        # We'll set it to empty string as fallback
+        pass
+    except:
+        pass
 
     return {
         "success": True,
@@ -354,15 +418,17 @@ def main():
     parser = argparse.ArgumentParser(description='Linux AT-SPI2 Query Tool')
     parser.add_argument('command', choices=['query', 'search', 'state'],
                         help='Command to execute')
-    parser.add_argument('x', nargs='?', type=int, help='X coordinate (for query)')
-    parser.add_argument('y', nargs='?', type=int, help='Y coordinate (for query)')
+
+    # Use --x and --y for query command to avoid ambiguity
+    parser.add_argument('--x', type=int, help='X coordinate (for query)')
+    parser.add_argument('--y', type=int, help='Y coordinate (for query)')
     parser.add_argument('keyword', nargs='?', help='Search keyword (for search)')
 
     args = parser.parse_args()
 
     if args.command == 'query':
         if args.x is None or args.y is None:
-            print(json.dumps({"success": False, "error": "x and y required for query"}))
+            print(json.dumps({"success": False, "error": "--x and --y required for query"}))
             sys.exit(1)
         result = query_at_point(args.x, args.y)
     elif args.command == 'search':
