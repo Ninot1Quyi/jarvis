@@ -15,6 +15,73 @@ import {
 
 const COORDINATE_FACTOR = 1000
 
+// Platform detection
+const isLinux = process.platform === 'linux'
+const isMac = process.platform === 'darwin'
+const isWin = process.platform === 'win32'
+
+/**
+ * Execute command via shell (for Linux xdotool fallback)
+ */
+async function execCommand(command: string): Promise<string> {
+  const { exec } = await import('child_process')
+  const { promisify } = await import('util')
+  const execAsync = promisify(exec)
+  try {
+    const { stdout, stderr } = await execAsync(command)
+    if (stderr) {
+      logger.debug(`xdotool stderr: ${stderr}`)
+    }
+    return stdout
+  } catch (error) {
+    const err = error as Error & { stderr?: string }
+    logger.debug(`xdotool error: ${err.message}`)
+    throw error
+  }
+}
+
+/**
+ * Linux xdotool-based mouse operations
+ * Used when nut-js is not available (e.g., ARM64 Linux)
+ */
+const linuxMouse = {
+  async move(x: number, y: number, speed: number): Promise<void> {
+    if (speed === -1) {
+      // Instant move
+      await execCommand(`xdotool mousemove ${x} ${y}`)
+    } else {
+      // For now, just do instant move - smooth movement would need more complex implementation
+      await execCommand(`xdotool mousemove ${x} ${y}`)
+    }
+  },
+
+  async click(button: number): Promise<void> {
+    // button: 1=left, 2=middle, 3=right
+    await execCommand(`xdotool click ${button}`)
+  },
+
+  async doubleClick(button: number): Promise<void> {
+    await execCommand(`xdotool click --repeat 2 ${button}`)
+  },
+
+  async drag(startX: number, startY: number, endX: number, endY: number): Promise<void> {
+    await execCommand(`xdotool mousemove ${startX} ${startY}`)
+    await execCommand(`xdotool mousedown 1`)
+    await execCommand(`xdotool mousemove ${endX} ${endY}`)
+    await execCommand(`xdotool mouseup 1`)
+  },
+
+  async scroll(direction: 'up' | 'down' | 'left' | 'right'): Promise<void> {
+    const mapping: Record<string, string> = {
+      up: '4',
+      down: '5',
+      left: '6',
+      right: '7',
+    }
+    await execCommand(`xdotool click ${mapping[direction]}`)
+  },
+}
+
 function normalizeCoord(value: number): number {
   return value / COORDINATE_FACTOR
 }
@@ -78,8 +145,16 @@ async function correctCoordinate(
 
 // 移动鼠标，支持瞬移（mouseSpeed=-1）
 async function moveMouse(x: number, y: number) {
-  const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
   const speed = config.mouseSpeed
+
+  if (isLinux) {
+    // Use xdotool on Linux
+    await linuxMouse.move(x, y, speed)
+    return
+  }
+
+  // Use nut-js on macOS/Windows
+  const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
 
   if (speed === -1) {
     await mouse.setPosition(new Point(x, y))
@@ -276,7 +351,6 @@ export const clickTool: Tool = {
     },
   },
   async execute(args, context) {
-    const { mouse, keyboard, Key } = await import('@computer-use/nut-js')
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
@@ -295,40 +369,72 @@ export const clickTool: Tool = {
     const correctedStr = correction.corrected ? ' (corrected)' : ''
     logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${modifierStr}${correctedStr}${desc ? ` (target: ${desc})` : ''}`)
 
-    // Map modifier names to Key enum
-    const modifierKeyMap: Record<string, number> = {
-      cmd: Key.LeftCmd,
-      command: Key.LeftCmd,
-      ctrl: Key.LeftControl,
-      control: Key.LeftControl,
-      shift: Key.LeftShift,
-      alt: Key.LeftAlt,
-      option: Key.LeftAlt,
-    }
-
-    // Get modifier keys to press
-    const modifierKeys: number[] = []
-    if (modifiers) {
-      for (const mod of modifiers) {
-        const key = modifierKeyMap[mod.toLowerCase()]
-        if (key) modifierKeys.push(key)
-      }
-    }
-
     // Execute click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
       await moveMouse(x, y)
 
-      // Press modifier keys
-      if (modifierKeys.length > 0) {
-        await keyboard.pressKey(...modifierKeys)
-      }
+      if (isLinux) {
+        // Linux: use xdotool with modifier support
+        if (modifiers && modifiers.length > 0) {
+          // Build xdotool command with modifiers
+          const modMap: Record<string, string> = {
+            cmd: 'super',
+            command: 'super',
+            ctrl: 'ctrl',
+            control: 'ctrl',
+            shift: 'shift',
+            alt: 'alt',
+            option: 'alt',
+          }
+          const modKeys = modifiers.map(m => modMap[m.toLowerCase()]).filter(Boolean)
+          if (modKeys.length > 0) {
+            // xdotool keydown + click + keyup
+            for (const mod of modKeys) {
+              await execCommand(`xdotool keydown ${mod}`)
+            }
+            await execCommand('xdotool click 1')
+            for (const mod of modKeys.reverse()) {
+              await execCommand(`xdotool keyup ${mod}`)
+            }
+            return
+          }
+        }
+        await linuxMouse.click(1) // Left click
+      } else {
+        // macOS/Windows: use nut-js
+        const { mouse, keyboard, Key } = await import('@computer-use/nut-js')
 
-      await mouse.leftClick()
+        // Map modifier names to Key enum
+        const modifierKeyMap: Record<string, number> = {
+          cmd: Key.LeftCmd,
+          command: Key.LeftCmd,
+          ctrl: Key.LeftControl,
+          control: Key.LeftControl,
+          shift: Key.LeftShift,
+          alt: Key.LeftAlt,
+          option: Key.LeftAlt,
+        }
 
-      // Release modifier keys
-      if (modifierKeys.length > 0) {
-        await keyboard.releaseKey(...modifierKeys)
+        // Get modifier keys to press
+        const modifierKeys: number[] = []
+        if (modifiers) {
+          for (const mod of modifiers) {
+            const key = modifierKeyMap[mod.toLowerCase()]
+            if (key) modifierKeys.push(key)
+          }
+        }
+
+        // Press modifier keys
+        if (modifierKeys.length > 0) {
+          await keyboard.pressKey(...modifierKeys)
+        }
+
+        await mouse.leftClick()
+
+        // Release modifier keys
+        if (modifierKeys.length > 0) {
+          await keyboard.releaseKey(...modifierKeys)
+        }
       }
     })
 
@@ -362,7 +468,6 @@ export const doubleClickTool: Tool = {
     },
   },
   async execute(args, context) {
-    const { mouse } = await import('@computer-use/nut-js')
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
@@ -381,7 +486,13 @@ export const doubleClickTool: Tool = {
     // Execute double click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
       await moveMouse(x, y)
-      await mouse.doubleClick(0)
+
+      if (isLinux) {
+        await linuxMouse.doubleClick(1) // Left button
+      } else {
+        const { mouse } = await import('@computer-use/nut-js')
+        await mouse.doubleClick(0)
+      }
     })
 
     const result: ToolResult = {
@@ -414,7 +525,6 @@ export const rightClickTool: Tool = {
     },
   },
   async execute(args, context) {
-    const { mouse } = await import('@computer-use/nut-js')
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
@@ -433,7 +543,13 @@ export const rightClickTool: Tool = {
     // Execute right click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
       await moveMouse(x, y)
-      await mouse.rightClick()
+
+      if (isLinux) {
+        await linuxMouse.click(3) // Right click
+      } else {
+        const { mouse } = await import('@computer-use/nut-js')
+        await mouse.rightClick()
+      }
     })
 
     const result: ToolResult = {
@@ -466,7 +582,6 @@ export const middleClickTool: Tool = {
     },
   },
   async execute(args, context) {
-    const { mouse, Button } = await import('@computer-use/nut-js')
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
@@ -485,7 +600,13 @@ export const middleClickTool: Tool = {
     // Execute middle click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
       await moveMouse(x, y)
-      await mouse.click(Button.MIDDLE)
+
+      if (isLinux) {
+        await linuxMouse.click(2) // Middle click
+      } else {
+        const { mouse, Button } = await import('@computer-use/nut-js')
+        await mouse.click(Button.MIDDLE)
+      }
     })
 
     const result: ToolResult = {
@@ -520,7 +641,6 @@ export const dragTool: Tool = {
     },
   },
   async execute(args, context) {
-    const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
@@ -532,8 +652,13 @@ export const dragTool: Tool = {
     const endX = Math.round(normalizeCoord(endCoord[0]) * screenWidth)
     const endY = Math.round(normalizeCoord(endCoord[1]) * screenHeight)
 
-    await moveMouse(startX, startY)
-    await mouse.drag(straightTo(new Point(endX, endY)))
+    if (isLinux) {
+      await linuxMouse.drag(startX, startY, endX, endY)
+    } else {
+      const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
+      await moveMouse(startX, startY)
+      await mouse.drag(straightTo(new Point(endX, endY)))
+    }
 
     return { success: true, data: { startCoordinate: startCoord, endCoordinate: endCoord } }
   },
@@ -561,7 +686,6 @@ export const scrollTool: Tool = {
     },
   },
   async execute(args, context) {
-    const { mouse } = await import('@computer-use/nut-js')
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
 
@@ -572,15 +696,20 @@ export const scrollTool: Tool = {
 
     await moveMouse(x, y)
 
-    const amount = 300
-    if (direction === 'up') {
-      await mouse.scrollUp(amount)
-    } else if (direction === 'down') {
-      await mouse.scrollDown(amount)
-    } else if (direction === 'left') {
-      await mouse.scrollLeft(amount)
-    } else if (direction === 'right') {
-      await mouse.scrollRight(amount)
+    if (isLinux) {
+      await linuxMouse.scroll(direction as 'up' | 'down' | 'left' | 'right')
+    } else {
+      const { mouse } = await import('@computer-use/nut-js')
+      const amount = 300
+      if (direction === 'up') {
+        await mouse.scrollUp(amount)
+      } else if (direction === 'down') {
+        await mouse.scrollDown(amount)
+      } else if (direction === 'left') {
+        await mouse.scrollLeft(amount)
+      } else if (direction === 'right') {
+        await mouse.scrollRight(amount)
+      }
     }
 
     return { success: true, data: { coordinate: coord, direction } }

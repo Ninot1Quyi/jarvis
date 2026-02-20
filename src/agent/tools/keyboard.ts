@@ -1,13 +1,34 @@
 import type { Tool } from '../../types.js'
 import { spawn } from 'child_process'
 
+// Platform detection
+const isLinux = process.platform === 'linux'
+const isMac = process.platform === 'darwin'
+const isWin = process.platform === 'win32'
+const isWSL = isLinux && process.env.WSL_DISTRO_NAME
+
+/**
+ * Execute command via shell (for Linux xdotool fallback)
+ */
+async function execCommand(command: string): Promise<string> {
+  const { exec } = await import('child_process')
+  const { promisify } = await import('util')
+  const execAsync = promisify(exec)
+  try {
+    const { stdout, stderr } = await execAsync(command)
+    if (stderr) {
+      console.error(`xdotool stderr: ${stderr}`)
+    }
+    return stdout
+  } catch (error) {
+    const err = error as Error & { stderr?: string }
+    console.error(`xdotool error: ${err.message}`)
+    throw error
+  }
+}
+
 // 将文本写入剪贴板（跨平台）
 async function copyToClipboard(text: string): Promise<void> {
-  const isMac = process.platform === 'darwin'
-  const isWin = process.platform === 'win32'
-  // 检测是否在 WSL 中运行
-  const isWSL = process.platform === 'linux' && process.env.WSL_DISTRO_NAME
-
   return new Promise((resolve, reject) => {
     let proc
     if (isMac) {
@@ -91,7 +112,6 @@ export const typeTool: Tool = {
     },
   },
   async execute(args) {
-    const { keyboard, Key } = await import('@computer-use/nut-js')
     const text = args.text as string
 
     // 检测是否包含非ASCII字符（中文等）或换行符/制表符
@@ -103,10 +123,16 @@ export const typeTool: Tool = {
       // 将文本写入剪贴板
       await copyToClipboard(text)
 
-      // 执行粘贴 (macOS: Cmd+V, Windows/Linux: Ctrl+V)
-      const modKey = process.platform === 'darwin' ? Key.LeftCmd : Key.LeftControl
-      await keyboard.pressKey(modKey, Key.V)
-      await keyboard.releaseKey(modKey, Key.V)
+      // 执行粘贴
+      if (isLinux) {
+        // Linux: use xdotool Ctrl+V
+        await execCommand('xdotool key ctrl+v')
+      } else {
+        const { keyboard, Key } = await import('@computer-use/nut-js')
+        const modKey = isMac ? Key.LeftCmd : Key.LeftControl
+        await keyboard.pressKey(modKey, Key.V)
+        await keyboard.releaseKey(modKey, Key.V)
+      }
 
       // Wait for paste to complete
       await new Promise(resolve => setTimeout(resolve, 150))
@@ -115,13 +141,21 @@ export const typeTool: Tool = {
     }
 
     // 简单ASCII文本直接打字
-    keyboard.config.autoDelayMs = 10
-    await keyboard.type(text)
+    if (isLinux) {
+      // Linux: use xdotool type
+      // Escape special characters for xdotool
+      const escapedText = text.replace(/'/g, "'\\''")
+      await execCommand(`xdotool type -- '${escapedText}'`)
+    } else {
+      const { keyboard } = await import('@computer-use/nut-js')
+      keyboard.config.autoDelayMs = 10
+      await keyboard.type(text)
+    }
 
     // Wait for typing to complete
     await new Promise(resolve => setTimeout(resolve, 150))
 
-    return { success: true, data: { text, method: 'type' } }
+    return { success: true, data: { text, method: isLinux ? 'xdotool' : 'type' } }
   },
 }
 
@@ -141,11 +175,56 @@ export const hotkeyTool: Tool = {
     },
   },
   async execute(args) {
-    const { keyboard, Key } = await import('@computer-use/nut-js')
     const keysStr = args.key as string
 
     // Parse keys like "ctrl c" or "cmd shift s" (space separated)
     const keyParts = keysStr.split(/[\s+]+/).map(k => k.trim().toLowerCase()).filter(k => k)
+
+    if (isLinux) {
+      // Linux: use xdotool
+      // Map keys to xdotool format
+      const xdotoolKeyMap: Record<string, string> = {
+        command: 'super',
+        cmd: 'super',
+        win: 'super',
+        windows: 'super',
+        super: 'super',
+        meta: 'super',
+        control: 'ctrl',
+        ctrl: 'ctrl',
+        option: 'alt',
+        alt: 'alt',
+        shift: 'shift',
+        return: 'Return',
+        enter: 'Return',
+        escape: 'Escape',
+        esc: 'Escape',
+        tab: 'Tab',
+        space: 'space',
+        backspace: 'BackSpace',
+        delete: 'Delete',
+        up: 'Up',
+        down: 'Down',
+        left: 'Left',
+        right: 'Right',
+        home: 'Home',
+        end: 'End',
+        pageup: 'Page_Up',
+        pagedown: 'Page_Down',
+      }
+
+      // Build xdotool command
+      const xdotoolKeys = keyParts.map(k => xdotoolKeyMap[k] || k).join('+')
+      await execCommand(`xdotool key ${xdotoolKeys}`)
+
+      // Wait for key action to be processed
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      return { success: true, data: { key: keysStr, method: 'xdotool' } }
+    }
+
+    // macOS/Windows: use nut-js
+    const { keyboard, Key } = await import('@computer-use/nut-js')
 
     const keyEnumMap: Record<string, number> = {
       command: Key.LeftCmd,
