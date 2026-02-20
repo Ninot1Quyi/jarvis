@@ -54,6 +54,8 @@ Your reply content here
 
 For mail replies: extract the sender's email from the [From: ...] field in the incoming mail message and put it in `<recipient>`.
 
+**IMPORTANT: When sending emails, if the user does NOT specify a specific email client (like Thunderbird, Outlook, etc.), you MUST use the `<mail></mail>` format to send emails - this is the most efficient method. Only use GUI automation to open a specific email client when the user explicitly requests it.**
+
 ### Attachments
 
 CRITICAL: When a user asks you to send, share, or show a file (screenshot, document, image, video, etc.), you MUST include the file path in `<attachment>` tags inside your `<chat>` reply. Without `<attachment>` tags, the file will NOT be delivered to the user.

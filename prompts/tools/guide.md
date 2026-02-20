@@ -66,6 +66,21 @@ find_element(keyword: "SearchBox") → click([coordinates]) → type("query") �
 take_screenshot(name: "page1") → scroll(direction: "down") → take_screenshot(name: "page2")
 ```
 
+### Scrolling Control
+For web pages and scrollable content:
+- **Quick scroll**: Use keyboard shortcuts like `Page Up`, `Page Down`, `Home`, `End`
+- **Fine-grained control**: Use scroll tool with `amount` parameter (default 3 units)
+  - `scroll(coordinate: [500, 500], direction: "down", amount: 5)` - scrolls 5 units
+  - Each unit is approximately one mouse wheel tick (~100 pixels)
+- **For long content**: Periodically save important info to a file using write_file, then continue scrolling
+
+### Saving Notes While Browsing
+When browsing multiple pages, save important information to a file:
+```
+write_file(file_path: "/workspace/notes.md", content: "# Page 1 Notes\n- Item 1 details\n- Item 2 details\n")
+```
+This allows reviewing all gathered information after browsing multiple pages.
+
 ### Batch Actions
 When confident (stable UI, locate matched, recent success):
 ```
