@@ -101,7 +101,44 @@ curl -s -X POST "$SERVER/execute" \
   -d "{\"command\": [\"bash\", \"-c\", \"echo '$PASSWORD' | sudo -S systemctl restart ssh\"], \"shell\": false}"
 ```
 
-### 4. 同步源代码到 VM
+### 4. 配置 GNOME 代理
+
+**通过 OSWorld API 配置系统代理**（让浏览器可以访问外网）:
+```bash
+VM_IP="192.168.236.129"
+SERVER="http://$VM_IP:5000"
+
+# 配置 HTTP 代理
+curl -s -X POST "$SERVER/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["gsettings", "set", "org.gnome.system.proxy.http", "host", "192.168.236.1"], "shell": false}'
+
+curl -s -X POST "$SERVER/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["gsettings", "set", "org.gnome.system.proxy.http", "port", "7897"], "shell": false}'
+
+# 配置 HTTPS 代理
+curl -s -X POST "$SERVER/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["gsettings", "set", "org.gnome.system.proxy.https", "host", "192.168.236.1"], "shell": false}'
+
+curl -s -X POST "$SERVER/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["gsettings", "set", "org.gnome.system.proxy.https", "port", "7897"], "shell": false}'
+
+# 启用手动代理模式
+curl -s -X POST "$SERVER/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["gsettings", "set", "org.gnome.system.proxy", "mode", "manual"], "shell": false}'
+```
+
+**验证代理是否生效**:
+```bash
+curl -s --proxy http://192.168.236.1:7897 -o /dev/null -w '%{http_code}' https://www.google.com
+# 返回 200 表示成功
+```
+
+### 5. 同步源代码到 VM
 
 **重要：源代码在宿主机修改，VM 仅用于测试和编译**
 
