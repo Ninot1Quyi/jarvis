@@ -70,6 +70,7 @@ export class Agent {
   private roundClickIndex: number = 0  // 当前写入位置
   private nativeToolCall: boolean = true  // 是否使用原生工具调用
   private skillComposer: PromptComposer | null = null  // Skills系统
+  private recentRoundImages: ImageInput[][] = []  // 追踪每轮的图片，只保留最后3轮
   private noToolCallCount: number = 0  // Track consecutive no-tool-call rounds
   private overlay: boolean = false  // 是否启用 overlay UI
   private interactive: boolean = false  // 交互模式
@@ -513,6 +514,23 @@ Note: Screenshot is attached. If target window != focused window, first click ac
       }
       // 清空待处理的工具截图
       this.pendingToolScreenshots = []
+
+      // Track this round's images and keep only last 3 rounds with images
+      this.recentRoundImages.push([...images])
+      if (this.recentRoundImages.length > 3) {
+        this.recentRoundImages.shift()
+      }
+      // Use only images from last 3 rounds
+      const flattenedImages = this.recentRoundImages.flat()
+      images.length = 0
+      images.push(...flattenedImages)
+
+      // Update guiAttachments to match (for overlay UI display)
+      const flattenedAttachments = this.recentRoundImages.flatMap(round =>
+        round.map(img => (img as { data: string }).data)
+      )
+      guiAttachments.length = 0
+      guiAttachments.push(...flattenedAttachments)
 
       // 发送 computer 消息到 overlay UI（含截图附件）
       messageManager.notifyGuiComputer(computerContent, guiAttachments.length > 0 ? guiAttachments : undefined)
