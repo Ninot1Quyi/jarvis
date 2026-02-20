@@ -54,17 +54,21 @@ async function execCommand(command: string): Promise<string> {
 const linuxMouse = {
   async move(x: number, y: number, speed: number): Promise<void> {
     if (speed === -1) {
-      // Instant move
-      await execCommand(`xdotool mousemove ${x} ${y}`)
+      // Instant move with --sync to ensure completion
+      await execCommand(`xdotool mousemove --sync ${x} ${y}`)
     } else {
       // For now, just do instant move - smooth movement would need more complex implementation
-      await execCommand(`xdotool mousemove ${x} ${y}`)
+      await execCommand(`xdotool mousemove --sync ${x} ${y}`)
     }
+    // Small delay to ensure mouse move completes
+    await new Promise(resolve => setTimeout(resolve, 50))
   },
 
   async click(button: number): Promise<void> {
     // button: 1=left, 2=middle, 3=right
     await execCommand(`xdotool click ${button}`)
+    // Small delay after click
+    await new Promise(resolve => setTimeout(resolve, 50))
   },
 
   async doubleClick(button: number): Promise<void> {
@@ -72,20 +76,20 @@ const linuxMouse = {
   },
 
   async drag(startX: number, startY: number, endX: number, endY: number): Promise<void> {
-    await execCommand(`xdotool mousemove ${startX} ${startY}`)
+    await execCommand(`xdotool mousemove --sync ${startX} ${startY}`)
     await execCommand(`xdotool mousedown 1`)
-    await execCommand(`xdotool mousemove ${endX} ${endY}`)
+    await execCommand(`xdotool mousemove --sync ${endX} ${endY}`)
     await execCommand(`xdotool mouseup 1`)
   },
 
-  async scroll(direction: 'up' | 'down' | 'left' | 'right'): Promise<void> {
+  async scroll(direction: 'up' | 'down' | 'left' | 'right', amount: number = 3): Promise<void> {
     const mapping: Record<string, string> = {
       up: '4',
       down: '5',
       left: '6',
       right: '7',
     }
-    await execCommand(`xdotool click ${mapping[direction]}`)
+    await execCommand(`xdotool click --repeat ${amount} ${mapping[direction]}`)
   },
 }
 
@@ -374,7 +378,7 @@ export const clickTool: Tool = {
 
     const modifierStr = modifiers?.length ? ` +[${modifiers.join('+')}]` : ''
     const correctedStr = correction.corrected ? ' (corrected)' : ''
-    logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y})${modifierStr}${correctedStr}${desc ? ` (target: ${desc})` : ''}`)
+    logger.debug(`click: [${coord[0]}, ${coord[1]}] -> screen(${x}, ${y}) (screenSize: ${screenWidth}x${screenHeight})${modifierStr}${correctedStr}${desc ? ` (target: ${desc})` : ''}`)
 
     // Execute click with state diff
     const stateDiffResult = await executeWithStateDiff(x, y, async () => {
@@ -674,7 +678,7 @@ export const dragTool: Tool = {
 export const scrollTool: Tool = {
   definition: {
     name: 'scroll',
-    description: 'Scroll at the specified position. Coordinates are in range [0, 1000].',
+    description: 'Scroll at the specified position. Coordinates are in range [0, 1000]. amount controls how many scroll units (default 3). For web pages, consider using keyboard shortcuts like Page Up/Down first.',
     parameters: {
       type: 'object',
       properties: {
@@ -688,6 +692,10 @@ export const scrollTool: Tool = {
           enum: ['up', 'down', 'left', 'right'],
           description: 'Scroll direction',
         },
+        amount: {
+          type: 'number',
+          description: 'Number of scroll units (default 3). Each unit is one mouse wheel tick.',
+        },
       },
       required: ['coordinate', 'direction'],
     },
@@ -700,22 +708,25 @@ export const scrollTool: Tool = {
     const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
     const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
     const direction = args.direction as string
+    const amount = (args.amount as number) || 3  // 默认滚动3个单位
 
     await moveMouse(x, y)
 
     if (isLinux) {
-      await linuxMouse.scroll(direction as 'up' | 'down' | 'left' | 'right')
+      // 使用 --repeat 参数控制滚动次数
+      await linuxMouse.scroll(direction as 'up' | 'down' | 'left' | 'right', amount)
     } else {
       const { mouse } = await import('@computer-use/nut-js')
-      const amount = 300
+      // 每个单位约100像素
+      const scrollAmount = amount * 100
       if (direction === 'up') {
-        await mouse.scrollUp(amount)
+        await mouse.scrollUp(scrollAmount)
       } else if (direction === 'down') {
-        await mouse.scrollDown(amount)
+        await mouse.scrollDown(scrollAmount)
       } else if (direction === 'left') {
-        await mouse.scrollLeft(amount)
+        await mouse.scrollLeft(scrollAmount)
       } else if (direction === 'right') {
-        await mouse.scrollRight(amount)
+        await mouse.scrollRight(scrollAmount)
       }
     }
 

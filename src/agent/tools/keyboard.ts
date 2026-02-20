@@ -36,22 +36,22 @@ async function execCommand(command: string): Promise<string> {
 
 // 将文本写入剪贴板（跨平台）
 async function copyToClipboard(text: string): Promise<void> {
-  // For Linux, ensure DISPLAY is set
-  const env = isLinux ? { ...process.env, DISPLAY: process.env.DISPLAY || ':0' } : undefined
+  // For Linux, merge current env with DISPLAY (spawn replaces env completely)
+  const env = isLinux ? { ...process.env, DISPLAY: ':0' } : undefined
 
   return new Promise((resolve, reject) => {
-    let proc
+    let proc: ReturnType<typeof spawn> | undefined
     if (isMac) {
       proc = spawn('pbcopy')
-      proc.stdin.write(text)
-      proc.stdin.end()
+      proc.stdin?.write(text)
+      proc.stdin?.end()
     } else if (isWin || isWSL) {
       // Windows: 使用 UTF-16LE 编码直接写入 clip.exe
       // clip.exe 原生支持 UTF-16LE（Windows Unicode 格式）
       proc = spawn(isWSL ? 'clip.exe' : 'clip')
       const utf16leBuffer = Buffer.from(text, 'utf16le')
-      proc.stdin.write(utf16leBuffer)
-      proc.stdin.end()
+      proc.stdin?.write(utf16leBuffer)
+      proc.stdin?.end()
     } else {
       // Linux: 检测 Wayland 或 X11
       const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' ||
@@ -60,13 +60,13 @@ async function copyToClipboard(text: string): Promise<void> {
       if (isWayland) {
         // Wayland: 优先使用 wl-copy，失败则尝试 xclip (XWayland)
         proc = spawn('wl-copy', ['--foreground'], { env })
-        proc.stdin.write(text)
-        proc.stdin.end()
+        proc.stdin?.write(text)
+        proc.stdin?.end()
         proc.on('error', () => {
           // wl-copy 失败，尝试 XWayland xclip
           const fallback = spawn('xclip', ['-selection', 'clipboard'], { env })
-          fallback.stdin.write(text)
-          fallback.stdin.end()
+          fallback.stdin?.write(text)
+          fallback.stdin?.end()
           fallback.on('close', (code) => {
             if (code === 0) resolve()
             else reject(new Error(`clipboard fallback failed with code ${code}`))
@@ -80,32 +80,58 @@ async function copyToClipboard(text: string): Promise<void> {
         return
       } else {
         // X11: 尝试 xclip，失败则尝试 xsel
+        // 添加超时避免卡住
+        let resolved = false
+        const timeout = setTimeout(() => {
+          if (!resolved) {
+            resolved = true
+            proc?.kill()
+            // 尝试 xsel 作为 fallback
+            const fallback = spawn('xsel', ['--clipboard', '--input'], { env })
+            fallback.stdin?.write(text)
+            fallback.stdin?.end()
+            fallback.on('close', (code) => {
+              if (code === 0) resolve()
+              else reject(new Error(`xsel fallback failed with code ${code}`))
+            })
+            fallback.on('error', reject)
+          }
+        }, 3000)
+
         proc = spawn('xclip', ['-selection', 'clipboard'], { env })
-        proc.stdin.write(text)
-        proc.stdin.end()
+        proc.stdin?.write(text)
+        proc.stdin?.end()
         proc.on('error', () => {
-          const fallback = spawn('xsel', ['--clipboard', '--input'], { env })
-          fallback.stdin.write(text)
-          fallback.stdin.end()
-          fallback.on('close', (code) => {
-            if (code === 0) resolve()
-            else reject(new Error(`xsel fallback failed with code ${code}`))
-          })
-          fallback.on('error', reject)
+          if (!resolved) {
+            clearTimeout(timeout)
+            resolved = true
+            const fallback = spawn('xsel', ['--clipboard', '--input'], { env })
+            fallback.stdin?.write(text)
+            fallback.stdin?.end()
+            fallback.on('close', (code) => {
+              if (code === 0) resolve()
+              else reject(new Error(`xsel fallback failed with code ${code}`))
+            })
+            fallback.on('error', reject)
+          }
         })
         proc.on('close', (code) => {
-          if (code === 0) resolve()
-          else if (code !== undefined) reject(new Error(`xclip failed with code ${code}`))
+          if (!resolved) {
+            clearTimeout(timeout)
+            resolved = true
+            if (code === 0) resolve()
+            else if (code !== undefined) reject(new Error(`xclip failed with code ${code}`))
+          }
         })
         return
       }
     }
 
-    proc.on('close', (code) => {
+    proc?.on('close', (code) => {
       if (code === 0) resolve()
       else reject(new Error(`clipboard command failed with code ${code}`))
     })
-    proc.on('error', reject)
+    proc?.on('error', reject)
   })
 }
 

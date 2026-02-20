@@ -17,7 +17,7 @@ async function getScreenLogicalSize(): Promise<{ width: number; height: number }
       if (match) {
         const width = parseInt(match[1], 10)
         const height = parseInt(match[2], 10)
-        logger.debug(`Screen logical size (xrandr): ${width}x${height}`)
+        logger.info(`Screen resolution: ${width}x${height}`)
         return { width, height }
       }
     } catch (e) {
