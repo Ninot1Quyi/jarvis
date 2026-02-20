@@ -14,6 +14,28 @@ npm start -- "task" -p anthropic          # Use specific provider
 npm start -- "task" --doubao              # Use Doubao provider
 ```
 
+## VM Testing
+
+When testing Jarvis tasks in a virtual machine, use the vm-auto-eval skill:
+- **Linux VM**: Use `.claude/skills/vm-linux-eval/SKILL.md`
+- **macOS VM**: Use `.claude/skills/vm-auto-eval/SKILL.md`
+
+Example: To run a test in Linux VM, invoke the skill first.
+
+## Email Sending
+
+When sending emails, if the user does NOT specify a specific email client (like Thunderbird, Outlook, etc.), use the `<mail></mail>` format - this is the most efficient method. Only use GUI automation to open a specific email client when the user explicitly requests it.
+
+## Browser Skill - Scrolling and Reading
+
+When browsing web pages:
+
+1. **Search results only show summaries** - click into each result to read full details
+2. **Scroll incrementally**: scroll -> read -> write_file -> scroll -> read -> write_file (repeat)
+3. **Use amount parameter**: `scroll(direction: "down", amount: 3)` controls scroll distance
+4. **Optimal scroll**: each scroll should reveal 80-95% new content (some overlap is good)
+5. **Adjust based on content**: if screenshot looks same as before, increase amount; if completely different, decrease
+
 ## Architecture
 
 ### Core Loop (src/agent/Agent.ts)
