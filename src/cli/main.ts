@@ -99,6 +99,7 @@ async function main() {
   let verbose = false
   let noUi = false
   let interactive = false
+  let evalMode = false
   let clear = false
   let provider: 'anthropic' | 'openai' | 'doubao' | undefined
   let task = ''
@@ -112,6 +113,8 @@ async function main() {
       noUi = true
     } else if (arg === '--interactive' || arg === '-i') {
       interactive = true
+    } else if (arg === '--eval' || arg === '-e') {
+      evalMode = true
     } else if (arg === '--clear') {
       clear = true
     } else if (arg === '--help' || arg === '-h') {
@@ -206,7 +209,7 @@ async function main() {
   }
 
   try {
-    const agent = new Agent({ provider, overlay, interactive })
+    const agent = new Agent({ provider, overlay, interactive, eval: evalMode })
     await agent.run(task || undefined)
   } catch (error: any) {
     // 增强错误日志输出
@@ -280,6 +283,7 @@ Examples:
 Options:
   -i, --interactive      Interactive mode (default when no task given)
   --no-ui                Skip overlay UI, CLI only
+  -e, --eval             Evaluation mode (exit when task completes and enters idle)
   -p, --provider <name>  Use specific provider (anthropic/openai/doubao)
   --anthropic            Use Anthropic Claude
   --openai               Use OpenAI

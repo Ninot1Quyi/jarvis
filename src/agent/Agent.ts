@@ -40,6 +40,7 @@ export interface AgentOptions {
   provider?: string
   overlay?: boolean
   interactive?: boolean  // 交互模式：无初始任务，等待消息
+  eval?: boolean  // 评估模式：任务完成后进入 idle 分支时自动退出
 }
 
 interface ScreenContext {
@@ -87,11 +88,13 @@ export class Agent {
   private stopResolvers: Set<() => void> = new Set()  // Pending stop waiters
   private contextWindow: number = 128000
   private providerName: string
+  private evalMode: boolean = false  // 评估模式
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
     this.overlay = options.overlay || false
     this.interactive = options.interactive || false
+    this.evalMode = options.eval || false
     this.providerName = options.provider || config.defaultProvider
     this.llm = createProvider(this.providerName, config.keys)
     this.tools = toolRegistry
@@ -272,6 +275,15 @@ export class Agent {
           this.lastHadToolCall = true
         } else {
           // Idle-wait: poll for new messages and AX diff
+
+          // Eval 模式：进入 idle 分支表示任务完成，直接退出
+          if (this.evalMode && stepCount > 0) {
+            logger.info('[JARVIS_EVAL] Task completed, entering idle branch. Exiting...')
+            messageManager.setPushNotify(true)
+            finished = true  // 标记任务完成
+            break
+          }
+
           messageManager.setPushNotify(false)
 
           const diffAppsIdle = (config.keys.notification as NotificationConfig)?.diffApps || []
@@ -827,6 +839,17 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
       }
 
       await new Promise(resolve => setTimeout(resolve, 500))
+    }
+
+    // 输出详细的退出原因
+    if (this.evalMode) {
+      if (stepCount >= this.maxSteps) {
+        logger.info(`[JARVIS_EVAL] Exiting: reached max steps (${this.maxSteps})`)
+      } else if (finished) {
+        logger.info(`[JARVIS_EVAL] Exiting: task completed (finished=true), entering idle branch`)
+      } else {
+        logger.info(`[JARVIS_EVAL] Exiting: unknown reason (steps=${stepCount}, finished=${finished})`)
+      }
     }
 
     if (stepCount >= this.maxSteps) {
