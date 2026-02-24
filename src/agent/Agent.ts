@@ -32,6 +32,8 @@ import { type MailConfig } from '../message/mail.js'
 import type { NotificationConfig } from '../notification/types.js'
 import { captureAXSnapshot, computeAXDiff, filterDiffNoise, type AXSnapshot } from '../notification/axSnapshot.js'
 import { MemorySystem } from '../memory/index.js'
+import { McpManager } from '../mcp/index.js'
+import type { McpServerConfig } from '../types.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -89,6 +91,7 @@ export class Agent {
   private contextWindow: number = 128000
   private providerName: string
   private evalMode: boolean = false  // 评估模式
+  private mcpManager: McpManager | null = null
 
   constructor(options: AgentOptions = {}) {
     this.maxSteps = options.maxSteps || config.maxSteps
@@ -144,6 +147,21 @@ export class Agent {
       logger.warn('Failed to initialize memory system:', error)
     }
     logger.debug('Memory system init complete')
+
+    // Initialize MCP servers
+    const mcpServers = config.keys.mcpServers as Record<string, McpServerConfig> | undefined
+    if (mcpServers && Object.keys(mcpServers).length > 0) {
+      try {
+        this.mcpManager = new McpManager()
+        const mcpTools = await this.mcpManager.connectAll(mcpServers)
+        if (mcpTools.length > 0) {
+          this.tools.registerTools(mcpTools)
+          logger.info(`[MCP] ${mcpTools.length} tools registered from MCP servers`)
+        }
+      } catch (error) {
+        logger.warn('[MCP] Failed to initialize MCP servers:', error)
+      }
+    }
 
     // Initialize message manager (channels + deliverers)
     messageManager.init({
@@ -862,6 +880,13 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
     if (this.memorySystem) {
       await this.memorySystem.close()
       this.memorySystem = null
+    }
+
+    // Cleanup MCP connections
+    if (this.mcpManager) {
+      this.tools.unregisterTools(this.mcpManager.getToolNames())
+      await this.mcpManager.disconnectAll()
+      this.mcpManager = null
     }
   }
 

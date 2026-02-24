@@ -105,6 +105,20 @@ export interface Task {
   source: 'tui' | 'webui' | 'email'
 }
 
+// ============ MCP Types ============
+
+export interface McpServerConfig {
+  // stdio transport (local process)
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  // HTTP transport (remote server)
+  url?: string
+  headers?: Record<string, string>
+  // common
+  enabled?: boolean  // default true
+}
+
 // ============ Config Types ============
 
 export interface ProviderConfig {
@@ -153,7 +167,8 @@ export interface KeyConfig {
   mail?: MailConfig
   notification?: NotificationConfig
   memory?: { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } }
-  [key: string]: ProviderConfig | MailConfig | NotificationConfig | { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } } | string | number | undefined
+  mcpServers?: Record<string, McpServerConfig>
+  [key: string]: ProviderConfig | MailConfig | NotificationConfig | { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } } | Record<string, McpServerConfig> | string | number | undefined
 }
 
 export interface JarvisConfig {

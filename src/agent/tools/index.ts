@@ -39,6 +39,16 @@ export class ToolRegistry {
     return this.tools.get(name)
   }
 
+  unregisterTool(name: string): boolean {
+    return this.tools.delete(name)
+  }
+
+  unregisterTools(names: string[]): void {
+    for (const name of names) {
+      this.tools.delete(name)
+    }
+  }
+
   getDefinitions(): ToolDefinition[] {
     return Array.from(this.tools.values()).map(t => t.definition)
   }
