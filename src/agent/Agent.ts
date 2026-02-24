@@ -953,56 +953,88 @@ Do NOT repeat the same click - change your strategy.`
   }
 
   private async getFocusedWindow(): Promise<string> {
-    try {
-      const { exec } = await import('child_process')
-      const { promisify } = await import('util')
-      const execAsync = promisify(exec)
+    const { exec } = await import('child_process')
+    const { promisify } = await import('util')
+    const execAsync = promisify(exec)
 
-      // 使用 AppleScript 获取当前焦点窗口的应用名称和窗口标题
-      const { stdout } = await execAsync(`osascript -e '
-        tell application "System Events"
-          set frontApp to name of first application process whose frontmost is true
-
-          -- 检查 Spotlight 是否打开
-          set spotlightOpen to false
-          try
-            if exists (window 1 of process "Spotlight") then
-              set spotlightOpen to true
-            end if
-          end try
-
-          if spotlightOpen then
-            return "Spotlight | Search"
-          end if
-
-          -- 获取窗口标题（通过 System Events 更可靠）
-          set windowTitle to "N/A"
-          try
-            tell process frontApp
-              if exists (window 1) then
-                set windowTitle to name of window 1
-              end if
-            end tell
-          end try
-
-          return frontApp & " | " & windowTitle
-        end tell
-      '`)
-      return stdout.trim()
-    } catch (e) {
-      // 如果 AppleScript 失败，尝试使用 accessibility API
+    if (process.platform === 'darwin') {
       try {
-        const { captureState } = await import('../accessibility/index.js')
-        const state = await captureState()
-        if (state.success && state.focusedApplication) {
-          const appName = state.focusedApplication.title || 'Unknown App'
-          const windowTitle = state.focusedWindow?.title || 'N/A'
-          return `${appName} | ${windowTitle}`
-        }
+        const { stdout } = await execAsync(`osascript -e '
+          tell application "System Events"
+            set frontApp to name of first application process whose frontmost is true
+
+            -- 检查 Spotlight 是否打开
+            set spotlightOpen to false
+            try
+              if exists (window 1 of process "Spotlight") then
+                set spotlightOpen to true
+              end if
+            end try
+
+            if spotlightOpen then
+              return "Spotlight | Search"
+            end if
+
+            -- 获取窗口标题（通过 System Events 更可靠）
+            set windowTitle to "N/A"
+            try
+              tell process frontApp
+                if exists (window 1) then
+                  set windowTitle to name of window 1
+                end if
+              end tell
+            end try
+
+            return frontApp & " | " & windowTitle
+          end tell
+        '`)
+        return stdout.trim()
       } catch {
-        // ignore
+        // fall through to accessibility fallback
       }
-      return 'Unknown'
+    } else if (process.platform === 'win32') {
+      try {
+        const ps = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class Win32FocusHelper {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+$hwnd = [Win32FocusHelper]::GetForegroundWindow()
+$sb = New-Object System.Text.StringBuilder 256
+[Win32FocusHelper]::GetWindowText($hwnd, $sb, 256) | Out-Null
+$title = $sb.ToString()
+$pid = 0
+[Win32FocusHelper]::GetWindowThreadProcessId($hwnd, [ref]$pid) | Out-Null
+$proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+$appName = if ($proc) { $proc.ProcessName } else { "Unknown" }
+Write-Output "$appName | $title"
+`
+        const encoded = Buffer.from(ps, 'utf16le').toString('base64')
+        const { stdout } = await execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`)
+        return stdout.trim()
+      } catch {
+        // fall through to accessibility fallback
+      }
     }
+
+    // Fallback: accessibility API (works on Windows/Linux)
+    try {
+      const { captureState } = await import('../accessibility/index.js')
+      const state = await captureState()
+      if (state.success && state.focusedApplication) {
+        const appName = state.focusedApplication.title || 'Unknown App'
+        const windowTitle = state.focusedWindow?.title || 'N/A'
+        return `${appName} | ${windowTitle}`
+      }
+    } catch {
+      // ignore
+    }
+    return 'Unknown'
   }
 }

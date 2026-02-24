@@ -330,7 +330,13 @@ export const bashTool: Tool = {
       const timeout = (args.timeout as number) || 30000
 
       return new Promise((resolve) => {
-        const proc = spawn('bash', ['-c', command], {
+        const isWindows = process.platform === 'win32'
+        const shell = isWindows ? 'powershell.exe' : 'bash'
+        const shellArgs = isWindows
+          ? ['-NoProfile', '-NonInteractive', '-Command', command]
+          : ['-c', command]
+
+        const proc = spawn(shell, shellArgs, {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
           timeout,

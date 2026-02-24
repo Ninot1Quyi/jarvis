@@ -52,22 +52,23 @@ async function captureScreen(filepath: string): Promise<void> {
     // macOS: use screencapture with -C (include cursor) and -x (no sound)
     await execAsync(`screencapture -C -x "${filepath}"`)
   } else if (os.platform() === 'win32') {
-    // Windows: use PowerShell with cursor capture
+    // Windows: use PowerShell with cursor capture via EncodedCommand to avoid escaping issues
+    const escapedPath = filepath.replace(/\\/g, '\\\\')
     const ps = `
-      Add-Type -AssemblyName System.Windows.Forms
-      Add-Type -AssemblyName System.Drawing
-      $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-      $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
-      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-      $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-      $cursor = [System.Windows.Forms.Cursor]::Current
-      $cursorPos = [System.Windows.Forms.Cursor]::Position
-      $graphics.FillRectangle([System.Drawing.Brushes]::Red, $cursorPos.X, $cursorPos.Y, 20, 20)
-      $graphics.Dispose()
-      $bitmap.Save("${filepath.replace(/\\/g, '\\\\')}", [System.Drawing.Imaging.ImageFormat]::Png)
-      $bitmap.Dispose()
-    `
-    await execAsync(`powershell -Command "${ps.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`)
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+$cursorPos = [System.Windows.Forms.Cursor]::Position
+try { [System.Windows.Forms.Cursor]::Current.Draw($graphics, (New-Object System.Drawing.Rectangle($cursorPos.X, $cursorPos.Y, 32, 32))) } catch { $graphics.FillRectangle([System.Drawing.Brushes]::Red, $cursorPos.X, $cursorPos.Y, 20, 20) }
+$graphics.Dispose()
+$bitmap.Save("${escapedPath}", [System.Drawing.Imaging.ImageFormat]::Png)
+$bitmap.Dispose()
+`
+    const encoded = Buffer.from(ps, 'utf16le').toString('base64')
+    await execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`)
   } else {
     // Linux: 尝试多种截图工具，包含光标
     const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' ||
