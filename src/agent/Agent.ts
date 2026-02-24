@@ -203,7 +203,7 @@ export class Agent {
     let stepCount = 0
     let finished = false
 
-    while (stepCount < this.maxSteps && !(finished && !this.interactive)) {
+    while ((this.maxSteps <= 0 || stepCount < this.maxSteps) && !(finished && !this.interactive)) {
       logger.debug('Main loop iteration start')
 
       // Handle stop signal: reset task state and go back to idle wait
@@ -344,7 +344,7 @@ export class Agent {
       }
 
       stepCount++
-      logger.info(`Step ${stepCount}/${this.maxSteps}`)
+      logger.info(`Step ${stepCount}/${this.maxSteps > 0 ? this.maxSteps : 'unlimited'}`)
 
       // 2. 截图（仅当屏幕开启时）
       logger.debug('Taking screenshot...')
@@ -793,6 +793,12 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
             })
           }
 
+          // 处理 set_max_steps 工具的运行时步数调整
+          if (data.maxStepsSet) {
+            this.maxSteps = data.maxStepsValue as number
+            logger.info(`Max steps ${this.maxSteps > 0 ? 'set to ' + this.maxSteps : 'set to unlimited'}`)
+          }
+
           // 处理 todo_write 工具的摘要更新
           if (data.summary && toolCall.name === 'todo_write') {
             this.todoSummary = data.summary as string
@@ -832,7 +838,7 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
       }
 
       // Pre-flush: remind agent to save memories when approaching step limit
-      if (stepCount === this.maxSteps - 5 && this.memorySystem) {
+      if (this.maxSteps > 0 && stepCount === this.maxSteps - 5 && this.memorySystem) {
         lastToolResults.push({
           toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
           result: JSON.stringify({
@@ -861,7 +867,7 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
 
     // 输出详细的退出原因
     if (this.evalMode) {
-      if (stepCount >= this.maxSteps) {
+      if (this.maxSteps > 0 && stepCount >= this.maxSteps) {
         logger.info(`[JARVIS_EVAL] Exiting: reached max steps (${this.maxSteps})`)
       } else if (finished) {
         logger.info(`[JARVIS_EVAL] Exiting: task completed (finished=true), entering idle branch`)
@@ -870,7 +876,7 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
       }
     }
 
-    if (stepCount >= this.maxSteps) {
+    if (this.maxSteps > 0 && stepCount >= this.maxSteps) {
       logger.warn(`Reached max steps (${this.maxSteps})`)
     }
 

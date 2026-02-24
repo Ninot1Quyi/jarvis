@@ -54,7 +54,7 @@ export function loadConfig(): JarvisConfig {
     keys,
     defaultProvider,
     mouseSpeed: keys.mouseSpeed ?? -1,
-    maxSteps: 50,
+    maxSteps: (keys as Record<string, unknown>).maxSteps as number || 50,
     screenshotDir: path.join(ROOT_DIR, 'data', 'memory', 'screenshots'),
     dataDir: path.join(ROOT_DIR, 'data'),
     workspace,

@@ -46,11 +46,12 @@ async function copyToClipboard(text: string): Promise<void> {
       proc.stdin?.write(text)
       proc.stdin?.end()
     } else if (isWin || isWSL) {
-      // Windows: 使用 UTF-16LE 编码直接写入 clip.exe
-      // clip.exe 原生支持 UTF-16LE（Windows Unicode 格式）
-      proc = spawn(isWSL ? 'clip.exe' : 'clip')
-      const utf16leBuffer = Buffer.from(text, 'utf16le')
-      proc.stdin?.write(utf16leBuffer)
+      // Windows: use PowerShell Set-Clipboard for proper Unicode support
+      // clip.exe has encoding issues with UTF-16LE without BOM on Chinese Windows
+      const psCommand = `Set-Clipboard -Value '${text.replace(/'/g, "''")}'`
+      const encoded = Buffer.from(psCommand, 'utf16le').toString('base64')
+      const clipProc = isWSL ? 'powershell.exe' : 'powershell'
+      proc = spawn(clipProc, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded])
       proc.stdin?.end()
     } else {
       // Linux: 检测 Wayland 或 X11

@@ -311,6 +311,37 @@ export const screenTool: Tool = {
   },
 }
 
+// Max steps control tool - LLM can adjust step limit at runtime
+export const setMaxStepsTool: Tool = {
+  definition: {
+    name: 'set_max_steps',
+    description: 'Set the maximum number of steps for this session. Use 0 for unlimited. Default is 50. Use this when a task requires extended operation (e.g., long conversations, monitoring tasks).',
+    parameters: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'number',
+          description: 'Maximum steps. 0 = unlimited, positive number = limit.',
+        },
+      },
+      required: ['steps'],
+    },
+  },
+  async execute(args) {
+    const steps = Math.max(0, Math.floor(args.steps as number))
+    return {
+      success: true,
+      data: {
+        maxStepsSet: true,
+        maxStepsValue: steps,
+      },
+      message: steps === 0
+        ? 'Max steps set to unlimited.'
+        : `Max steps set to ${steps}.`,
+    }
+  },
+}
+
 // Export all system tools
 export const systemTools: Tool[] = [
   waitTool,
@@ -318,4 +349,5 @@ export const systemTools: Tool[] = [
   takeScreenshotTool,
   screenTool,
   taskTool,
+  setMaxStepsTool,
 ]
