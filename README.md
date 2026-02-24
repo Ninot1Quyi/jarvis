@@ -38,6 +38,79 @@ Enter tasks through the GUI input box after starting. For example:
 
 Copy `config/config.example.json` to `config/config.json` and fill in your API keys.
 
+## MCP Server Integration
+
+Jarvis supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) as a client, allowing you to connect external MCP servers and use their tools alongside built-in tools.
+
+### Configuration
+
+Add an `mcpServers` section to `config/config.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/docs"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxx" }
+    },
+    "remote-server": {
+      "url": "https://my-mcp-server.example.com/mcp",
+      "headers": { "Authorization": "Bearer token" }
+    }
+  }
+}
+```
+
+### Transport Modes
+
+| Mode | Config Field | How It Works |
+|------|-------------|--------------|
+| stdio | `command` + `args` | Jarvis spawns the server as a child process, communicates via stdin/stdout. No manual startup needed. |
+| HTTP | `url` | Jarvis connects to an already-running remote server via Streamable HTTP (POST + SSE). |
+
+### Config Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `command` | string | Executable to spawn (stdio mode) |
+| `args` | string[] | CLI arguments for the command |
+| `env` | object | Environment variables passed to the server process |
+| `url` | string | Server endpoint URL (HTTP mode) |
+| `headers` | object | Custom HTTP headers (e.g., auth tokens) |
+| `enabled` | boolean | Set to `false` to skip this server (default: `true`) |
+
+### Tool Naming
+
+MCP tools follow the Claude Code naming convention:
+
+```
+mcp__<serverName>__<toolName>
+```
+
+For example, a `read_file` tool from a server named `filesystem` becomes `mcp__filesystem__read_file`. This prevents naming collisions with built-in tools.
+
+### Error Handling
+
+- If an MCP server fails to connect, it is skipped and other servers continue normally.
+- If a tool call fails at runtime, the agent receives a standard error result and continues.
+- MCP failures never crash the agent.
+
+### Testing
+
+```bash
+# stdio transport test (auto-starts server)
+npx tsx test/mcp.test.ts
+
+# HTTP transport test (requires server running on localhost:3001)
+npx @modelcontextprotocol/server-everything streamableHttp
+npx tsx test/mcp-http.test.ts
+```
+
 ## Platform Notes
 
 ### Windows
