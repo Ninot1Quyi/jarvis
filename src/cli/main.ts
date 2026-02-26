@@ -9,11 +9,13 @@ import { messageManager } from '../message/MessageManager.js'
 import * as readline from 'readline'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
+import * as fs from 'fs'
 import * as net from 'net'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const OVERLAY_UI_DIR = path.resolve(__dirname, '../../overlay-ui')
+const OVERLAY_EXE = path.resolve(__dirname, '../../overlay-ui/jarvis-overlay.exe')
 const WS_PORT = 19823
 const VITE_PORT = 1420
 
@@ -45,6 +47,35 @@ async function waitForUi(timeoutMs = 120_000): Promise<void> {
 }
 
 function spawnUi(): ChildProcess {
+  // Packaged mode: launch pre-built Tauri exe directly
+  if (fs.existsSync(OVERLAY_EXE)) {
+    console.log('[UI] Launching packaged overlay UI...')
+    const child = spawn(OVERLAY_EXE, [], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    })
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const text = data.toString().trim()
+      if (text) console.log(`[UI] ${text}`)
+    })
+    child.stderr?.on('data', (data: Buffer) => {
+      const text = data.toString().trim()
+      if (text && !text.includes('warning:')) console.error(`[UI] ${text}`)
+    })
+    child.on('exit', (code) => {
+      if (code !== null && code !== 0) {
+        console.error(`[UI] Process exited with code ${code}`)
+      }
+      uiProcess = null
+      console.log('[JARVIS] UI closed, shutting down...')
+      process.exit(code ?? 0)
+    })
+    child.unref()
+    return child
+  }
+
+  // Dev mode: use npm run tauri dev
   const child = spawn('npm', ['run', 'tauri', 'dev'], {
     cwd: OVERLAY_UI_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -66,6 +97,9 @@ function spawnUi(): ChildProcess {
       console.error(`[UI] Process exited with code ${code}`)
     }
     uiProcess = null
+    // When UI closes, terminate the entire application
+    console.log('[JARVIS] UI closed, shutting down...')
+    process.exit(code ?? 0)
   })
 
   // detached + unref so the child doesn't keep the parent alive on its own
@@ -171,7 +205,10 @@ async function main() {
 
   // ── Cleanup handlers ───────────────────────────────────────────
 
+  let cleanupDone = false
   const cleanup = () => {
+    if (cleanupDone) return
+    cleanupDone = true
     messageManager.stop()
     killUi()
     if (overlay) overlayClient.disable()

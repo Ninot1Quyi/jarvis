@@ -191,6 +191,19 @@ async fn start_ws_server(app: AppHandle, ws_writer: WsWriter) {
     }
 }
 
+async fn send_exit_agent(ws_writer: &WsWriter) {
+    let mut writer_guard = ws_writer.lock().await;
+    if let Some(writer) = writer_guard.as_mut() {
+        let msg = UiMessage {
+            msg_type: "exit_agent".to_string(),
+            content: String::new(),
+        };
+        if let Ok(json) = serde_json::to_string(&msg) {
+            let _ = writer.send(Message::Text(json)).await;
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -246,7 +259,14 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 "quit" => {
-                    app.exit(0);
+                    let state: State<AppState> = app.state();
+                    let ws_writer = state.ws_writer.clone();
+                    let app_handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        send_exit_agent(&ws_writer).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        app_handle.exit(0);
+                    });
                 }
                 _ => {}
             }

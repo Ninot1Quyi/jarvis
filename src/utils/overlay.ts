@@ -35,6 +35,8 @@ class OverlayClient {
   private messageQueue: OverlayMessage[] = []
   private stopCallback: StopCallback | null = null
   private exitCallback: StopCallback | null = null
+  private hadConnection: boolean = false
+  private consecutiveFailures: number = 0
 
   /**
    * Enable the overlay client and connect to the UI
@@ -77,6 +79,8 @@ class OverlayClient {
 
       this.ws.on('open', () => {
         console.log('[Overlay] Connected to UI')
+        this.hadConnection = true
+        this.consecutiveFailures = 0
         // Send queued messages
         while (this.messageQueue.length > 0) {
           const msg = this.messageQueue.shift()
@@ -110,17 +114,17 @@ class OverlayClient {
       this.ws.on('close', () => {
         console.log('[Overlay] Disconnected from UI')
         this.ws = null
-        this.scheduleReconnect()
+        this.handleDisconnect()
       })
 
       this.ws.on('error', (err) => {
         // Silently handle connection errors (UI might not be running)
         this.ws = null
-        this.scheduleReconnect()
+        this.handleDisconnect()
       })
     } catch (err) {
       this.ws = null
-      this.scheduleReconnect()
+      this.handleDisconnect()
     }
   }
 
@@ -137,6 +141,24 @@ class OverlayClient {
       this.ws = null
     }
     this.messageQueue = []
+  }
+
+  /**
+   * Handle disconnection with exit detection
+   */
+  private handleDisconnect(): void {
+    this.consecutiveFailures++
+    const MAX_RECONNECT_BEFORE_EXIT = 3
+
+    if (this.hadConnection && this.consecutiveFailures >= MAX_RECONNECT_BEFORE_EXIT) {
+      console.log(`[Overlay] UI appears gone (${this.consecutiveFailures} failures). Triggering exit.`)
+      if (this.exitCallback) {
+        this.exitCallback()
+      }
+      return
+    }
+
+    this.scheduleReconnect()
   }
 
   /**

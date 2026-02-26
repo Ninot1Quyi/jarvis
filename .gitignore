@@ -6,6 +6,7 @@ config.json
 
 # Build output
 dist/
+dist-pack/
 
 # Runtime data
 data/
