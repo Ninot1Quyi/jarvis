@@ -1,4 +1,5 @@
 import * as path from 'path'
+import * as fs from 'fs'
 import type { Tool } from '../../types.js'
 import { ensureDir } from '../../utils/config.js'
 import { logger } from '../../utils/logger.js'
@@ -117,6 +118,12 @@ $bitmap.Dispose()
   }
 }
 
+function assertScreenshotExists(filepath: string): void {
+  if (!fs.existsSync(filepath)) {
+    throw new Error(`Screenshot file not created: ${filepath}`)
+  }
+}
+
 export const screenshotTool: Tool = {
   definition: {
     name: 'screenshot',
@@ -141,6 +148,7 @@ export const screenshotTool: Tool = {
     const screenSize = await getScreenLogicalSize()
 
     await captureScreen(filepath)
+    assertScreenshotExists(filepath)
 
     return {
       success: true,
@@ -224,6 +232,7 @@ export const takeScreenshotTool: Tool = {
     const screenSize = await getScreenLogicalSize()
 
     await captureScreen(filepath)
+    assertScreenshotExists(filepath)
 
     return {
       success: true,

@@ -35,20 +35,23 @@ export function loadConfig(): JarvisConfig {
     defaultProvider = 'openai'
   }
 
-  // Workspace defaults to data directory if not specified
-  // Auto-fix hardcoded paths for cross-platform compatibility
-  const hostWorkspace = keys.workspace
-  const isRemotePath = hostWorkspace?.startsWith('/Users/') || hostWorkspace?.startsWith('C:\\')
+  // Workspace defaults to ROOT_DIR/workspace if not specified.
+  // Cross-platform safety: if config contains a path style from another OS,
+  // fallback to local workspace to avoid ENOENT/EACCES at runtime.
+  const hostWorkspace = keys.workspace?.trim()
   const currentPlatform = process.platform
+  const isPosixAbs = !!hostWorkspace && hostWorkspace.startsWith('/')
+  const isWinAbs = !!hostWorkspace && (/^[A-Za-z]:[\\/]/.test(hostWorkspace) || hostWorkspace.startsWith('\\\\'))
+  const isCrossPlatformPath =
+    (currentPlatform === 'win32' && isPosixAbs) ||
+    (currentPlatform !== 'win32' && isWinAbs)
 
-  // If running on Linux and config has Mac/Windows path, auto-detect local path
-  let workspace: string
-  if (isRemotePath && currentPlatform === 'linux') {
-    // Use ROOT_DIR-based path on Linux
+  let workspace = hostWorkspace || path.join(ROOT_DIR, 'workspace')
+  if (isCrossPlatformPath) {
     workspace = path.join(ROOT_DIR, 'workspace')
-  } else {
-    workspace = hostWorkspace || path.join(ROOT_DIR, 'workspace')
+    logger.warn(`[config] Ignoring cross-platform workspace path "${hostWorkspace}", using "${workspace}"`)
   }
+  ensureDir(workspace)
 
   return {
     keys,
