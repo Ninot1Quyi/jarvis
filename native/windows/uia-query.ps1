@@ -35,6 +35,16 @@ param(
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Ensure this PowerShell process runs in DPI-aware mode so UIA coordinates
+# match screenshot/mouse coordinate space under Windows display scaling.
+Add-Type @"
+using System.Runtime.InteropServices;
+public static class DpiAwareness {
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+[DpiAwareness]::SetProcessDPIAware() | Out-Null
+
 # Load UI Automation assemblies
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes

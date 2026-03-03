@@ -28,6 +28,40 @@ async function getScreenLogicalSize(): Promise<{ width: number; height: number }
     return { width: 1920, height: 1080 }
   }
 
+  // Windows: use the same API as screenshot capture to avoid coordinate drift
+  // between screenshot dimensions and click coordinate mapping.
+  if (process.platform === 'win32') {
+    try {
+      const { exec } = await import('child_process')
+      const { promisify } = await import('util')
+      const execAsync = promisify(exec)
+      const ps = `
+Add-Type @"
+using System.Runtime.InteropServices;
+public static class DpiAwareness {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+[DpiAwareness]::SetProcessDPIAware() | Out-Null
+Add-Type -AssemblyName System.Windows.Forms
+$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+Write-Output "$($b.Width),$($b.Height)"
+`
+      const encoded = Buffer.from(ps, 'utf16le').toString('base64')
+      const { stdout } = await execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`)
+      const match = stdout.trim().match(/^(\\d+),(\\d+)$/)
+      if (match) {
+        const width = parseInt(match[1], 10)
+        const height = parseInt(match[2], 10)
+        logger.debug(`Screen size (Windows PrimaryScreen): ${width}x${height}`)
+        return { width, height }
+      }
+    } catch (e) {
+      logger.debug(`Failed to get Windows screen size via PowerShell: ${e}`)
+    }
+    return { width: 1920, height: 1080 }
+  }
+
   // macOS/Windows: use nut-js
   try {
     const { screen } = await import('@computer-use/nut-js')
@@ -56,6 +90,13 @@ async function captureScreen(filepath: string): Promise<void> {
     // Windows: use PowerShell with cursor capture via EncodedCommand to avoid escaping issues
     const escapedPath = filepath.replace(/\\/g, '\\\\')
     const ps = `
+Add-Type @"
+using System.Runtime.InteropServices;
+public static class DpiAwareness {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+[DpiAwareness]::SetProcessDPIAware() | Out-Null
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds

@@ -950,6 +950,30 @@ Do NOT repeat the same click - change your strategy.`
 
   private async getMousePosition(): Promise<{ x: number; y: number }> {
     try {
+      if (process.platform === 'win32') {
+        const { exec } = await import('child_process')
+        const { promisify } = await import('util')
+        const execAsync = promisify(exec)
+        const ps = `
+Add-Type @"
+using System.Runtime.InteropServices;
+public static class DpiAwareness {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+[DpiAwareness]::SetProcessDPIAware() | Out-Null
+Add-Type -AssemblyName System.Windows.Forms
+$p = [System.Windows.Forms.Cursor]::Position
+Write-Output "$($p.X),$($p.Y)"
+`
+        const encoded = Buffer.from(ps, 'utf16le').toString('base64')
+        const { stdout } = await execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`)
+        const match = stdout.trim().match(/^(\\d+),(\\d+)$/)
+        if (match) {
+          return { x: parseInt(match[1], 10), y: parseInt(match[2], 10) }
+        }
+      }
+
       const { mouse } = await import('@computer-use/nut-js')
       const pos = await mouse.getPosition()
       return { x: pos.x, y: pos.y }

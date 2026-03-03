@@ -48,6 +48,18 @@ async function execCommand(command: string): Promise<string> {
 }
 
 /**
+ * Execute PowerShell script via encoded command (Windows only).
+ */
+async function execWindowsPowerShell(script: string): Promise<string> {
+  const { exec } = await import('child_process')
+  const { promisify } = await import('util')
+  const execAsync = promisify(exec)
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  const { stdout } = await execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`)
+  return stdout
+}
+
+/**
  * Linux xdotool-based mouse operations
  * Used when nut-js is not available (e.g., ARM64 Linux)
  */
@@ -90,6 +102,85 @@ const linuxMouse = {
       right: '7',
     }
     await execCommand(`xdotool click --repeat ${amount} ${mapping[direction]}`)
+  },
+}
+
+/**
+ * Windows mouse operations via native user32 APIs.
+ * This path is used to avoid DPI virtualization drift with mixed APIs.
+ */
+const windowsMouse = {
+  async move(x: number, y: number): Promise<void> {
+    await execWindowsPowerShell(`
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinMouse {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+}
+"@
+[WinMouse]::SetCursorPos(${x}, ${y}) | Out-Null
+`)
+    await new Promise(resolve => setTimeout(resolve, 50))
+  },
+
+  async click(button: number): Promise<void> {
+    const flags = button === 1 ? [0x0002, 0x0004] : button === 2 ? [0x0020, 0x0040] : [0x0008, 0x0010]
+    await execWindowsPowerShell(`
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinMouse {
+  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+}
+"@
+[WinMouse]::mouse_event(${flags[0]}, 0, 0, 0, [UIntPtr]::Zero)
+[WinMouse]::mouse_event(${flags[1]}, 0, 0, 0, [UIntPtr]::Zero)
+`)
+    await new Promise(resolve => setTimeout(resolve, 50))
+  },
+
+  async doubleClick(button: number): Promise<void> {
+    await this.click(button)
+    await new Promise(resolve => setTimeout(resolve, 80))
+    await this.click(button)
+  },
+
+  async drag(startX: number, startY: number, endX: number, endY: number): Promise<void> {
+    await execWindowsPowerShell(`
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinMouse {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+}
+"@
+[WinMouse]::SetCursorPos(${startX}, ${startY}) | Out-Null
+Start-Sleep -Milliseconds 30
+[WinMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 20
+[WinMouse]::SetCursorPos(${endX}, ${endY}) | Out-Null
+Start-Sleep -Milliseconds 20
+[WinMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+`)
+  },
+
+  async scroll(direction: 'up' | 'down' | 'left' | 'right', amount: number = 3): Promise<void> {
+    const unit = Math.max(1, amount) * 120
+    const isHorizontal = direction === 'left' || direction === 'right'
+    const flag = isHorizontal ? 0x1000 : 0x0800
+    const signed = direction === 'up' || direction === 'right' ? unit : -unit
+    await execWindowsPowerShell(`
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinMouse {
+  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+}
+"@
+[WinMouse]::mouse_event(${flag}, 0, 0, [uint32](${signed}), [UIntPtr]::Zero)
+`)
   },
 }
 
@@ -164,7 +255,12 @@ async function moveMouse(x: number, y: number) {
     return
   }
 
-  // Use nut-js on macOS/Windows
+  if (isWin) {
+    await windowsMouse.move(x, y)
+    return
+  }
+
+  // Use nut-js on macOS
   const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
 
   if (speed === -1) {
@@ -412,8 +508,7 @@ export const clickTool: Tool = {
         }
         await linuxMouse.click(1) // Left click
       } else {
-        // macOS/Windows: use nut-js
-        const { mouse, keyboard, Key } = await import('@computer-use/nut-js')
+        const { keyboard, Key } = await import('@computer-use/nut-js')
 
         // Map modifier names to Key enum
         const modifierKeyMap: Record<string, number> = {
@@ -440,7 +535,12 @@ export const clickTool: Tool = {
           await keyboard.pressKey(...modifierKeys)
         }
 
-        await mouse.leftClick()
+        if (isWin) {
+          await windowsMouse.click(1)
+        } else {
+          const { mouse } = await import('@computer-use/nut-js')
+          await mouse.leftClick()
+        }
 
         // Release modifier keys
         if (modifierKeys.length > 0) {
@@ -500,6 +600,8 @@ export const doubleClickTool: Tool = {
 
       if (isLinux) {
         await linuxMouse.doubleClick(1) // Left button
+      } else if (isWin) {
+        await windowsMouse.doubleClick(1)
       } else {
         const { mouse } = await import('@computer-use/nut-js')
         await mouse.doubleClick(0)
@@ -557,6 +659,8 @@ export const rightClickTool: Tool = {
 
       if (isLinux) {
         await linuxMouse.click(3) // Right click
+      } else if (isWin) {
+        await windowsMouse.click(3)
       } else {
         const { mouse } = await import('@computer-use/nut-js')
         await mouse.rightClick()
@@ -614,6 +718,8 @@ export const middleClickTool: Tool = {
 
       if (isLinux) {
         await linuxMouse.click(2) // Middle click
+      } else if (isWin) {
+        await windowsMouse.click(2)
       } else {
         const { mouse, Button } = await import('@computer-use/nut-js')
         await mouse.click(Button.MIDDLE)
@@ -665,6 +771,8 @@ export const dragTool: Tool = {
 
     if (isLinux) {
       await linuxMouse.drag(startX, startY, endX, endY)
+    } else if (isWin) {
+      await windowsMouse.drag(startX, startY, endX, endY)
     } else {
       const { mouse, Point, straightTo } = await import('@computer-use/nut-js')
       await moveMouse(startX, startY)
@@ -715,6 +823,8 @@ export const scrollTool: Tool = {
     if (isLinux) {
       // 使用 --repeat 参数控制滚动次数
       await linuxMouse.scroll(direction as 'up' | 'down' | 'left' | 'right', amount)
+    } else if (isWin) {
+      await windowsMouse.scroll(direction as 'up' | 'down' | 'left' | 'right', amount)
     } else {
       const { mouse } = await import('@computer-use/nut-js')
       // 每个单位约100像素
