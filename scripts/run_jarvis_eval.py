@@ -79,6 +79,45 @@ class JarvisEvalRunner:
             )
             print(f"[Snapshot] Reverted to snapshot '{snapshot_name}'")
 
+    def _wait_for_vm_ready(self, vm_ip: str, timeout: int = 120):
+        """等待 VM 就绪（SSH 可连接）"""
+        import socket
+        import time
+
+        print(f"[VM] Waiting for VM to be ready at {vm_ip}...", flush=True)
+        start_time = time.time()
+        check_count = 0
+
+        while time.time() - start_time < timeout:
+            check_count += 1
+            # 检查 SSH 端口是否开放
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            result = sock.connect_ex((vm_ip, 22))
+            sock.close()
+
+            if result == 0:
+                # 端口开放了，再尝试 SSH 连接
+                result = subprocess.run(
+                    ['sshpass', '-p', 'jarvis.linux.123', 'ssh', '-o', 'StrictHostKeyChecking=no',
+                     '-o', 'ConnectTimeout=5', f'user@{vm_ip}', 'echo ready'],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    print(f"[VM] VM is ready! (took {int(time.time() - start_time)}s)", flush=True)
+                    return True
+                else:
+                    print(f"[VM] SSH port open, waiting for auth...", flush=True)
+
+            elapsed = int(time.time() - start_time)
+            if check_count % 5 == 0:
+                print(f"[VM] Still waiting... ({elapsed}s elapsed)", flush=True)
+
+            time.sleep(3)
+
+        print(f"[VM] Timeout waiting for VM to be ready", flush=True)
+        return False
+
     def load_tasks(self, task_file: str) -> List[Dict[str, Any]]:
         """Load tasks from JSON file (OSWorld format: {domain: [id1, id2, ...]})"""
         with open(task_file, 'r') as f:
@@ -132,11 +171,10 @@ class JarvisEvalRunner:
         with open(task_result_dir / 'task_config.json', 'w') as f:
             json.dump(task_config, f, indent=2)
 
-        # 管理 VM 快照
-        snapshot_name = "init_state"
-        self._manage_snapshot(self.vm_path, snapshot_name)
+        # 等待 VM 就绪（确保 OSWorld 可以连接）
+        self._wait_for_vm_ready(self.vm_ip)
 
-        # 初始化 OSWorld 环境
+        # 初始化 OSWorld 环境（快照管理由 OSWorld reset() 自动处理）
         print("[OSWorld] Creating DesktopEnv instance...", flush=True)
         print(f"[OSWorld]   vm_path: {self.vm_path}", flush=True)
         env = DesktopEnv(
@@ -344,8 +382,22 @@ def main():
                         help='Jarvis directory on VM')
     parser.add_argument('--output-dir', type=str, default='./results',
                         help='Output directory for results')
+    parser.add_argument('--init-snapshot', action='store_true',
+                        help='Create initial snapshot before running tasks')
 
     args = parser.parse_args()
+
+    # 如果指定了 --init-snapshot，创建快照并退出
+    if args.init_snapshot:
+        runner = JarvisEvalRunner(
+            vm_ip=args.vm_ip,
+            vm_path=args.vm_path,
+            jarvis_dir=args.jarvis_dir,
+            output_dir=args.output_dir,
+        )
+        runner._manage_snapshot(args.vm_path, "init_state")
+        print("Snapshot created successfully!")
+        return
 
     runner = JarvisEvalRunner(
         vm_ip=args.vm_ip,

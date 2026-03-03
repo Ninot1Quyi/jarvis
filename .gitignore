@@ -38,3 +38,7 @@ config/config.json
 
 # Agent workspace
 workspace/
+
+scripts/results/
+.vmware_lck
+.vmware_vms
