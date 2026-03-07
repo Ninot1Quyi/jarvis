@@ -7,6 +7,8 @@ import { todoTools } from './todo.js'
 import { skillTools } from './skill.js'
 import { uiSearchTools } from './ui-search.js'
 import { memoryTools } from './memory.js'
+import { messageTool } from './message.js'
+import { sessionsSendTool } from './sessions-send.js'
 import { logger } from '../../utils/logger.js'
 
 export class ToolRegistry {
@@ -23,6 +25,9 @@ export class ToolRegistry {
     this.registerTools(fileTools)
     this.registerTools(todoTools)
     this.registerTools(memoryTools)
+    // A2A messaging tools
+    this.registerTool(messageTool)
+    this.registerTool(sessionsSendTool)
   }
 
   registerTool(tool: Tool): void {
@@ -51,6 +56,17 @@ export class ToolRegistry {
 
   getDefinitions(): ToolDefinition[] {
     return Array.from(this.tools.values()).map(t => t.definition)
+  }
+
+  /**
+   * Get tool info for A2A AgentCard generation.
+   */
+  getTools(): Array<{ name: string; label?: string; description?: string; parameters?: Record<string, unknown> }> {
+    return Array.from(this.tools.values()).map(t => ({
+      name: t.definition.name,
+      description: t.definition.description,
+      parameters: t.definition.parameters,
+    }))
   }
 
   async execute(
@@ -94,3 +110,5 @@ export { todoTools } from './todo.js'
 export { skillTools, setSkillRegistry, getSkillRegistry } from './skill.js'
 export { uiSearchTools } from './ui-search.js'
 export { memoryTools, setMemorySystem, getMemorySystem } from './memory.js'
+export { messageTool } from './message.js'
+export { sessionsSendTool } from './sessions-send.js'

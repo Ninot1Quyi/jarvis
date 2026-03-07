@@ -3,10 +3,11 @@ export {
   messageLayer,
   type MessageSource,
   type QueuedMessage,
-  type ChatReply,
   type OutboundMailTarget,
   type OutboundMessage,
   type Deliverers,
+  type Provenance,
+  type ProvenanceKind,
 } from './MessageLayer.js'
 
 export {

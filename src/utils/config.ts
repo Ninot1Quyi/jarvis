@@ -35,23 +35,27 @@ export function loadConfig(): JarvisConfig {
     defaultProvider = 'openai'
   }
 
-  // Workspace defaults to ROOT_DIR/workspace if not specified.
-  // Cross-platform safety: if config contains a path style from another OS,
-  // fallback to local workspace to avoid ENOENT/EACCES at runtime.
-  const hostWorkspace = keys.workspace?.trim()
-  const currentPlatform = process.platform
-  const isPosixAbs = !!hostWorkspace && hostWorkspace.startsWith('/')
-  const isWinAbs = !!hostWorkspace && (/^[A-Za-z]:[\\/]/.test(hostWorkspace) || hostWorkspace.startsWith('\\\\'))
-  const isCrossPlatformPath =
-    (currentPlatform === 'win32' && isPosixAbs) ||
-    (currentPlatform !== 'win32' && isWinAbs)
+  // Helper function to resolve path (relative paths are resolved relative to ROOT_DIR)
+  const resolvePath = (inputPath: string | undefined, defaultPath: string): string => {
+    if (!inputPath) return path.join(ROOT_DIR, defaultPath)
 
-  let workspace = hostWorkspace || path.join(ROOT_DIR, 'workspace')
-  if (isCrossPlatformPath) {
-    workspace = path.join(ROOT_DIR, 'workspace')
-    logger.warn(`[config] Ignoring cross-platform workspace path "${hostWorkspace}", using "${workspace}"`)
+    // Check if it's an absolute path
+    const isAbsolute = inputPath.startsWith('/') || /^[A-Za-z]:/.test(inputPath)
+    if (isAbsolute) {
+      return inputPath
+    }
+
+    // Relative path - resolve relative to ROOT_DIR
+    return path.join(ROOT_DIR, inputPath)
   }
+
+  // Workspace: resolve relative to ROOT_DIR
+  const workspace = resolvePath(keys.workspace, 'workspace')
   ensureDir(workspace)
+
+  // Memory directory: resolve relative to ROOT_DIR
+  const memoryDir = resolvePath((keys as Record<string, unknown>).memoryDir as string | undefined, 'data/memory')
+  ensureDir(memoryDir)
 
   return {
     keys,
@@ -60,6 +64,7 @@ export function loadConfig(): JarvisConfig {
     maxSteps: (keys as Record<string, unknown>).maxSteps as number || 50,
     screenshotDir: path.join(ROOT_DIR, 'data', 'memory', 'screenshots'),
     dataDir: path.join(ROOT_DIR, 'data'),
+    memoryDir,
     workspace,
     autonomousMode: (keys as Record<string, unknown>).autonomousMode === true,
   }

@@ -10,7 +10,17 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-export type MessageSource = 'tui' | 'gui' | 'mail' | 'notification'
+// Provenance types for message source tracking
+export type ProvenanceKind = 'external_user' | 'inter_session' | 'internal_system'
+
+export interface Provenance {
+  kind: ProvenanceKind
+  sourceSessionKey?: string
+  sourceChannel?: string
+  sourceTool?: string
+}
+
+export type MessageSource = 'tui' | 'gui' | 'mail' | 'notification' | 'agent'
 
 export interface QueuedMessage {
   id: string
@@ -19,17 +29,9 @@ export interface QueuedMessage {
   content: string
   consumed: boolean
   status: 'pending' | 'processing'
+  provenance?: Provenance
 }
 
-/**
- * 解析 Assistant 回复中的 <chat> 标签
- */
-export interface ChatReply {
-  tui?: string
-  gui?: string
-  mail?: string
-  attachments?: string[]
-}
 
 export interface OutboundMailTarget {
   to: string
@@ -104,9 +106,16 @@ export class MessageLayer {
   }
 
   /**
-   * 添加新消息到队列
+   * 添加新消息到队列 (basic version)
    */
   push(source: MessageSource, content: string): string {
+    return this.pushWithProvenance(source, content)
+  }
+
+  /**
+   * 添加新消息到队列 (with provenance)
+   */
+  pushWithProvenance(source: MessageSource, content: string, provenance?: Provenance): string {
     const id = `m${Date.now()}_${++idCounter}`
     const message: QueuedMessage = {
       id,
@@ -115,11 +124,55 @@ export class MessageLayer {
       content: content.trim(),
       consumed: false,
       status: 'pending',
+      provenance,
     }
     this.messages.push(message)
     this.save()
     if (this.pushNotifyEnabled && this.onPushListener) this.onPushListener()
     return id
+  }
+
+  /**
+   * Send message to a channel (called by message tool).
+   * Supports channel-specific content (guiContent, tuiContent).
+   */
+  send(params: {
+    channel: 'tui' | 'gui' | 'mail'
+    message: string
+    guiContent?: string
+    tuiContent?: string
+    to?: string
+    title?: string
+    attachments?: string[]
+  }): boolean {
+    const { channel, message, guiContent, tuiContent, to, title, attachments } = params
+
+    // Select content based on channel
+    let content = message
+    if (channel === 'gui' && guiContent) {
+      content = guiContent
+    } else if (channel === 'tui' && tuiContent) {
+      content = tuiContent
+    }
+
+    // Push to outbound queue
+    if (channel === 'mail') {
+      this.pushOutbound({
+        mail: {
+          to: to || '',
+          subject: title || '',
+          body: content,
+        },
+        attachments,
+      })
+    } else {
+      this.pushOutbound({
+        [channel]: content,
+        attachments,
+      })
+    }
+
+    return true
   }
 
   /**
@@ -188,7 +241,9 @@ export class MessageLayer {
   }
 
   /**
-   * 格式化待处理消息为 <chat> 格式
+   * Format pending inbound messages as XML tags for LLM consumption.
+   * tui/gui/mail -> <tui>...</tui> etc., agent -> <agent>...</agent>,
+   * notification -> <notification>...</notification>
    */
   formatPendingAsChat(): string | null {
     const pending = this.getPending()
@@ -199,6 +254,7 @@ export class MessageLayer {
       gui: [],
       mail: [],
       notification: [],
+      agent: [],
     }
 
     for (const msg of pending) {
@@ -207,21 +263,22 @@ export class MessageLayer {
 
     let result = ''
 
-    // Chat sources (tui, gui, mail) go inside <chat>
+    // tui/gui/mail each get their own top-level tag
     const chatSources = ['tui', 'gui', 'mail'] as MessageSource[]
-    const hasChatContent = chatSources.some(s => bySource[s].length > 0)
-    if (hasChatContent) {
-      result += '<chat>\n'
-      for (const source of chatSources) {
-        if (bySource[source].length > 0) {
-          const combined = bySource[source].join('\n---\n')
-          result += `<${source}>${combined}</${source}>\n`
-        }
+    for (const source of chatSources) {
+      if (bySource[source].length > 0) {
+        const combined = bySource[source].join('\n---\n')
+        result += `<${source}>${combined}</${source}>\n`
       }
-      result += '</chat>\n'
     }
 
-    // Notification goes outside <chat> in its own tag
+    // Agent tasks get their own tag
+    if (bySource.agent.length > 0) {
+      const combined = bySource.agent.join('\n---\n')
+      result += `<agent>${combined}</agent>\n`
+    }
+
+    // Notification goes in its own tag
     if (bySource.notification.length > 0) {
       const combined = bySource.notification.join('\n---\n')
       result += `<notification>\n${combined}\n</notification>`
@@ -230,36 +287,6 @@ export class MessageLayer {
     return result.trim() || null
   }
 
-  /**
-   * 解析 Assistant 回复中的 <chat> 标签
-   */
-  static parseReply(content: string): ChatReply {
-    const reply: ChatReply = {}
-
-    const chatMatch = content.match(/<chat>([\s\S]*?)<\/chat>/)
-    if (!chatMatch) return reply
-
-    const chatContent = chatMatch[1]
-
-    const tuiMatch = chatContent.match(/<tui>([\s\S]*?)<\/tui>/)
-    if (tuiMatch) reply.tui = tuiMatch[1].trim()
-
-    const guiMatch = chatContent.match(/<gui>([\s\S]*?)<\/gui>/)
-    if (guiMatch) reply.gui = guiMatch[1].trim()
-
-    const mailMatch = chatContent.match(/<mail>([\s\S]*?)<\/mail>/)
-    if (mailMatch) reply.mail = mailMatch[1].trim()
-
-    const attachmentMatches = chatContent.matchAll(/<attachment>([\s\S]*?)<\/attachment>/g)
-    const attachments: string[] = []
-    for (const m of attachmentMatches) {
-      const p = m[1].trim()
-      if (p) attachments.push(p)
-    }
-    if (attachments.length > 0) reply.attachments = attachments
-
-    return reply
-  }
 
   /**
    * Load inbound queue from JSON file.

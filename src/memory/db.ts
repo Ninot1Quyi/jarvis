@@ -9,6 +9,8 @@ import type { Chunk, SearchResult, IndexMeta, EmbeddingCacheEntry } from './type
 export class MemoryDB {
   private db!: Database.Database
   private dbPath: string
+  private vectorEnabled: boolean = false
+  private vectorLoadError: string | null = null
 
   constructor(dbPath: string) {
     this.dbPath = dbPath
@@ -23,10 +25,80 @@ export class MemoryDB {
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
 
-    // Load sqlite-vec extension
-    sqliteVec.load(this.db)
-
+    this.loadVectorExtension()
     this.ensureSchema()
+  }
+
+  private loadVectorExtension(): void {
+    let err1: string | null = null
+    let err2: string | null = null
+    let err3: string | null = null
+
+    // Try method 1: package default loader
+    try {
+      sqliteVec.load(this.db)
+      if (this.verifyVectorCapability()) {
+        this.vectorEnabled = true
+        console.info('[Memory] sqlite-vec loaded via package loader')
+        return
+      }
+    } catch (e) {
+      err1 = e instanceof Error ? e.message : String(e)
+    }
+
+    // Try method 2: explicit path from package
+    try {
+      const extPath = sqliteVec.getLoadablePath()
+      if (extPath && fs.existsSync(extPath)) {
+        this.db.loadExtension(extPath)
+        if (this.verifyVectorCapability()) {
+          this.vectorEnabled = true
+          console.info(`[Memory] sqlite-vec loaded from: ${extPath}`)
+          return
+        }
+      }
+    } catch (e) {
+      err2 = e instanceof Error ? e.message : String(e)
+    }
+
+    // Try method 3: manually downloaded vec0.so in node_modules/sqlite-vec
+    try {
+      const possiblePaths = [
+        path.join(process.cwd(), 'node_modules/sqlite-vec/vec0.so'),
+        path.join(__dirname, '../../node_modules/sqlite-vec/vec0.so'),
+        '/home/user/jarvis/node_modules/sqlite-vec/vec0.so',
+      ]
+      for (const extPath of possiblePaths) {
+        if (fs.existsSync(extPath)) {
+          // For loadExtension, pass without .so suffix (it adds it automatically)
+          const loadPath = extPath.endsWith('.so') ? extPath.slice(0, -3) : extPath
+          this.db.loadExtension(loadPath)
+          if (this.verifyVectorCapability()) {
+            this.vectorEnabled = true
+            console.info(`[Memory] sqlite-vec loaded from manual path: ${extPath}`)
+            return
+          }
+        }
+      }
+    } catch (e) {
+      err3 = e instanceof Error ? e.message : String(e)
+    }
+
+    // All methods failed
+    this.vectorEnabled = false
+    const errors = [err1, err2, err3].filter(Boolean).join('; ')
+    this.vectorLoadError = errors || 'extension file not found'
+    console.warn(`[Memory] sqlite-vec unavailable (${this.vectorLoadError}), vector search disabled`)
+  }
+
+  private verifyVectorCapability(): boolean {
+    try {
+      // Simple verification: check if vec0 functions are available
+      this.db.prepare("SELECT vec_version()").get()
+      return true
+    } catch {
+      return false
+    }
   }
 
   private ensureSchema(): void {
@@ -129,9 +201,9 @@ export class MemoryDB {
     }
 
     // vec0 virtual table for vector search
-    // Only create if we know the vector dimensions from IndexMeta
+    // Only create if we know the vector dimensions from IndexMeta AND vector extension is loaded
     const meta = this.getMeta()
-    if (meta?.vectorDims) {
+    if (meta?.vectorDims && this.vectorEnabled) {
       this.ensureVecTable(meta.vectorDims)
     }
   }
@@ -395,6 +467,11 @@ export class MemoryDB {
   }
 
   searchVector(queryEmbedding: number[], limit: number = 10): SearchResult[] {
+    // Check if vector extension is enabled
+    if (!this.vectorEnabled) {
+      return []
+    }
+
     // Check if vec0 table exists
     const vecExists = this.db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"

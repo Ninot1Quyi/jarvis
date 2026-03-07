@@ -7,12 +7,14 @@ import type {
   Step,
   Task,
   ProviderConfig,
+  A2AConfig,
 } from '../types.js'
 import { ToolRegistry, toolRegistry, setSkillRegistry } from './tools/index.js'
 import { setMemorySystem } from './tools/memory.js'
 import { config, getSystemPrompt, getPrompt, fillTemplate, ensureDir, resolveContextWindow } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
 import { createProvider } from '../llm/index.js'
+import { A2AServer } from '../a2a/index.js'
 import {
   trimOldToolResults,
   compactMessages,
@@ -139,12 +141,17 @@ export class Agent {
     // Initialize memory system
     logger.debug('Initializing memory system...')
     try {
-      this.memorySystem = await MemorySystem.create(config.dataDir, config.keys)
+      // Use memoryDir from config for persistent storage
+      const memoryDataDir = config.memoryDir || config.dataDir
+      this.memorySystem = await MemorySystem.create(memoryDataDir, config.keys)
       setMemorySystem(this.memorySystem)
       const memStatus = this.memorySystem.status()
       logger.debug(`Memory system initialized: ${memStatus.files} files, ${memStatus.chunks} chunks`)
     } catch (error) {
-      logger.warn('Failed to initialize memory system:', error)
+      // Memory system failure is non-fatal, agent can continue without it
+      // Provide more context in the error message
+      const errMsg = error instanceof Error ? error.message : String(error)
+      logger.warn(`Failed to initialize memory system (non-fatal): ${errMsg}`)
     }
     logger.debug('Memory system init complete')
 
@@ -160,6 +167,46 @@ export class Agent {
         }
       } catch (error) {
         logger.warn('[MCP] Failed to initialize MCP servers:', error)
+      }
+    }
+
+    // Initialize A2A server (if enabled)
+    const a2aConfig = config.keys.a2a as A2AConfig | undefined
+    let a2aServer: A2AServer | null = null
+    if (a2aConfig?.enabled) {
+      try {
+        const baseUrl = a2aConfig.agentCard?.url || 'http://localhost:3000'
+        a2aServer = new A2AServer({
+          port: a2aConfig.port || 3000,
+          baseAgentCard: {
+            name: a2aConfig.agentCard?.name || 'jarvis',
+            description: a2aConfig.agentCard?.description || 'A general-purpose AI assistant',
+            url: baseUrl,
+            version: a2aConfig.agentCard?.version || '1.0.0',
+            capabilities: {
+              streaming: false,
+              pushNotifications: false,
+              stateTransition: false,
+            },
+          },
+          toolRegistry: this.tools,
+        })
+
+        // Set message handler for incoming A2A tasks
+        a2aServer.setMessageHandler((text, metadata) => {
+          const provenance = metadata?.provenance ? {
+            kind: metadata.provenance.kind as 'external_user' | 'inter_session' | 'internal_system',
+            sourceTool: metadata.provenance.sourceTool,
+            sourceSessionKey: metadata.provenance.sourceSessionKey,
+            sourceChannel: metadata.provenance.sourceChannel,
+          } : undefined
+          messageManager.pushInboundWithProvenance('agent', text, provenance)
+        })
+
+        await a2aServer.start()
+        logger.info(`[A2A] Server started on port ${a2aServer.getPort()}`)
+      } catch (error) {
+        logger.warn('[A2A] Failed to start A2A server:', error)
       }
     }
 
@@ -634,8 +681,7 @@ Note: Screenshot is attached. If target window != focused window, first click ac
         logger.thought(response.content)
       }
 
-      // 5. 提交到 MessageManager（解析 <chat> 标签，路由到各通道，持久化+重试）
-      messageManager.dispatchReply(response.content || '')
+      // 5. Forward assistant content to GUI overlay
       messageManager.notifyGuiAssistant(response.content || '', response.toolCalls)
 
       // 添加 assistant 消息
@@ -703,8 +749,8 @@ Fix the JSON and retry.</error>`
 
 1. Did you call recordTask(content="...", source="...") at the START of this task?
 2. Did you REPLY to the message source?
-   - If the task came from <notification> (WeChat, QQ, Slack, etc.): You MUST open the originating app via GUI automation and send a reply to the sender. <chat> tags CANNOT reach these apps.
-   - If the task came from <chat> (tui/gui/mail): Reply via <chat> tags.
+   - If the task came from <notification> (WeChat, QQ, Slack, etc.): You MUST open the originating app via GUI automation and send a reply to the sender. The message tool CANNOT reach these apps.
+   - If the task came from <tui>/<gui>/<mail>/<agent>: Reply via the message tool (channel="tui"/"gui"/"mail").
 3. Did you update TODO to "completed"?
 4. Did you call recordTask(content="") to clear the task?
 

@@ -42,3 +42,8 @@ workspace/
 scripts/results/
 .vmware_lck
 .vmware_vms
+
+
+# Added by cargo
+
+/target

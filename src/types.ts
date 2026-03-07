@@ -157,6 +157,19 @@ export interface NotificationConfig {
   appBlacklist?: string[]
 }
 
+// A2A Configuration
+export interface A2AConfig {
+  enabled?: boolean
+  port?: number
+  agentCard?: {
+    name?: string
+    description?: string
+    url?: string
+    version?: string
+  }
+  remoteAgents?: string[]
+}
+
 export interface KeyConfig {
   defaultProvider?: string
   mouseSpeed?: number
@@ -166,9 +179,10 @@ export interface KeyConfig {
   doubao?: ProviderConfig
   mail?: MailConfig
   notification?: NotificationConfig
+  a2a?: A2AConfig
   memory?: { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } }
   mcpServers?: Record<string, McpServerConfig>
-  [key: string]: ProviderConfig | MailConfig | NotificationConfig | { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } } | Record<string, McpServerConfig> | string | number | undefined
+  [key: string]: ProviderConfig | MailConfig | NotificationConfig | A2AConfig | { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } } | Record<string, McpServerConfig> | string | number | undefined
 }
 
 export interface JarvisConfig {
@@ -178,6 +192,7 @@ export interface JarvisConfig {
   maxSteps: number
   screenshotDir: string
   dataDir: string
+  memoryDir: string
   workspace: string
   autonomousMode?: boolean
 }

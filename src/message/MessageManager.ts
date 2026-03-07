@@ -4,12 +4,12 @@
  * Agent sees ONE interface. Internally routes to TUI/GUI/Mail channels.
  *
  * Inbound:  external sources -> queue -> Agent consumes
- * Outbound: Agent submits LLM reply -> parse <chat> -> route to channels
+ * Outbound: Agent calls message tool -> MessageLayer.send() -> routes to channels
  *           MessageLayer handles persistence, retry, failure notifications.
  */
 
 import { overlayClient } from '../utils/overlay.js'
-import { messageLayer, MessageLayer, type MessageSource, type QueuedMessage, type OutboundMailTarget } from './MessageLayer.js'
+import { messageLayer, type MessageSource, type QueuedMessage, type Provenance } from './MessageLayer.js'
 import { MailService, type MailConfig } from './mail.js'
 import { NotificationService } from '../notification/NotificationService.js'
 import type { NotificationConfig } from '../notification/types.js'
@@ -119,6 +119,13 @@ export class MessageManager {
   }
 
   /**
+   * Push a message into the inbound queue with provenance.
+   */
+  pushInboundWithProvenance(source: MessageSource, content: string, provenance?: Provenance): string {
+    return messageLayer.pushWithProvenance(source, content, provenance)
+  }
+
+  /**
    * Notify overlay UI of pending messages queue update.
    * Only shows 'pending' status messages (not 'processing').
    */
@@ -141,7 +148,7 @@ export class MessageManager {
   }
 
   /**
-   * Format pending inbound messages as <chat> XML for LLM.
+   * Format pending inbound messages as XML tags for LLM.
    */
   formatInboundAsChat(): string | null {
     return messageLayer.formatPendingAsChat()
@@ -189,43 +196,12 @@ export class MessageManager {
 
   /**
    * Dispatch an LLM reply to target channels.
-   * Parses <chat> tags, builds outbound message, submits to
-   * MessageLayer for persistent delivery with retry.
+   * Now a no-op: outbound delivery is handled entirely by the message tool
+   * (MessageLayer.send()). Kept for API compatibility during transition.
+   * @deprecated Use the message tool instead
    */
-  dispatchReply(rawContent: string): void {
-    const chatReply = MessageLayer.parseReply(rawContent)
-
-    const hasReply = chatReply.tui || chatReply.gui || chatReply.mail
-    if (!hasReply) return
-
-    const outbound: {
-      tui?: string
-      gui?: string
-      mail?: OutboundMailTarget
-      attachments?: string[]
-    } = {}
-
-    if (chatReply.tui) outbound.tui = chatReply.tui
-
-    // GUI channel is now handled by notifyGuiAssistant (full content + toolCalls),
-    // no longer routed through MessageLayer's persistent delivery.
-
-    if (chatReply.mail) {
-      const recipientMatch = chatReply.mail.match(/<recipient>([\s\S]*?)<\/recipient>/)
-      if (recipientMatch) {
-        const titleMatch = chatReply.mail.match(/<title>([\s\S]*?)<\/title>/)
-        const contentMatch = chatReply.mail.match(/<content>([\s\S]*?)<\/content>/)
-        outbound.mail = {
-          to: recipientMatch[1].trim(),
-          subject: titleMatch ? titleMatch[1].trim() : 'Reply from Jarvis',
-          body: contentMatch ? contentMatch[1].trim() : '',
-        }
-      }
-    }
-
-    if (chatReply.attachments) outbound.attachments = chatReply.attachments
-
-    messageLayer.pushOutbound(outbound)
+  dispatchReply(_rawContent: string): void {
+    // No-op: message tool calls MessageLayer.send() directly
   }
 
   // ========== GUI Helpers (for overlay-specific operations) ==========

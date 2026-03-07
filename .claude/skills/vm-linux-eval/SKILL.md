@@ -32,6 +32,255 @@ description: This skill is used when testing Jarvis on Linux virtual machine, sy
 ./vm-start.sh --no-start      # 查看连接信息
 ```
 
+## 快速同步与编译（推荐）
+
+首次同步或修改了 package.json 时使用完整同步：
+
+```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+PROXY="http://192.168.236.1:7897"
+
+# 1. 同步所有源码（包含 package.json）
+sshpass -p "$PASSWORD" rsync -avz \
+  --exclude node_modules --exclude .git --exclude dist --exclude target \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o PreferredAuthentications=password" \
+  /Users/Ninot/NinotQuyi/jarvis/ \
+  user@${VM_IP}:~/jarvis/
+
+# 2. 删除旧 node_modules 并重新安装
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "rm -rf ~/jarvis/node_modules && export http_proxy=$PROXY && https_proxy=$PROXY && export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\" && nvm use 22 && cd /home/user/jarvis && npm install"
+
+# 3. 编译
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "export http_proxy=$PROXY && https_proxy=$PROXY && export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\" && nvm use 22 && cd /home/user/jarvis && npm run build"
+```
+
+只修改 src/prompts/config 时使用快速同步：
+
+```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
+# 快速同步 src
+sshpass -p "$PASSWORD" rsync -avz \
+  --exclude node_modules --exclude .git --exclude dist --exclude target \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o PreferredAuthentications=password" \
+  /Users/Ninot/NinotQuyi/jarvis/src/ \
+  user@${VM_IP}:~/jarvis/src/
+
+# 快速同步 config
+sshpass -p "$PASSWORD" rsync -avz \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o PreferredAuthentications=password" \
+  /Users/Ninot/NinotQuyi/jarvis/config/ \
+  user@${VM_IP}:~/jarvis/config/
+
+# 快速同步 prompts
+sshpass -p "$PASSWORD" rsync -avz \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o PreferredAuthentications=password" \
+  /Users/Ninot/NinotQuyi/jarvis/prompts/ \
+  user@${VM_IP}:~/jarvis/prompts/
+
+# 重新编译
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\" && nvm use 22 && cd /home/user/jarvis && npm run build"
+```
+
+## VM 环境准备（首次同步后必须执行）
+
+```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
+# 1. 修复 workspace 路径（从宿主机路径改为 VM 路径）
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "sed -i 's|\"/Users/Ninot/NinotQuyi/jarvis/workspace\"|\"/home/user/jarvis/workspace\"|' ~/jarvis/config/config.json"
+
+# 2. 创建 workspace 目录
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "mkdir -p ~/jarvis/workspace/screenshots ~/jarvis/workspace/traces"
+
+# 3. 验证配置
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "grep workspace ~/jarvis/config/config.json"
+```
+
+## 常见问题与解决方案
+
+### 问题 1: 编译报错找不到 @modelcontextprotocol/sdk
+
+**原因**: package.json 未同步到 VM，导致依赖未安装
+
+**解决**:
+```bash
+# 重新同步 package.json 并安装依赖
+sshpass -p "$PASSWORD" rsync -avz \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o PreferredAuthentications=password" \
+  /Users/Ninot/NinotQuyi/jarvis/package.json \
+  user@${VM_IP}:~/jarvis/package.json
+
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "rm -rf ~/jarvis/node_modules && export http_proxy=$PROXY && https_proxy=$PROXY && export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\" && nvm use 22 && cd /home/user/jarvis && npm install && npm run build"
+```
+
+### 问题 2: 运行报错 EACCES: permission denied, mkdir '/Users/Ninot/NinotQuyi/jarvis/workspace'
+
+**原因**: config.json 中 workspace 路径指向宿主机路径
+
+**解决**:
+```bash
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "sed -i 's|\"/Users/Ninot/NinotQuyi/jarvis/workspace\"|\"/home/user/jarvis/workspace\"|' ~/jarvis/config/config.json"
+
+# 创建目录
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  "mkdir -p ~/jarvis/workspace/screenshots ~/jarvis/workspace/traces"
+```
+
+### 问题 3: rsync 报错 "Too many authentication failures"
+
+**原因**: SSH 尝试多个密钥导致认证失败
+
+**解决**: 添加 `-o IdentitiesOnly=yes -o PreferredAuthentications=password` 参数
+
+### 问题 4: Memory 系统初始化失败
+
+**症状**: `[Memory] Failed to initialize memory system: {}`
+
+**原因**:
+1. sqlite-vec 扩展的 vec0.so 文件缺失
+2. @modelcontextprotocol/sdk 依赖未安装
+
+**解决**:
+```bash
+# 1. 下载 sqlite-vec ARM64 版本
+cd ~/jarvis/node_modules/sqlite-vec
+curl -L -o vec.tar.gz 'https://github.com/asg017/sqlite-vec/releases/download/v0.1.6/sqlite-vec-0.1.6-loadable-linux-aarch64.tar.gz'
+tar -xzf vec.tar.gz
+
+# 2. 安装依赖
+cd ~/jarvis
+npm install @modelcontextprotocol/sdk
+
+# 3. 重新编译
+npm run build
+```
+
+### 问题 5: sqlite-vec 加载失败 (wrong ELF class)
+
+**症状**:
+```
+[Memory] sqlite-vec unavailable (..., wrong ELF class: ELFCLASS32), vector search disabled
+```
+
+**原因**: sqlite-vec 官方预编译的 `loadable-linux-aarch64.tar.gz` 实际上是 32 位 ARM 二进制，不是真正的 64 位 ARM64 (aarch64)。
+
+**验证**:
+```bash
+file node_modules/sqlite-vec/vec0.so
+# 错误输出: ELF 32-bit LSB shared object, ARM
+# 正确输出: ELF 64-bit LSB shared object, ARM aarch64
+```
+
+**解决 (从源码编译)**:
+```bash
+# 1. 安装编译依赖 (在 VM 中执行)
+echo 'jarvis.linux.123' | sudo -S apt-get install -y build-essential cmake sqlite3 libsqlite3-dev git
+
+# 2. 克隆 sqlite-vec 源码
+cd /tmp
+rm -rf sqlite-vec
+git clone --depth 1 --branch v0.1.6 https://github.com/asg017/sqlite-vec.git
+
+# 3. 编译 loadable extension
+cd sqlite-vec
+make loadable
+
+# 4. 复制编译好的 vec0.so 到正确位置
+cp dist/vec0.so ~/jarvis/node_modules/sqlite-vec/vec0.so
+
+# 5. 验证
+file ~/jarvis/node_modules/sqlite-vec/vec0.so
+# 应该输出: ELF 64-bit LSB shared object, ARM aarch64
+```
+
+### 问题 6: sqlite-vec Android aarch64 版本 libdl.so 依赖问题
+
+**症状**:
+```
+[Memory] sqlite-vec unavailable (..., libdl.so: cannot open shared object file: No such file or directory), vector search disabled
+```
+
+**原因**: Android 编译的版本有 Android 特定的系统库依赖，不能在标准 Ubuntu Linux 上运行。
+
+**解决**: 使用上面"问题 5"的从源码编译方法，不要用 Android 版本。
+
+### 问题 7: better-sqlite3 加载扩展时路径问题
+
+**症状**: 即使 vec0.so 存在，加载仍失败，错误显示找的是 `vec0.so.so`
+
+**原因**: `better-sqlite3` 的 `loadExtension()` 方法会自动添加 `.so` 后缀，所以传 `vec0.so` 会变成找 `vec0.so.so`。
+
+**解决**: 传路径时去掉 `.so` 后缀：
+```typescript
+// 正确做法
+const extPath = '/path/to/vec0.so'
+const loadPath = extPath.endsWith('.so') ? extPath.slice(0, -3) : extPath
+db.loadExtension(loadPath)
+```
+
+这个已经在 `src/memory/db.ts` 中修复了。
+
+## sqlite-vec 完整修复记录 (2026-03-07)
+
+### 完整修复方案
+
+除了上面的问题解决，我们还对 `src/memory/db.ts` 做了以下改进：
+
+1. **新增状态标记**: `vectorEnabled` 和 `vectorLoadError`，明确跟踪向量搜索能力
+2. **多路径 fallback 加载**: 依次尝试包 loader、显式路径、手动编译路径
+3. **能力验证**: 加载后通过 `vec_version()` 验证扩展真正可用
+4. **显式诊断日志**: 不再吞掉真实错误，输出完整的错误信息
+
+### 完整加载流程
+
+```typescript
+// 1. 尝试包默认 loader
+// 2. 尝试 sqliteVec.getLoadablePath()
+// 3. 尝试手动编译路径 (node_modules/sqlite-vec/vec0)
+// 4. 任何一步成功后验证 vec_version() 可用
+// 5. 设置 vectorEnabled = true 或记录错误
+```
+
+### 验证 memory 系统正常
+
+```bash
+cd ~/jarvis
+node - <<'NODE'
+const { MemorySystem } = require('./dist/memory');
+const { loadConfig } = require('./dist/utils/config');
+(async () => {
+  const config = loadConfig();
+  const memory = await MemorySystem.create(config.memoryDir || config.dataDir, config.keys);
+  const status = memory.status();
+  console.log(JSON.stringify({ ok: true, memoryDir: config.memoryDir, files: status.files, chunks: status.chunks }));
+  if (memory.shutdown) await memory.shutdown();
+})().catch(err => {
+  console.error('MEMORY_INIT_FAILED');
+  console.error(err && err.stack ? err.stack : String(err));
+  process.exit(1);
+});
+NODE
+```
+
+成功输出应该包含：
+```
+[Memory] sqlite-vec loaded from manual path: /home/user/jarvis/node_modules/sqlite-vec/vec0.so
+[Memory] Memory system ready
+{"ok":true,...}
+```
+
 ## 代码同步
 
 ```bash
@@ -263,50 +512,57 @@ git checkout -b eval/linux-<主题> develop
 如果修改了代码，需要同步到 VM：
 
 ```bash
-sshpass -p '123456' rsync -avz \
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
+# 完整同步（包含 package.json）
+sshpass -p "$PASSWORD" rsync -avz \
   --exclude node_modules --exclude .git --exclude dist --exclude target \
-  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
-  /Users/Ninot/NinotQuyi/jarvis/ jarvis@192.168.199.131:~/jarvis/
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o PreferredAuthentications=password" \
+  /Users/Ninot/NinotQuyi/jarvis/ \
+  user@${VM_IP}:~/jarvis/
+
+# 然后重新安装依赖并编译（见"快速同步与编译"部分）
 ```
 
-如果只改了 prompts，只同步 prompts 目录更快：
+如果只改了 prompts，使用快速同步：
 
 ```bash
-sshpass -p '123456' rsync -avz \
-  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
-  /Users/Ninot/NinotQuyi/jarvis/prompts/ jarvis@192.168.199.131:~/jarvis/prompts/
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
+sshpass -p "$PASSWORD" rsync -avz \
+  -e "ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o PreferredAuthentications=password" \
+  /Users/Ninot/NinotQuyi/jarvis/prompts/ \
+  user@${VM_IP}:~/jarvis/prompts/
+
+# 重新编译
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP \
+  'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && nvm use 22 && cd ~/jarvis && npm run build'
 ```
 
-如果改了 TypeScript 代码，需要在 VM 中重新编译：
+### Step 3: 创建 tmux 会话并开启 iTerm2 分屏
 
 ```bash
-sshpass -p '123456' ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes jarvis@192.168.199.131 \
-  'export PATH="/usr/bin:$PATH" && cd ~/jarvis && npm run build'
-```
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
 
-### Step 3: 创建 tmux 会话并连接 VM
+# 1. 创建 tmux 会话
+tmux kill-session -t jarvis 2>/dev/null || true
+tmux new-session -d -s jarvis "sshpass -p '$PASSWORD' ssh -o StrictHostKeyChecking=no user@$VM_IP"
 
-```bash
-tmux kill-server 2>/dev/null
-tmux new-session -d -s work "sshpass -p '123456' ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes jarvis@192.168.199.131"
-```
+# 2. 验证连接成功
+sleep 2
+tmux capture-pane -t jarvis -b buf && tmux save-buffer -b buf -
+# 应该看到 user@ubuntu 的 shell prompt
 
-验证连接成功（使用 buffer 方式读取，兼容用户同时 attach）：
-
-```bash
-tmux capture-pane -t work -b buf && tmux save-buffer -b buf -
-# 应该看到 jarvis@ubuntu 的 shell prompt
-```
-
-### Step 4: 开启 iTerm2 右侧分屏供用户观察
-
-```applescript
+# 3. 开启 iTerm2 右侧分屏供用户观察
 osascript -e '
 tell application "iTerm2"
     tell current session of current tab of current window
         set newSession to (split vertically with default profile)
         tell newSession
-            write text "tmux attach -t work"
+            write text "tmux attach -t jarvis"
         end tell
     end tell
 end tell'
@@ -329,19 +585,28 @@ end tell'
 将任务写入脚本文件（避免中文引号在 tmux send-keys 中的问题）：
 
 ```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+PROXY="http://192.168.236.1:7897"
+
 # 在宿主机创建任务脚本
 cat > /tmp/run_task.sh << 'EOF'
 #!/bin/bash
-export PATH=/usr/bin:$PATH
+export http_proxy=http://192.168.236.1:7897
+export https_proxy=http://192.168.236.1:7897
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+nvm use 22
 cd ~/jarvis
+export DISPLAY=:0
 node dist/cli/main.js --no-ui "任务描述"
 EOF
 
 # 上传到 VM
-sshpass -p '123456' scp -o StrictHostKeyChecking=no -o IdentitiesOnly=yes /tmp/run_task.sh jarvis@192.168.199.131:/tmp/run_task.sh
+sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no /tmp/run_task.sh user@${VM_IP}:/tmp/run_task.sh
 
 # 通过 tmux 执行
-tmux send-keys -t work "bash /tmp/run_task.sh" Enter
+tmux send-keys -t jarvis "bash /tmp/run_task.sh" Enter
 ```
 
 ### Step 6: 持续监控执行过程
@@ -351,18 +616,21 @@ tmux send-keys -t work "bash /tmp/run_task.sh" Enter
 循环读取 tmux 输出，跟踪 Jarvis 的每一步：
 
 ```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
 # 读取当前屏幕内容
-tmux capture-pane -t work -b buf && tmux save-buffer -b buf -
+tmux capture-pane -t jarvis -b buf && tmux save-buffer -b buf -
 
 # 建议每 15-30 秒读取一次，根据任务复杂度调整间隔
-sleep 20 && tmux capture-pane -t work -b buf && tmux save-buffer -b buf -
+sleep 20 && tmux capture-pane -t jarvis -b buf && tmux save-buffer -b buf -
 ```
 
 **卡住检测：如果 60 秒内没有新的日志输出，执行以下步骤：**
 
 ```bash
 # 1. 停止当前任务
-tmux send-keys -t work C-c
+tmux send-keys -t jarvis C-c
 
 # 2. 查看 VM 屏幕截图
 sshpass -p "$PASSWORD" ssh user@$VM_IP "DISPLAY=:0 gnome-screenshot -f /tmp/screenshot.png"
@@ -373,7 +641,7 @@ sshpass -p "$PASSWORD" ssh user@$VM_IP "ps aux | grep -E 'node|firefox'"
 
 # 4. 查看最新 trace 日志
 sshpass -p "$PASSWORD" ssh user@$VM_IP "ls -lt ~/jarvis/data/traces/ | head -3"
-sshpass -p "$PASSWORD" ssh user@$VM_IP "tail -50 ~/jarvis/data/traces/$(ls -t ~/jarvis/data/traces/ | head -1)"
+sshpass -p "$PASSWORD" ssh user@$VM_IP "tail -50 ~/jarvis/data/traces/\$(ls -t ~/jarvis/data/traces/ | head -1)"
 
 # 5. 反思问题
 # - 检查日志中的错误信息
@@ -392,10 +660,13 @@ sshpass -p "$PASSWORD" ssh user@$VM_IP "tail -50 ~/jarvis/data/traces/$(ls -t ~/
 同时可以截取 VM 屏幕验证 GUI 状态：
 
 ```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
 # 使用 VMware 的 screenshot 功能或直接用 GNOME screenshot
-sshpass -p '123456' ssh jarvis@192.168.199.131 'gnome-screenshot -f /tmp/screenshot.png'
+sshpass -p "$PASSWORD" ssh user@$VM_IP 'gnome-screenshot -f /tmp/screenshot.png'
 # 然后拉取到宿主机
-sshpass -p '123456' scp jarvis@192.168.199.131:/tmp/screenshot.png /tmp/vm_screenshot.png
+sshpass -p "$PASSWORD" scp user@$VM_IP:/tmp/screenshot.png /tmp/vm_screenshot.png
 ```
 
 ### Step 7: 任务完成判定
@@ -413,18 +684,24 @@ Memory: final sync before close...
 从 VM 拉取完整 trace 日志：
 
 ```bash
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
 # 列出最近的 trace
-sshpass -p '123456' ssh -o StrictHostKeyChecking=no jarvis@192.168.199.131 'ls -lt ~/jarvis/data/traces/ | head -5'
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP 'ls -lt ~/jarvis/data/traces/ | head -5'
 
 # 读取最新 trace
-sshpass -p '123456' ssh -o StrictHostKeyChecking=no jarvis@192.168.199.131 'cat ~/jarvis/data/traces/<最新trace>.md'
+sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no user@$VM_IP 'cat ~/jarvis/data/traces/<最新trace>.md'
 ```
 
 截取最终 VM 屏幕状态：
 
 ```bash
-sshpass -p '123456' ssh jarvis@192.168.199.131 'gnome-screenshot -f /tmp/final.png'
-sshpass -p '123456' scp jarvis@192.168.199.131:/tmp/final.png /tmp/vm_final.png
+VM_IP="192.168.236.129"
+PASSWORD="jarvis.linux.123"
+
+sshpass -p "$PASSWORD" ssh user@$VM_IP 'gnome-screenshot -f /tmp/final.png'
+sshpass -p "$PASSWORD" scp user@$VM_IP:/tmp/final.png /tmp/vm_final.png
 ```
 
 评估维度：
@@ -500,6 +777,68 @@ sudo apt install -y wmctrl
 - 确保 VM 中的 "Accessibility Access" 已启用（系统设置 → 辅助功能）
 - VMware 共享文件夹可用于快速传输大文件
 - Linux 下可能需要额外配置 Display 变量（DISPLAY=:0）
+
+## OSWorld 全量评测
+
+使用 OSWorld 框架进行全量评测（368 个任务）：
+
+### 前提条件
+
+1. VM 已启动并运行
+2. 代码已同步到 VM 并编译成功
+3. VM 环境已配置完成（workspace 路径已修复）
+
+### 启动全量评测
+
+```bash
+# 激活 OSWorld Python 环境
+source /Users/Ninot/NinotQuyi/OSWorld/.venv/bin/activate
+
+# 运行全量评测
+python /Users/Ninot/NinotQuyi/jarvis/scripts/run_jarvis_eval.py \
+  --vm-ip 192.168.236.129 \
+  --vm-path /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx \
+  --task-file /Users/Ninot/NinotQuyi/OSWorld/evaluation_examples/test_all.json \
+  --jarvis-dir /home/user/jarvis \
+  --output-dir /Users/Ninot/NinotQuyi/jarvis/results/linux-full-$(date +%Y%m%d) \
+  --max-tasks 368 \
+  --max-time 300
+```
+
+### 任务文件说明
+
+| 文件 | 任务数 | 用途 |
+|------|--------|------|
+| `test_all.json` | 368 | 全量评测 |
+| `test_small.json` | 39 | 小规模测试 |
+| `test_nogdrive.json` | 360 | 无 Google Drive 测试 |
+| `test_infeasible.json` | 29 | 不可行任务测试 |
+
+### 评测结果
+
+结果保存在 `--output-dir` 指定目录：
+
+- `summary.json`: 汇总统计（成功率、平均分）
+- `{task_id}/result.json`: 单任务结果
+- `{task_id}/jarvis_output.txt`: Jarvis 完整输出
+- `{task_id}/task_config.json`: 任务配置
+
+### 快速验证（单任务测试）
+
+先跑一个小测试验证环境：
+
+```bash
+source /Users/Ninot/NinotQuyi/OSWorld/.venv/bin/activate
+
+python /Users/Ninot/NinotQuyi/jarvis/scripts/run_jarvis_eval.py \
+  --vm-ip 192.168.236.129 \
+  --vm-path /Users/Ninot/NinotQuyi/OSWorld/vmware_vm_data/Ubuntu0/Ubuntu.vmx \
+  --task-file /Users/Ninot/NinotQuyi/jarvis/scripts/test_single.json \
+  --jarvis-dir /home/user/jarvis \
+  --output-dir /Users/Ninot/NinotQuyi/jarvis/results/linux-test \
+  --max-tasks 1 \
+  --max-time 180
+```
 
 ## 相关文档
 
