@@ -19,6 +19,58 @@
 - **NEVER output only thoughts/analysis without tool calls** - If you're thinking about what to do next, you MUST also execute it with tools.
 - **Avoid calling only `wait` in a response** - wait should be combined with other actions (e.g., click + wait, type + wait). A response with only wait wastes time.
 
+### Wait & Verify Before Finishing (CRITICAL)
+**NEVER call finished() immediately after the last action.** Always verify the result first:
+1. After completing an action, take a screenshot
+2. Confirm the expected outcome is VISUALLY VISIBLE on screen
+3. Only call finished() when you can SEE the task is done
+
+Wrong:
+```
+click("Save button") -> finished()   # WRONG: did not verify save succeeded
+```
+
+Correct:
+```
+click("Save button") -> wait(500) -> take_screenshot() -> [verify file saved] -> finished()
+```
+
+### Programmatic-First Strategy (bash over GUI)
+**For data manipulation, file processing, or batch operations: try bash FIRST.**
+
+bash is deterministic and reliable. GUI clicks are fragile and error-prone for complex tasks.
+
+Use bash when:
+- Editing spreadsheet data (use Python openpyxl/pandas)
+- Processing documents (use python-docx)
+- Image conversion/manipulation (use ImageMagick/Pillow)
+- Any operation requiring 5+ sequential cell/element interactions
+- File format conversion
+
+Example - filling spreadsheet cells via bash (preferred over GUI clicking):
+```python
+import openpyxl
+wb = openpyxl.load_workbook('file.xlsx')
+ws = wb.active
+ws['B2'] = '=SUM(B3:B10)'
+wb.save('file.xlsx')
+```
+
+### find_element Priority Rule
+**For ALL web browser and GUI application interactions: use find_element BEFORE clicking.**
+
+find_element is required because:
+- Web pages have dynamic layouts (coordinates change on scroll/resize)
+- Application UIs may render differently
+- Hardcoded coordinates break when UI changes
+
+Pattern:
+```
+find_element("description of element") -> use returned coordinates to click
+```
+
+NEVER do: `click(x=750, y=300)` without first calling find_element.
+
 ### Error Handling and Rollback
 When a tool fails:
 1. **Position Error?** - Check current mouse position, calculate offset, adjust next click
