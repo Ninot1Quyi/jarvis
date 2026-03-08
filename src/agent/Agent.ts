@@ -246,7 +246,12 @@ export class Agent {
         { skill: 'libreoffice_impress', keywords: ['libreoffice impress', 'presentation', '.odp', '.pptx', '.ppt', 'slide', 'impress'] },
         { skill: 'libreoffice_writer', keywords: ['libreoffice writer', '.odt', '.docx', '.doc', 'writer', 'document'] },
         { skill: 'gimp', keywords: ['gimp', 'image edit', 'photo edit', '.xcf'] },
-        { skill: 'chrome_advanced', keywords: ['chrome', 'browser', 'web', 'http', 'https', 'shop', 'buy', 'search online', 'settings'] },
+        // Chrome sub-skills: specific tasks get the most targeted skill
+        { skill: 'chrome_settings', keywords: ['chrome settings', 'dark mode', 'do not track', 'delete on close', 'chrome language', 'chrome profile', 'chrome extension', 'chrome flag', 'chrome://'] },
+        { skill: 'chrome_shopping', keywords: ['flight', 'hotel', 'book a', 'car rental', 'e-commerce', 'shopping', 'buy online', 'amazon', 'steam store', 'booking.com', 'google flights'] },
+        { skill: 'chrome_navigation', keywords: ['find information', 'search for', 'look up', 'nfl', 'score', 'wikipedia', 'read the page', 'extract', 'browse to'] },
+        // Fall back to master navigation hub for generic Chrome/browser tasks
+        { skill: 'chrome_advanced', keywords: ['chrome', 'browser', 'web', 'http', 'https', 'settings', 'navigate'] },
       ]
 
       for (const { skill, keywords } of skillKeywords) {

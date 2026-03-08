@@ -3,181 +3,99 @@ name: chrome_advanced
 description: Chrome advanced navigation skill. Activate for complex Chrome tasks including settings navigation, e-commerce shopping, booking/travel sites, form filling, and dynamic DOM interaction.
 ---
 
-# Chrome Advanced Navigation Skill
+# Chrome Advanced Skill — Navigation Hub
 
-## Core Principle: Never Hardcode Coordinates
+This skill provides quick-reference guidance. For detailed module-specific instructions, load the appropriate sub-skill using `activate_skill`.
 
-**ALWAYS use find_element or locate before clicking ANY element in Chrome.**
+## Sub-Skills Available
 
-Web pages have dynamic layouts. Pixel coordinates change based on:
-- Window size
-- Page scroll position
-- Dynamic content loading
-- Responsive design breakpoints
+| Task Type | Skill to Load | When to Use |
+|-----------|--------------|-------------|
+| Chrome Settings | `chrome_settings` | Dark mode, Do Not Track, delete on close, language, profile, extensions, flags |
+| Shopping & Travel | `chrome_shopping` | Flight search, hotel booking, car rental, product filtering, price sorting |
+| Web Navigation | `chrome_navigation` | Reading pages, finding info, handling popups, multi-tab workflows, data extraction |
 
-### Correct Pattern
+## Universal Rules (Apply to ALL Chrome Tasks)
+
+### 1. Never Hardcode Coordinates
 ```
-find_element("Search button") -> click on found coordinates
-find_element("Privacy toggle for Do Not Track") -> click
-find_element("Add to Cart button") -> click
-```
-
-### Wrong Pattern
-```
-click(x=750, y=300)  # NEVER do this for web elements
+WRONG:  click(x=750, y=300)
+CORRECT: find_element("button text") -> click(found_coords)
 ```
 
-## Chrome Settings Navigation
+### 2. Navigate Settings via Direct URL
+```
+WRONG:  click(three_dots) -> click(Settings)  [causes activation loops]
+CORRECT: hotkey("ctrl l") -> type("chrome://settings") -> hotkey("enter")
+```
 
-### Open Settings
-- Address bar: type `chrome://settings` and press Enter
-- OR: Hamburger menu (3 dots) > Settings
+### 3. Verify Every Action
+```
+After EVERY click: take_screenshot() to confirm state changed
+After EVERY form fill: verify value is visible in field
+After EVERY navigation: confirm expected page loaded
+```
 
-### Search Within Settings
-- There is a **search bar at the top of the chrome://settings page**
-- Type the setting name to filter directly to the relevant section
-- Example: search "Do Not Track" to find privacy settings
-- Example: search "cookies" to find cookie settings
+### 4. Use bash for Date Calculation
+```
+WRONG:  assume "next Monday is the 15th"
+CORRECT: bash("date -d 'next monday' '+%Y-%m-%d'")  [or macOS: date -v+mon]
+```
 
-### Common Settings Paths
-- Privacy: Settings > Privacy and security
-- Do Not Track: Settings > Privacy and security > Cookies and other site data > "Send a Do Not Track request"
-- Extensions: `chrome://extensions`
-- Downloads: Settings > Downloads
-- Bookmarks: Ctrl+Shift+B (toggle bookmark bar)
+### 5. Read From Page, Not Memory
+```
+WRONG:  report "The score was 31-20" from memory
+CORRECT: navigate to page -> take_screenshot() -> read actual values shown
+```
 
-## Navigation Shortcuts
+## Quick Reference: Chrome Settings URLs
 
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+L or F6 | Focus address bar |
-| Ctrl+T | New tab |
-| Ctrl+W | Close current tab |
-| Ctrl+Shift+T | Reopen closed tab |
-| Ctrl+Tab | Next tab |
-| Ctrl+Shift+Tab | Previous tab |
-| Alt+Left/Right | Back/Forward |
-| Ctrl+R | Reload |
-| Ctrl+F | Find in page |
-| Ctrl+D | Bookmark current page |
+| Setting | URL |
+|---------|-----|
+| Main | `chrome://settings` |
+| Appearance/Dark Mode | `chrome://settings/appearance` |
+| Privacy & Security | `chrome://settings/privacy` |
+| Cookies / Do Not Track / Delete-on-Close | `chrome://settings/cookies` |
+| Languages | `chrome://settings/languages` |
+| Downloads | `chrome://settings/downloads` |
+| Extensions | `chrome://extensions` |
+| Flags | `chrome://flags` |
+| Profile | `chrome://settings/manageProfile` |
 
-## Form Interaction
+## Quick Reference: Key Patterns
 
-### Input Fields
-- After clicking an input, always verify it's focused before typing
-- Use find_element to locate the field by label/placeholder text
-- Clear existing text: Ctrl+A then type new text
+### Chrome Window Focus Issue (macOS)
+The first click on an inactive Chrome window **activates** it but does NOT perform the action. This causes repeated failed menu clicks. Solution: always use `Ctrl+L` + URL navigation instead of clicking menus.
 
-### Dropdowns and Select Elements
-- Use find_element to locate the dropdown
-- Some dropdowns are native `<select>` (use select_option tool)
-- Some are custom UI dropdowns (click to open, then find_element for option)
+### Settings Search Bar
+Navigate to `chrome://settings` and use the search bar at the top to find any setting by keyword. Much faster than manual navigation.
 
-### Date Pickers
-1. find_element("date input field")
-2. Click to open the date picker widget
-3. Use the calendar navigation (prev/next month buttons)
-4. find_element("specific date cell") then click
-5. Verify the selected date is shown in the input
+### Form Field Commit
+After typing in a settings field, **always press Enter** to save the value. Many input fields in Chrome do not auto-save on blur.
 
-### Form Verification
-**After filling any form field, VERIFY the value was entered:**
-1. Take a screenshot
-2. Read the field value from the screenshot
-3. Only proceed if the value is correct
-
-If a value didn't register: try clicking the field first, then retype.
-
-## E-Commerce and Shopping
-
-### Product Search Best Practices
-- Search for CORE product terms only (e.g., "running shoes" not "red size 10 running shoes for men")
-- Apply FILTERS separately after search results load
-- This is more reliable than trying to encode all attributes in search query
-
-### Using Filters
-1. Search for core product term
-2. Wait for results to load
-3. find_element("Size filter" or "Color filter") in the left sidebar/filter panel
-4. Click to expand filter category
-5. find_element("specific filter value, e.g., '10' for size")
-6. Click to apply filter
-7. Verify filtered results update
-
-### Price Filters
-- Look for price range slider or min/max inputs
-- Use find_element to locate them
-- Type or drag to set price range
-- Click "Apply" or "Search" if present
-
-### Add to Cart
-1. find_element("Add to Cart button") on product page
-2. Check if size/color selection is required first
-3. Verify cart count increases after clicking
-
-### Steam Store Specifics
-- "Add all DLC to Cart" button is dynamic — use find_element to locate it
-- DLC list may require scrolling; use Page Down then find_element
-
-## Booking and Travel Sites
-
-### Flight Search
-1. find_element("From airport input")
-2. Click, type airport code or name
-3. find_element("autocomplete suggestion") and click to select
-4. Repeat for destination
-5. find_element("Date picker") and set dates
-6. find_element("Trip type: One Way / Round Trip")
-7. find_element("Search button") and click
-8. **Verify each field BEFORE searching**
-
-### Hotel/Accommodation Search
-1. Set destination city
-2. Set check-in and check-out dates using date picker
-3. Set number of guests
-4. Apply price/rating filters after results load
-5. find_element to click on specific hotel
+### Enter Key for Dialogs
+For any file save dialog, confirmation dialog, or single-input form: press `hotkey("enter")` instead of clicking the OK/Save button. Coordinate guessing fails.
 
 ### Loop Detection
-If you're repeating the same form interaction 3+ times without progress:
-1. Try pressing Tab to move to next field instead of clicking
-2. Try pressing Enter to submit instead of clicking button
-3. Try using keyboard shortcuts instead of mouse
-4. Take screenshot and reassess what went wrong
+If the same click fails 3+ times:
+- Try `hotkey("tab")` to advance to next field
+- Try `hotkey("enter")` to submit
+- Try `hotkey("ctrl l")` + direct URL instead of menu navigation
+- Take screenshot and reassess
 
-## DOM Inspection Approach
+## Do Not Track — Exact Location
+Settings > Privacy and security > **Cookies and other site data** (NOT Ad privacy)
+Direct URL: `chrome://settings/cookies`
+Look for: "Send a 'Do Not Track' request with your browsing traffic"
 
-When a page element is hard to find visually:
-1. Use find_element with descriptive text
-2. Try multiple descriptions: aria-label, button text, icon description
-3. Scroll to bring element into view first, then find_element
+## Delete Browsing Data on Close — Exact Location
+Settings > Privacy and security > **Cookies and other site data**
+Direct URL: `chrome://settings/cookies`
+Look for: "Clear cookies and site data when you close all windows"
+(This is a TOGGLE — different from the "Clear browsing data" button which clears immediately)
 
-## Information Extraction
-
-### Reading Text from Pages
-- Use take_screenshot then read text from the screenshot
-- For structured data (tables, lists): take screenshot and extract systematically
-- Do NOT rely on prior knowledge for product specs/prices — ALWAYS read from page
-
-### iPhone Comparison Example (Correct approach)
-1. Navigate to apple.com/iphone/compare
-2. Use find_element to select comparison models
-3. Take screenshot of comparison table
-4. Extract specs FROM the screenshot, not from memory
-
-## Verification Before Finishing
-
-Before calling finished():
-1. Take a screenshot
-2. Verify the task outcome is visible on screen
-3. If task was "find X", confirm X is displayed
-4. If task was "click X", confirm the result of clicking is visible
-
-## Critical Rules
-
-1. **find_element BEFORE every click** — no hardcoded coordinates
-2. **Search settings page** using the settings search bar
-3. **Apply filters** after search, not in search query
-4. **Verify form inputs** — check field actually received the value
-5. **Loop detection**: 3 failed attempts → switch to keyboard input or different approach
-6. **Ground answers in page content** — never use AI knowledge for factual lookups
+## Chrome 2023 UI — Important Note
+The `chrome-refresh-2023` flag was **permanently removed** in Chrome 117+. If a user asks to disable the 2023 Chrome UI:
+- Search `chrome://flags` for "chrome-refresh-2023"
+- If not found, tell the user: "This flag was removed in Chrome 117 — the UI change is permanent and cannot be reverted via flags on your current Chrome version"
+- Do NOT disable unrelated flags like "Chrome Refresh Token Binding" (a security protocol, not UI-related)

@@ -9,9 +9,29 @@ description: Browser operation skill for Chrome, Firefox, Safari, Edge. Activate
 
 - **Browse like a human** - you only see what's on screen, scroll to see more
 - **Use middle_click to open links in new tabs** - keeps current page, easy to return
-- Address bar: focus address bar first, enter URL, press enter
+- Address bar: **ALWAYS use `hotkey("ctrl l")` to focus** — never click address bar at hardcoded coordinates
 - Search: click search box, type keyword, press enter, wait for results
 - Form submit: press enter or click submit button
+- **find_element BEFORE every click** on web pages — coordinates change constantly
+
+## macOS Chrome Window Focus Issue
+
+**CRITICAL (macOS only)**: Clicking on an inactive Chrome window **only activates** it — the click action does NOT register. This creates infinite menu-click loops.
+
+**Correct approach** (always works):
+```
+hotkey("ctrl l")          # Focuses address bar, works even if Chrome is inactive
+type("chrome://settings")
+hotkey("enter")
+```
+
+**Wrong approach** (causes loops):
+```
+click(three_dots_menu)    # May only activate window, not open menu
+click(Settings)           # Second click may also fail
+```
+
+This affects ALL Chrome navigation: always use `Ctrl+L` + URL instead of menu clicks.
 
 ## Browsing Web Pages (CRITICAL)
 
