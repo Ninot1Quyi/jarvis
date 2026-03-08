@@ -78,5 +78,9 @@
     "appWhitelist": [],
     "appBlacklist": ["jarvis-overlay"],
     "diffApps": ["WeChat", "QQ", "Lark", "DingTalk", "Discord", "Telegram", "Slack", "WhatsApp", "Line", "Signal", "Messages"]
+  },
+  "localAgent": {
+    "baseUrl": "http://127.0.0.1:11434",
+    "model": "maternion/mai-ui:2b"
   }
 }

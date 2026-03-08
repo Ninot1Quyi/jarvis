@@ -12,6 +12,7 @@ import {
   formatDiffForAgent,
   type StateSnapshot,
 } from '../../accessibility/index.js'
+import { captureScreenToBase64, verifyCoordinateWithMaiUI, verifyDragWithMaiUI } from '../../accessibility/mai-ui.js'
 
 const COORDINATE_FACTOR = 1000
 
@@ -189,11 +190,9 @@ function normalizeCoord(value: number): number {
 }
 
 /**
- * Auto-correct click coordinates via accessibility search.
- * When desc is provided and a high-confidence match is found (>= 80% similarity)
- * that is far enough from the LLM-provided coordinate (> 30 normalized units),
- * returns the corrected screen pixel coordinates.
- * Times out after 500ms to avoid blocking clicks.
+ * Verify and correct coordinates via mai-ui (if localAgent configured) or accessibility tree.
+ * desc takes priority; if absent, llmResponse is used as context for mai-ui.
+ * imageBase64 can be passed to reuse an already-captured screenshot.
  */
 const CORRECT_TIMEOUT_MS = 500
 
@@ -204,14 +203,49 @@ async function correctCoordinate(
   screenWidth: number,
   screenHeight: number,
   desc?: string,
-): Promise<{ x: number; y: number; corrected: boolean }> {
-  const fallback = { x, y, corrected: false }
-  if (!desc || !desc.trim() || !(await isAccessibilityAvailable())) {
-    return fallback
+  llmResponse?: string,
+  imageBase64?: string,
+): Promise<{ x: number; y: number; corrected: boolean; imageBase64?: string }> {
+  const fallback = { x, y, corrected: false, imageBase64 }
+
+  const localAgent = config.keys.localAgent
+  if (localAgent) {
+    const baseUrl = localAgent.baseUrl || 'http://127.0.0.1:11434'
+    const model = localAgent.model || 'maternion/mai-ui:2b'
+
+    // Use desc if available, otherwise fall back to llmResponse as context
+    const context = desc?.trim() || llmResponse?.trim().slice(0, 200)
+    if (!context) return fallback
+
+    // Capture screenshot once and reuse if not already provided
+    let img = imageBase64
+    if (!img) {
+      try {
+        img = await captureScreenToBase64()
+      } catch {
+        return fallback
+      }
+    }
+
+    const label = desc ? `"${desc}"` : `[context from llm]`
+    try {
+      const corrected = await verifyCoordinateWithMaiUI(context, coord, x, y, screenWidth, screenHeight, baseUrl, model, img)
+      if (corrected) {
+        logger.info(`[mai-ui] ${label} coord corrected: norm[${coord[0]},${coord[1]}] screen(${x},${y}) -> screen(${corrected.x},${corrected.y})`)
+        return { x: corrected.x, y: corrected.y, corrected: true, imageBase64: img }
+      } else {
+        logger.info(`[mai-ui] ${label} coord OK: norm[${coord[0]},${coord[1]}] screen(${x},${y}) no change`)
+      }
+    } catch (err) {
+      logger.info(`[mai-ui] ${label} verification failed: ${err}`)
+    }
+    return { ...fallback, imageBase64: img }
   }
 
+  // Accessibility tree fallback (no mai-ui configured)
+  if (!desc?.trim() || !(await isAccessibilityAvailable())) return fallback
+
   try {
-    // Race: accessibility search vs timeout
     const searchPromise = searchUIElements(desc.trim(), { maxResults: 3 })
     const timeoutPromise = new Promise<null>((resolve) =>
       setTimeout(() => resolve(null), CORRECT_TIMEOUT_MS)
@@ -229,8 +263,6 @@ async function correctCoordinate(
       const normBestX = Math.round((cx / screenWidth) * COORDINATE_FACTOR)
       const normBestY = Math.round((cy / screenHeight) * COORDINATE_FACTOR)
       const dist = Math.sqrt((normBestX - coord[0]) ** 2 + (normBestY - coord[1]) ** 2)
-      // Only correct when AX result is CLOSE to LLM coordinate (fine-tuning).
-      // If dist is large, AX likely matched a wrong element -- trust LLM instead.
       if (dist <= 150) {
         logger.debug(`correctCoordinate: "${desc}" matched "${best.title}" (${Math.round(best.similarity * 100)}%), correcting screen(${x},${y}) -> screen(${cx},${cy}), dist=${Math.round(dist)}`)
         return { x: Math.round(cx), y: Math.round(cy), corrected: true }
@@ -460,6 +492,7 @@ export const clickTool: Tool = {
   async execute(args, context) {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
+    const llmResponse = (context?.llmResponse as string) || ''
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
@@ -467,8 +500,8 @@ export const clickTool: Tool = {
     let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
     let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    // Auto-correct coordinates via accessibility search when desc is provided
-    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    // Auto-correct coordinates via mai-ui or accessibility search
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc, llmResponse)
     x = correction.x
     y = correction.y
 
@@ -581,13 +614,14 @@ export const doubleClickTool: Tool = {
   async execute(args, context) {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
+    const llmResponse = (context?.llmResponse as string) || ''
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
     let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
     let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc, llmResponse)
     x = correction.x
     y = correction.y
 
@@ -640,13 +674,14 @@ export const rightClickTool: Tool = {
   async execute(args, context) {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
+    const llmResponse = (context?.llmResponse as string) || ''
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
     let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
     let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc, llmResponse)
     x = correction.x
     y = correction.y
 
@@ -699,13 +734,14 @@ export const middleClickTool: Tool = {
   async execute(args, context) {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
+    const llmResponse = (context?.llmResponse as string) || ''
 
     const coord = args.coordinate as number[]
     const desc = args.desc as string | undefined
     let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
     let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
 
-    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc)
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, desc, llmResponse)
     x = correction.x
     y = correction.y
 
@@ -760,14 +796,38 @@ export const dragTool: Tool = {
   async execute(args, context) {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
+    const llmResponse = (context?.llmResponse as string) || ''
 
     const startCoord = args.startCoordinate as number[]
     const endCoord = args.endCoordinate as number[]
 
-    const startX = Math.round(normalizeCoord(startCoord[0]) * screenWidth)
-    const startY = Math.round(normalizeCoord(startCoord[1]) * screenHeight)
-    const endX = Math.round(normalizeCoord(endCoord[0]) * screenWidth)
-    const endY = Math.round(normalizeCoord(endCoord[1]) * screenHeight)
+    let startX = Math.round(normalizeCoord(startCoord[0]) * screenWidth)
+    let startY = Math.round(normalizeCoord(startCoord[1]) * screenHeight)
+    let endX = Math.round(normalizeCoord(endCoord[0]) * screenWidth)
+    let endY = Math.round(normalizeCoord(endCoord[1]) * screenHeight)
+
+    // Verify drag coordinates with mai-ui when localAgent is configured
+    const localAgent = config.keys.localAgent
+    if (localAgent && llmResponse) {
+      const baseUrl = localAgent.baseUrl || 'http://127.0.0.1:11434'
+      const model = localAgent.model || 'maternion/mai-ui:2b'
+      try {
+        const corrected = await verifyDragWithMaiUI(
+          llmResponse, startCoord, endCoord,
+          startX, startY, endX, endY,
+          screenWidth, screenHeight, baseUrl, model
+        )
+        if (corrected) {
+          logger.info(`[mai-ui] drag corrected: start screen(${startX},${startY})->(${corrected.startX},${corrected.startY}) end screen(${endX},${endY})->(${corrected.endX},${corrected.endY})`)
+          startX = corrected.startX
+          startY = corrected.startY
+          endX = corrected.endX
+          endY = corrected.endY
+        }
+      } catch (err) {
+        logger.info(`[mai-ui] drag verification failed: ${err}`)
+      }
+    }
 
     if (isLinux) {
       await linuxMouse.drag(startX, startY, endX, endY)
@@ -811,12 +871,19 @@ export const scrollTool: Tool = {
   async execute(args, context) {
     const screenWidth = (context?.screenWidth as number) || 1920
     const screenHeight = (context?.screenHeight as number) || 1080
+    const llmResponse = (context?.llmResponse as string) || ''
 
     const coord = args.coordinate as number[]
-    const x = Math.round(normalizeCoord(coord[0]) * screenWidth)
-    const y = Math.round(normalizeCoord(coord[1]) * screenHeight)
     const direction = args.direction as string
-    const amount = (args.amount as number) || 3  // 默认滚动3个单位
+    const amount = (args.amount as number) || 3
+
+    let x = Math.round(normalizeCoord(coord[0]) * screenWidth)
+    let y = Math.round(normalizeCoord(coord[1]) * screenHeight)
+
+    // Verify scroll position via mai-ui when localAgent is configured
+    const correction = await correctCoordinate(coord, x, y, screenWidth, screenHeight, undefined, llmResponse)
+    x = correction.x
+    y = correction.y
 
     await moveMouse(x, y)
 

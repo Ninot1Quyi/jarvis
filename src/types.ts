@@ -170,6 +170,11 @@ export interface A2AConfig {
   remoteAgents?: string[]
 }
 
+export interface LocalAgentConfig {
+  baseUrl?: string
+  model?: string
+}
+
 export interface KeyConfig {
   defaultProvider?: string
   mouseSpeed?: number
@@ -182,7 +187,8 @@ export interface KeyConfig {
   a2a?: A2AConfig
   memory?: { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } }
   mcpServers?: Record<string, McpServerConfig>
-  [key: string]: ProviderConfig | MailConfig | NotificationConfig | A2AConfig | { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } } | Record<string, McpServerConfig> | string | number | undefined
+  localAgent?: LocalAgentConfig
+  [key: string]: ProviderConfig | MailConfig | NotificationConfig | A2AConfig | { embeddingProvider?: string; memoryAgent?: { provider: string; model?: string } } | Record<string, McpServerConfig> | LocalAgentConfig | string | number | undefined
 }
 
 export interface JarvisConfig {

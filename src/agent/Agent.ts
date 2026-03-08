@@ -787,6 +787,7 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
           screenWidth: this.screenContext.screenWidth,
           screenHeight: this.screenContext.screenHeight,
           stepCount,
+          llmResponse: response.content || '',
         })
 
         // Send tool result to overlay

@@ -6,11 +6,13 @@
 
 import type { Tool } from '../../types.js'
 import { logger } from '../../utils/logger.js'
+import { config } from '../../utils/config.js'
 import {
   searchUIElements,
   formatSearchResultForAgent,
   isAccessibilityAvailable,
 } from '../../accessibility/index.js'
+import { searchWithMaiUI, captureScreenToBase64 } from '../../accessibility/mai-ui.js'
 
 export const findElementTool: Tool = {
   definition: {
@@ -41,6 +43,39 @@ export const findElementTool: Tool = {
       return {
         success: false,
         error: 'Keyword is required',
+      }
+    }
+
+    // Use mai-ui if localAgent is configured
+    const localAgent = config.keys.localAgent
+    if (localAgent) {
+      const baseUrl = localAgent.baseUrl || 'http://127.0.0.1:11434'
+      const model = localAgent.model || 'maternion/mai-ui:2b'
+
+      logger.debug(`[mai-ui] Searching for: "${keyword}"`)
+
+      const imageBase64 = await captureScreenToBase64()
+      const result = await searchWithMaiUI(keyword.trim(), imageBase64, screenWidth, screenHeight, baseUrl, model)
+
+      logger.debug(`[mai-ui] Search completed in ${result.queryTimeMs}ms`)
+
+      if (!result.success) {
+        return {
+          success: false,
+          error: result.error || 'mai-ui search failed',
+        }
+      }
+
+      const formattedResult = formatSearchResultForAgent(result, screenWidth, screenHeight)
+
+      return {
+        success: true,
+        message: formattedResult,
+        data: {
+          keyword: result.searchKeyword,
+          resultCount: result.results.length,
+          queryTimeMs: result.queryTimeMs,
+        },
       }
     }
 
@@ -105,6 +140,48 @@ export const locateElementTool: Tool = {
       }
     }
 
+    const toNormalized = (x: number, y: number): [number, number] => [
+      Math.round((x / screenWidth) * 1000),
+      Math.round((y / screenHeight) * 1000),
+    ]
+
+    // Use mai-ui if localAgent is configured
+    const localAgent = config.keys.localAgent
+    if (localAgent) {
+      const baseUrl = localAgent.baseUrl || 'http://127.0.0.1:11434'
+      const model = localAgent.model || 'maternion/mai-ui:2b'
+
+      logger.debug(`[mai-ui] Locating element: "${name}"`)
+
+      const imageBase64 = await captureScreenToBase64()
+      const result = await searchWithMaiUI(name.trim(), imageBase64, screenWidth, screenHeight, baseUrl, model)
+
+      logger.debug(`[mai-ui] Locate completed in ${result.queryTimeMs}ms`)
+
+      if (!result.success || result.results.length === 0) {
+        return {
+          success: true,
+          message: `Element "${name}" not found. Use visual analysis from screenshot to determine position.`,
+          data: { name, found: false },
+        }
+      }
+
+      const el = result.results[0]
+      const [normX, normY] = toNormalized(el.center[0], el.center[1])
+      const message = `Located "${name}":\n  [visual] "${name}" at [${normX}, ${normY}]`
+
+      return {
+        success: true,
+        message,
+        data: {
+          name,
+          found: true,
+          count: 1,
+          elements: [{ role: 'visual', title: name, coordinate: [normX, normY] }],
+        },
+      }
+    }
+
     if (!(await isAccessibilityAvailable())) {
       return {
         success: false,
@@ -141,12 +218,6 @@ export const locateElementTool: Tool = {
 
     // Take top 2 results
     const topResults = relevantResults.slice(0, 2)
-
-    // Format results concisely for next action planning
-    const toNormalized = (x: number, y: number): [number, number] => [
-      Math.round((x / screenWidth) * 1000),
-      Math.round((y / screenHeight) * 1000),
-    ]
 
     const elements = topResults.map(el => {
       const [normX, normY] = toNormalized(el.center[0], el.center[1])
