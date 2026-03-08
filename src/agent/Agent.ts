@@ -500,6 +500,12 @@ Note: Screenshot is attached. If target window != focused window, first click ac
         memories: memoriesText,
       })
 
+      // Append step count info in eval mode so agent is aware of remaining budget
+      if (this.evalMode && this.maxSteps > 0) {
+        const remaining = this.maxSteps - stepCount
+        computerContent += `\n\n**Step ${stepCount + 1}/${this.maxSteps} — ${remaining} steps remaining.**`
+      }
+
       // 如果本轮有 user 消息，在 computer 开头提示 LLM 同时关注
       if (hasUserMessage) {
         computerContent = `<quote>The previous message has role=user. It was sent together with this computer feedback. Pay attention to both messages and decide whether to update tasks, update the TODO list, or respond to the user's new message.</quote>\n\n` + computerContent
@@ -742,10 +748,17 @@ Fix the JSON and retry.</error>`
         } else {
           // 第一次没有工具调用 — 注入完成 checklist
           logger.info('No tool call (1st time), injecting completion checklist')
-          lastToolResults.push({
-            toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
-            result: JSON.stringify({
-              message: `<reminder>COMPLETION CHECKLIST -- You called no tools. If the task is complete, review before confirming:
+          const checklistMessage = this.evalMode
+            ? `<reminder>TASK VERIFICATION REQUIRED -- You called no tools. Before confirming completion, you MUST verify:
+
+1. Take a screenshot NOW to see the current screen state
+2. Confirm the task outcome is VISUALLY VISIBLE on screen
+3. If the task result is NOT visible, continue working with tool calls
+
+The task is NOT complete until you can see the result on screen.
+If you cannot verify completion, take a screenshot and assess.
+Only skip tools again if you can confirm the task is truly done.</reminder>`
+            : `<reminder>COMPLETION CHECKLIST -- You called no tools. If the task is complete, review before confirming:
 
 1. Did you call recordTask(content="...", source="...") at the START of this task?
 2. Did you REPLY to the message source?
@@ -757,7 +770,9 @@ Fix the JSON and retry.</error>`
 If ANY step is missing (especially replying to the sender), do it NOW with tool calls.
 If the task is NOT complete, call tools to make progress.
 If ALL steps are done, skip tools again in the next round to confirm completion.</reminder>`
-            })
+          lastToolResults.push({
+            toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
+            result: JSON.stringify({ message: checklistMessage })
           })
           continue
         }
@@ -886,11 +901,12 @@ If ALL steps are done, skip tools again in the next round to confirm completion.
 
       // Pre-flush: remind agent to save memories when approaching step limit
       if (this.maxSteps > 0 && stepCount === this.maxSteps - 5 && this.memorySystem) {
+        const flushMessage = this.evalMode
+          ? `<reminder>APPROACHING STEP LIMIT (${stepCount}/${this.maxSteps}). You have ${this.maxSteps - stepCount} steps remaining. PRIORITIZE COMPLETING THE CURRENT TASK. Use bash/python for efficiency if GUI clicks are too slow. Do NOT give up or stop early.</reminder>`
+          : `<reminder>MEMORY FLUSH -- You are approaching the step limit (${stepCount}/${this.maxSteps}). If you have learned anything important during this session (user preferences, useful techniques, task outcomes), write them to data/MEMORY.md or data/memory/ NOW using write_file/edit_file. This context will be lost after the session ends.</reminder>`
         lastToolResults.push({
           toolCall: { id: 'system', name: 'system_reminder', arguments: {} },
-          result: JSON.stringify({
-            message: `<reminder>MEMORY FLUSH -- You are approaching the step limit (${stepCount}/${this.maxSteps}). If you have learned anything important during this session (user preferences, useful techniques, task outcomes), write them to data/MEMORY.md or data/memory/ NOW using write_file/edit_file. This context will be lost after the session ends.</reminder>`
-          })
+          result: JSON.stringify({ message: flushMessage })
         })
       }
 
