@@ -237,6 +237,30 @@ export class Agent {
       systemPrompt = this.skillComposer.compose(systemPrompt, platform)
     }
 
+    // In eval mode: auto-inject relevant skill content based on task description
+    // This eliminates the need for the agent to call activate_skill on step 1
+    if (this.evalMode && taskDescription && this.skillComposer) {
+      const taskLower = taskDescription.toLowerCase()
+      const skillKeywords: Array<{ skill: string; keywords: string[] }> = [
+        { skill: 'libreoffice_calc', keywords: ['libreoffice calc', 'spreadsheet', '.ods', '.xlsx', '.csv', 'cell', 'formula', 'pivot', 'chart'] },
+        { skill: 'libreoffice_impress', keywords: ['libreoffice impress', 'presentation', '.odp', '.pptx', '.ppt', 'slide', 'impress'] },
+        { skill: 'libreoffice_writer', keywords: ['libreoffice writer', '.odt', '.docx', '.doc', 'writer', 'document'] },
+        { skill: 'gimp', keywords: ['gimp', 'image edit', 'photo edit', '.xcf'] },
+        { skill: 'chrome_advanced', keywords: ['chrome', 'browser', 'web', 'http', 'https', 'shop', 'buy', 'search online', 'settings'] },
+      ]
+
+      for (const { skill, keywords } of skillKeywords) {
+        if (keywords.some(kw => taskLower.includes(kw))) {
+          const content = this.skillComposer.getSkillContent(skill)
+          if (content) {
+            systemPrompt += `\n\n<pre_loaded_skill name="${skill}">\n${content}\n</pre_loaded_skill>`
+            logger.info(`[Eval] Pre-loaded skill: ${skill}`)
+            break  // Load at most one skill to avoid context bloat
+          }
+        }
+      }
+    }
+
     const computerTemplate = getPrompt('user')  // 复用 user template 作为 computer template
 
     // 消息历史
