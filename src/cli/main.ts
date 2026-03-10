@@ -136,6 +136,7 @@ async function main() {
   let evalMode = false
   let clear = false
   let provider: 'anthropic' | 'openai' | 'doubao' | undefined
+  let maxSteps: number | undefined
   let task = ''
 
   for (let i = 0; i < args.length; i++) {
@@ -162,6 +163,14 @@ async function main() {
         console.error(`Invalid provider: ${value}. Use 'anthropic', 'openai', or 'doubao'.`)
         process.exit(1)
       }
+    } else if (arg === '--max-steps' || arg === '-m') {
+      const value = args[++i]
+      const parsed = parseInt(value, 10)
+      if (isNaN(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+        console.error(`Invalid max-steps: ${value}. Must be a positive integer.`)
+        process.exit(1)
+      }
+      maxSteps = parsed
     } else if (arg === '--anthropic') {
       provider = 'anthropic'
     } else if (arg === '--openai') {
@@ -246,7 +255,7 @@ async function main() {
   }
 
   try {
-    const agent = new Agent({ provider, overlay, interactive, eval: evalMode })
+    const agent = new Agent({ provider, overlay, interactive, eval: evalMode, maxSteps })
     await agent.run(task || undefined)
   } catch (error: any) {
     // 增强错误日志输出
@@ -322,6 +331,7 @@ Options:
   --no-ui                Skip overlay UI, CLI only
   -e, --eval             Evaluation mode (exit when task completes and enters idle)
   -p, --provider <name>  Use specific provider (anthropic/openai/doubao)
+  -m, --max-steps <n>    Maximum steps to run (positive integer, default: unlimited)
   --anthropic            Use Anthropic Claude
   --openai               Use OpenAI
   --doubao               Use Doubao

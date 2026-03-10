@@ -36,6 +36,7 @@ import { captureAXSnapshot, computeAXDiff, filterDiffNoise, type AXSnapshot } fr
 import { MemorySystem } from '../memory/index.js'
 import { McpManager } from '../mcp/index.js'
 import type { McpServerConfig } from '../types.js'
+import { verifyMaiUIConfig } from '../accessibility/mai-ui.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -110,6 +111,27 @@ export class Agent {
   }
 
   async run(taskDescription?: string): Promise<void> {
+    // 验证 localAgent 配置 (mai-ui visual grounding)
+    const localAgent = config.keys.localAgent
+    if (localAgent && (localAgent.baseUrl || localAgent.model)) {
+      const baseUrl = localAgent.baseUrl || 'http://127.0.0.1:11434'
+      const model = localAgent.model || 'maternion/mai-ui:2b'
+
+      try {
+        await verifyMaiUIConfig(baseUrl, model)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        const box = `
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              [localAgent] Failed                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+${msg.split('\n').map(line => `║ ${line.padEnd(78)} ║`).join('\n')}
+╚══════════════════════════════════════════════════════════════════════════════╝`
+        console.error('\x1b[31m' + box + '\x1b[0m')
+        process.exit(1)
+      }
+    }
+
     // Resolve context window (async: config > OpenRouter > fallback)
     this.contextWindow = await resolveContextWindow(config.keys, this.providerName)
 

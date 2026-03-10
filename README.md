@@ -70,4 +70,22 @@ Windows requires MSVC toolchain for compiling the GUI.
 #### AI Agent Marketplace Index And Agent Router | [API Doc](https://www.deepnlp.org/doc/ai_agent_marketplace)
 
 [![AI Agent Marketplace and Router Badge](https://www.deepnlp.org/api/ai_agent_marketplace/svg?name=Ninot1Quyi/jarvis&badge_type=review)](https://www.deepnlp.org/store/ai-agent/ai-agent/pub-ninot1quyi/jarvis)
-    
+
+## Local Agent (Optional)
+
+For better UI coordinate accuracy, install [mai-ui](https://github.com/maternion/mai-ui):
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+ollama pull maternion/mai-ui:2b
+```
+
+Then add to `config/config.json`:
+
+```json
+"localAgent": {
+  "baseUrl": "http://127.0.0.1:11434",
+  "model": "maternion/mai-ui:2b"
+}
+```

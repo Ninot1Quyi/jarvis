@@ -66,3 +66,22 @@ Windows 需要 MSVC 工具链来编译 GUI。
    ```
 
 > **Note**: Windows 上不要使用 GNU 工具链（`x86_64-pc-windows-gnu`），它的链接器限制会导致 Tauri 等大型项目构建失败。
+
+## 本地 Agent（可选）
+
+安装 [mai-ui](https://github.com/maternion/mai-ui) 可获得更精准的 UI 坐标：
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+ollama pull maternion/mai-ui:2b
+```
+
+然后在 `config/config.json` 中添加：
+
+```json
+"localAgent": {
+  "baseUrl": "http://127.0.0.1:11434",
+  "model": "maternion/mai-ui:2b"
+}
+```

@@ -14,6 +14,7 @@ import { promisify } from 'util'
 import * as https from 'https'
 import * as http from 'http'
 import type { AccessibilitySearchResult } from './types.js'
+import { logger } from '../utils/logger.js'
 
 const execAsync = promisify(exec)
 
@@ -127,6 +128,74 @@ async function callOllamaGrounding(
     req.write(payload)
     req.end()
   })
+}
+
+/**
+ * Verify that the Ollama service is running and the specified model is available.
+ *
+ * @param baseUrl - Ollama base URL (e.g. http://127.0.0.1:11434)
+ * @param model - Model name to verify (e.g. mathion/mai-ui:2b)
+ * @returns Promise<void> - throws descriptive error if verification fails
+ */
+export async function verifyMaiUIConfig(baseUrl: string, model: string): Promise<void> {
+  const url = new URL('/v1/models', baseUrl)
+
+  // Check if Ollama service is running
+  let response: Response
+  try {
+    response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer empty' },
+    })
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch failed')) {
+      throw new Error(`[localAgent] Cannot connect to Ollama at ${baseUrl}.\n\n` +
+        `Please ensure Ollama is installed and running:\n` +
+        `  1. Install Ollama: https://ollama.com/download\n` +
+        `  2. Start Ollama: ollama serve\n` +
+        `  3. Pull the model: ollama pull ${model}`)
+    }
+    throw new Error(`[localAgent] Failed to connect to Ollama at ${baseUrl}: ${errMsg}`)
+  }
+
+  if (!response.ok) {
+    throw new Error(`[localAgent] Ollama at ${baseUrl} returned status ${response.status}`)
+  }
+
+  // Check if the model is available
+  let body: { models?: Array<{ name: string }> }
+  try {
+    body = await response.json() as { models?: Array<{ name: string }> }
+  } catch {
+    throw new Error(`[localAgent] Failed to parse Ollama response - service may not be running properly`)
+  }
+
+  const models = body.models || []
+  const modelNames = models.map(m => m.name)
+
+  // Check for exact match or tag variant (e.g., "mai-ui:2b" vs "mai-ui")
+  const modelShortName = model.includes(':') ? model.split(':')[0] : model
+  const hasModel = modelNames.includes(model) ||
+    modelNames.some(name => name === modelShortName || name.startsWith(modelShortName + ':'))
+
+  if (!hasModel) {
+    const steps = [
+      '# Install Ollama',
+      '$ curl -fsSL https://ollama.com/install.sh | sh',
+      '',
+      '# Start Ollama',
+      '$ ollama serve',
+      '',
+      `# Pull model: ${model}`,
+      `$ ollama pull ${model}`,
+    ]
+    throw new Error(`[localAgent] Model "${model}" not found in Ollama.\n\n` +
+      `Current models: ${modelNames.join(', ') || 'none'}\n\n` +
+      `To fix, run:\n${steps.join('\n')}`)
+  }
+
+  logger.info(`[localAgent] Verified: model "${model}" is available at ${baseUrl}`)
 }
 
 /**
