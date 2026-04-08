@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jarvis Island Electron</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="panel" class="island-panel">
+      <div id="shell" class="island-shell mode-expanded phase-working">
+        <div id="heartbeat" class="heartbeat compact-false active-true">
+          <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+            <path
+              d="M0 12 L16 12 L24 8 L31 15 L40 4 L49 18 L60 9 L70 12 L100 12"
+            ></path>
+          </svg>
+        </div>
+
+        <div id="compactScene" class="scene compact-scene">
+          <div id="compactIconLane" class="compact-side left">
+            <div class="app-badge">J</div>
+          </div>
+          <div id="compactNotch" class="notch-cutout"></div>
+          <div id="compactPulseLane" class="compact-side right"></div>
+        </div>
+
+        <div id="expandedScene" class="scene expanded-scene">
+          <div class="expanded-header">
+            <div class="expanded-app">
+              <div class="app-badge">J</div>
+              <div id="appName" class="app-name">Jarvis</div>
+            </div>
+            <div class="notch-cutout"></div>
+            <div class="expanded-heartbeat-reserved"></div>
+          </div>
+
+          <div class="expanded-body">
+            <div class="expanded-top">
+              <div id="seenImageStack" class="seen-image-stack"></div>
+              <div class="stream-column">
+                <div class="stream-line">
+                  <div id="streamText" class="stream-text"></div>
+                  <div id="progressLabel" class="progress-label"></div>
+                </div>
+                <div id="toolGrid" class="tool-grid"></div>
+              </div>
+            </div>
+
+            <div class="composer-panel">
+              <input
+                id="composerInput"
+                class="composer-input"
+                type="text"
+                value=""
+                placeholder=""
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

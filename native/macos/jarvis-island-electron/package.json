@@ -1,0 +1,21 @@
+{
+  "name": "jarvis-island-electron",
+  "version": "0.1.0",
+  "description": "Electron clone of Jarvis Dynamic Island demo",
+  "private": true,
+  "type": "commonjs",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --native-shell",
+    "start:web-shell": "electron .",
+    "start:native-shell": "electron . --native-shell",
+    "start:devtools": "electron . --devtools",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check window-edge/controller.js && node --check native-shell/bridge.js && node --check core/island-protocol.js && node --check core/island-engine.js && node --check core/island-live-source.js"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
