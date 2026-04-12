@@ -14,6 +14,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
 const MAX_TOOL_LINES: usize = 8;
+const DEFAULT_COLUMNS: usize = 100;
+const DEFAULT_ROWS: usize = 32;
 
 #[derive(Default)]
 struct ToolView {
@@ -195,56 +197,103 @@ impl Drop for TerminalGuard {
 
 fn render(state: &TuiState) -> std::io::Result<()> {
     let mut out = stdout();
+    let (columns, rows) = terminal_dimensions();
+    let divider = "─".repeat(columns.saturating_sub(2).max(10));
+    let thinking_rows = rows.clamp(24, 50) / 5;
+    let tools_rows = rows.clamp(24, 50) / 4;
+    let transcript_rows = rows.saturating_sub(thinking_rows + tools_rows + 12).max(6);
+
     write!(out, "\x1b[2J\x1b[H")?;
 
-    writeln!(out, "Dum-E CLI TUI")?;
-    writeln!(out, "mode: {} | status: {}", state.mode, state.status)?;
     writeln!(
         out,
-        "task: {}",
-        state.current_task.as_deref().unwrap_or("(idle)")
+        "╭{}╮",
+        "─".repeat(columns.saturating_sub(2).max(10))
     )?;
-    writeln!(out, "summary: {}", state.summary)?;
-    writeln!(out, "{}", "─".repeat(80))?;
-
-    writeln!(out, "Thinking:")?;
     writeln!(
         out,
-        "{}",
-        if state.thinking.is_empty() {
-            "(none)"
-        } else {
-            state.thinking.as_str()
-        }
+        "│ {:<width$}│",
+        format!(
+            "Dum-E CLI TUI  {}  {}",
+            status_badge(&state.status),
+            truncate(&state.summary, columns.saturating_sub(28))
+        ),
+        width = columns.saturating_sub(3).max(10)
     )?;
-    writeln!(out, "{}", "─".repeat(80))?;
-
-    writeln!(out, "Transcript:")?;
     writeln!(
         out,
-        "{}",
-        if state.transcript.is_empty() {
-            "(no assistant output yet)"
-        } else {
-            state.transcript.as_str()
-        }
+        "│ {:<width$}│",
+        format!(
+            "mode: {}   task: {}",
+            state.mode,
+            state.current_task.as_deref().unwrap_or("(idle)")
+        ),
+        width = columns.saturating_sub(3).max(10)
     )?;
-    writeln!(out, "{}", "─".repeat(80))?;
+    writeln!(out, "╰{}╯", "─".repeat(columns.saturating_sub(2).max(10)))?;
+    writeln!(out)?;
 
-    writeln!(out, "Tools:")?;
-    if state.tools.is_empty() {
-        writeln!(out, "(no tool activity)")?;
+    render_section(
+        &mut out,
+        "Thinking",
+        &tail_wrapped(
+            if state.thinking.is_empty() {
+                "(none)"
+            } else {
+                state.thinking.as_str()
+            },
+            columns,
+            thinking_rows.max(4),
+        ),
+        &divider,
+    )?;
+
+    let tool_lines = if state.tools.is_empty() {
+        vec!["(no tool activity)".to_string()]
     } else {
-        for (tool_id, view) in state.tools.iter().take(MAX_TOOL_LINES) {
-            writeln!(out, "- {} [{}]", tool_id, view.state)?;
-            if !view.detail.is_empty() {
-                writeln!(out, "  {}", truncate(&view.detail, 120))?;
-            }
-        }
-    }
-    writeln!(out, "{}", "─".repeat(80))?;
+        state
+            .tools
+            .iter()
+            .take(MAX_TOOL_LINES)
+            .flat_map(|(tool_id, view)| {
+                let mut lines = vec![format!(
+                    "{} {}",
+                    tool_state_badge(&view.state),
+                    truncate(&format!("{} [{}]", tool_id, view.state), columns.saturating_sub(6))
+                )];
+                if !view.detail.is_empty() {
+                    lines.extend(
+                        tail_wrapped(&view.detail, columns.saturating_sub(2), 2)
+                            .into_iter()
+                            .map(|line| format!("  {}", line)),
+                    );
+                }
+                lines
+            })
+            .collect::<Vec<_>>()
+    };
+    render_section(&mut out, "Tools", &tool_lines, &divider)?;
 
-    writeln!(out, "Input a task and press Enter. Type `exit` to quit.")?;
+    render_section(
+        &mut out,
+        "Transcript",
+        &tail_wrapped(
+            if state.transcript.is_empty() {
+                "(no assistant output yet)"
+            } else {
+                state.transcript.as_str()
+            },
+            columns,
+            transcript_rows,
+        ),
+        &divider,
+    )?;
+
+    writeln!(
+        out,
+        "{}",
+        dim("Type a task and press Enter. Type `exit` to quit. Use --plain-repl for legacy mode.")
+    )?;
     out.flush()
 }
 
@@ -255,6 +304,100 @@ fn truncate(input: &str, limit: usize) -> String {
         format!("{}...", head)
     } else {
         head
+    }
+}
+
+fn terminal_dimensions() -> (usize, usize) {
+    let columns = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value >= 40)
+        .unwrap_or(DEFAULT_COLUMNS);
+    let rows = std::env::var("LINES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value >= 20)
+        .unwrap_or(DEFAULT_ROWS);
+    (columns, rows)
+}
+
+fn wrap_text(input: &str, width: usize) -> Vec<String> {
+    let width = width.max(10);
+    let mut lines = Vec::new();
+    for raw_line in input.lines() {
+        if raw_line.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        for word in raw_line.split_whitespace() {
+            let candidate = if current.is_empty() {
+                word.to_string()
+            } else {
+                format!("{} {}", current, word)
+            };
+            if candidate.chars().count() > width && !current.is_empty() {
+                lines.push(current);
+                current = word.to_string();
+            } else {
+                current = candidate;
+            }
+        }
+        if !current.is_empty() {
+            lines.push(current);
+        }
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn tail_wrapped(input: &str, width: usize, max_lines: usize) -> Vec<String> {
+    let wrapped = wrap_text(input, width.saturating_sub(2));
+    let start = wrapped.len().saturating_sub(max_lines);
+    wrapped[start..].to_vec()
+}
+
+fn render_section(
+    out: &mut impl Write,
+    title: &str,
+    lines: &[String],
+    divider: &str,
+) -> std::io::Result<()> {
+    writeln!(out, "{} {}", accent("■"), title)?;
+    for line in lines {
+        writeln!(out, "{}", line)?;
+    }
+    writeln!(out, "{}", divider)?;
+    Ok(())
+}
+
+fn accent(text: &str) -> String {
+    format!("\x1b[36m{}\x1b[0m", text)
+}
+
+fn dim(text: &str) -> String {
+    format!("\x1b[2m{}\x1b[0m", text)
+}
+
+fn status_badge(status: &str) -> String {
+    match status {
+        "running" => "\x1b[33m● running\x1b[0m".to_string(),
+        "idle" => "\x1b[32m● idle\x1b[0m".to_string(),
+        other => format!("● {}", other),
+    }
+}
+
+fn tool_state_badge(state: &str) -> String {
+    if state.contains("error") {
+        "\x1b[31m●\x1b[0m".to_string()
+    } else if state.contains("completed") {
+        "\x1b[32m●\x1b[0m".to_string()
+    } else if state.contains("queued") || state.contains("executing") || state.contains("building") {
+        "\x1b[33m●\x1b[0m".to_string()
+    } else {
+        "•".to_string()
     }
 }
 

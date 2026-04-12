@@ -87,7 +87,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create LLM provider (MiniMax)
     let minimax_config = config.minimax();
-    let model = args.model.unwrap_or_else(|| "abab6.5s-chat".to_string());
+    let model = args
+        .model
+        .unwrap_or_else(|| minimax_config.model.clone());
 
     let llm: Arc<dyn LLMProvider> =
         match MiniMaxLLM::new(minimax_config.api_key, minimax_config.base_url, model) {
