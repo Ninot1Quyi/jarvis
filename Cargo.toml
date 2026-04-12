@@ -1,0 +1,78 @@
+[package]
+name = "dum_e"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.45", features = ["full"] }
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# Async stream macros
+async-stream = "0.3"
+
+# HTTP client for MiniMax API
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Config
+config = "0.14"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Audio playback/capture
+rodio = "0.20"
+cpal = "0.15"
+
+# Tracing for observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+once_cell = "1.20"
+
+# Async traits
+async-trait = "0.1"
+
+# Futures for async utilities
+futures = "0.3"
+
+# UUID for trace IDs
+uuid = { version = "1.16", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Environment
+dotenvy = "0.15"
+
+# Regex for tool selection scoring
+regex = "1.11"
+
+# Parking lot for efficient mutexes
+parking_lot = "0.12"
+
+# Hex encoding for MiniMax audio
+hex = "0.4"
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Tracing for observability
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.13"
+tempfile = "3.15"
+
+[profile.release]
+opt-level = 3
+lto = true
