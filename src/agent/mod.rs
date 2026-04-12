@@ -10,7 +10,7 @@ use crate::message::{Message, MessageRole};
 use crate::observability::{Component, Event, EventBus, EventData, EventType};
 use crate::soul::SoulManager;
 use crate::tools::{ToolContext, ToolRegistry, ToolResult};
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 pub use state::AgentState;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -736,5 +736,176 @@ impl Default for Agent {
             soul_manager,
             Arc::new(EventBus::new(true)),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use futures::stream;
+    use std::pin::Pin;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    struct FakeTool {
+        name: &'static str,
+        delay_ms: u64,
+    }
+
+    #[async_trait]
+    impl crate::tools::Tool for FakeTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "fake test tool"
+        }
+
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+
+        fn is_concurrency_safe(&self) -> bool {
+            true
+        }
+
+        async fn call(
+            &self,
+            _input: &serde_json::Value,
+            _context: &ToolContext,
+        ) -> Result<ToolResult, String> {
+            tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            Ok(ToolResult {
+                success: true,
+                output: format!("{}-ok", self.name),
+                error: None,
+            })
+        }
+    }
+
+    struct FakeLLM {
+        streams: Mutex<Vec<Vec<Result<ChatChunk, crate::llm::LLMError>>>>,
+        requests: Mutex<Vec<Vec<Message>>>,
+    }
+
+    impl FakeLLM {
+        fn new(streams: Vec<Vec<Result<ChatChunk, crate::llm::LLMError>>>) -> Self {
+            Self {
+                streams: Mutex::new(streams),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn recorded_requests(&self) -> Vec<Vec<Message>> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl LLMProvider for FakeLLM {
+        async fn chat_stream(
+            &self,
+            _messages: &[Message],
+            _tools: Option<&[ToolDefinition]>,
+        ) -> Result<crate::llm::ChatCompletion, crate::llm::LLMError> {
+            panic!("chat_stream should not be used in streaming agent path");
+        }
+
+        fn chat_streaming(
+            &self,
+            messages: &[Message],
+            _tools: Option<&[ToolDefinition]>,
+        ) -> Pin<Box<dyn futures::Stream<Item = Result<ChatChunk, crate::llm::LLMError>> + Send + '_>>
+        {
+            self.requests.lock().unwrap().push(messages.to_vec());
+            let response = self.streams.lock().unwrap().remove(0);
+            Box::pin(stream::iter(response))
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+    }
+
+    fn test_agent(llm: Arc<dyn LLMProvider>, registry: ToolRegistry) -> Agent {
+        Agent::new(
+            registry,
+            Config::default(),
+            SoulManager::new(std::path::PathBuf::from("SOUL.md")),
+            Arc::new(EventBus::new(false)),
+        )
+        .with_llm(llm)
+    }
+
+    #[tokio::test]
+    async fn agent_uses_chat_streaming_for_text_only_turns() {
+        let llm = Arc::new(FakeLLM::new(vec![vec![
+            Ok(ChatChunk::Text("streamed done".to_string())),
+            Ok(ChatChunk::Done),
+        ]]));
+
+        let result = test_agent(llm.clone(), ToolRegistry::new())
+            .run("say done")
+            .await
+            .expect("agent run should succeed");
+
+        assert_eq!(result.steps, 1);
+        assert_eq!(result.output, "streamed done");
+        assert_eq!(llm.recorded_requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_flushes_tool_results_in_tool_use_arrival_order() {
+        let llm = Arc::new(FakeLLM::new(vec![
+            vec![
+                Ok(ChatChunk::Text("working ".to_string())),
+                Ok(ChatChunk::ToolUse(ToolCall {
+                    id: "tool-1".to_string(),
+                    name: "slow_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                })),
+                Ok(ChatChunk::ToolUse(ToolCall {
+                    id: "tool-2".to_string(),
+                    name: "fast_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                })),
+                Ok(ChatChunk::Done),
+            ],
+            vec![Ok(ChatChunk::Text("done".to_string())), Ok(ChatChunk::Done)],
+        ]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(FakeTool {
+            name: "slow_tool",
+            delay_ms: 40,
+        });
+        registry.register(FakeTool {
+            name: "fast_tool",
+            delay_ms: 1,
+        });
+
+        let result = test_agent(llm.clone(), registry)
+            .run("run tools")
+            .await
+            .expect("agent run should succeed");
+
+        assert_eq!(result.output, "done");
+
+        let requests = llm.recorded_requests();
+        assert_eq!(requests.len(), 2);
+
+        let second_turn = &requests[1];
+        let tool_messages: Vec<&Message> = second_turn
+            .iter()
+            .filter(|message| message.role == MessageRole::Tool)
+            .collect();
+
+        assert_eq!(tool_messages.len(), 2);
+        assert_eq!(tool_messages[0].tool_use_id.as_deref(), Some("tool-1"));
+        assert_eq!(tool_messages[1].tool_use_id.as_deref(), Some("tool-2"));
+        assert_eq!(tool_messages[0].content, "slow_tool-ok");
+        assert_eq!(tool_messages[1].content, "fast_tool-ok");
     }
 }
