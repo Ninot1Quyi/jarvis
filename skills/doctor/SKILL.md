@@ -1,3 +1,8 @@
+---
+name: doctor
+description: Dum-E 问题诊断与修复闭环技能
+---
+
 # Doctor Skill
 
 ## 目的
