@@ -5,13 +5,13 @@
 mod state;
 
 use crate::config::Config;
-use crate::llm::{parse_tool_calls_from_text, LLMProvider, ToolCall, ToolDefinition};
+use crate::llm::{parse_tool_calls_from_text, ChatChunk, LLMProvider, ToolCall, ToolDefinition};
 use crate::message::{Message, MessageRole};
 use crate::observability::{Component, Event, EventBus, EventData, EventType};
 use crate::soul::SoulManager;
 use crate::tools::{ToolContext, ToolRegistry, ToolResult};
 pub use state::AgentState;
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -303,41 +303,118 @@ impl Agent {
             // Print to stderr that LLM is responding (user sees this in real-time)
             eprint!("\n[LUM] ");
 
-            // Use non-streaming for better response time with MiniMax (avoids
-            // extended thinking streaming delays). Tool calls are processed
-            // after the full response is received.
-            let full_text: String;
-            let assistant_blocks: Vec<serde_json::Value>;
-            let tool_calls: Vec<ToolCall>;
+            // Stream assistant output and queue tools as soon as tool_use blocks arrive.
+            let mut full_text = String::new();
+            let mut assistant_blocks: Vec<serde_json::Value> = Vec::new();
+            let mut tool_call_order: Vec<String> = Vec::new();
+            let mut completed_tools_by_id: HashMap<String, CompletedTool> = HashMap::new();
+            let mut streaming_tool_executor =
+                StreamingToolExecutor::new(self.tool_registry.clone());
+            let mut stream = llm.chat_streaming(&messages, tools_ref);
+            let mut stream_done = false;
 
-            match llm.chat_stream(&messages, tools_ref).await {
-                Ok(response) => {
-                    full_text = response.message;
-                    tool_calls = response.tool_calls;
-                    assistant_blocks = tool_calls
-                        .iter()
-                        .map(|tc| {
-                            serde_json::json!({
-                                "type": "tool_use",
-                                "id": tc.id,
-                                "name": tc.name,
-                                "input": tc.arguments,
-                            })
-                        })
-                        .collect();
+            while !stream_done
+                || streaming_tool_executor.has_running()
+                || streaming_tool_executor.has_queued()
+            {
+                tokio::select! {
+                    chunk = stream.next(), if !stream_done => {
+                        match chunk {
+                            Some(Ok(ChatChunk::Text(text))) => {
+                                eprint!("{}", text);
+                                full_text.push_str(&text);
+                                Self::append_text_block(&mut assistant_blocks, &text);
+                                self.event_bus.publish(Event::new(
+                                    Component::Llm,
+                                    EventType::LlmChunk,
+                                    EventData::LlmChunk { text: text.clone() },
+                                ));
+                                self.dev_log("LLM_CHUNK", &format!("text={}", Self::preview(&text)));
+                            }
+                            Some(Ok(ChatChunk::ToolUse(tool_call))) => {
+                                let is_concurrency_safe =
+                                    self.is_tool_concurrency_safe(&tool_call.name);
+                                self.event_bus.publish(Event::new(
+                                    Component::Llm,
+                                    EventType::LlmToolCall,
+                                    EventData::ToolCall {
+                                        tool: tool_call.name.clone(),
+                                        input: tool_call.arguments.clone(),
+                                    },
+                                ));
+                                self.dev_log(
+                                    "LLM_TOOL_CALL",
+                                    &format!(
+                                        "id={} name={} args={}",
+                                        tool_call.id, tool_call.name, tool_call.arguments
+                                    ),
+                                );
+                                self.event_bus.publish(Event::new(
+                                    Component::Tool,
+                                    EventType::ToolCall,
+                                    EventData::ToolCall {
+                                        tool: tool_call.name.clone(),
+                                        input: tool_call.arguments.clone(),
+                                    },
+                                ));
+                                assistant_blocks.push(serde_json::json!({
+                                    "type": "tool_use",
+                                    "id": tool_call.id.clone(),
+                                    "name": tool_call.name.clone(),
+                                    "input": tool_call.arguments.clone(),
+                                }));
+                                self.dev_log(
+                                    "TOOL_CALL",
+                                    &format!(
+                                        "queued id={} name={} concurrency_safe={}",
+                                        tool_call.id, tool_call.name, is_concurrency_safe
+                                    ),
+                                );
+                                tool_call_order.push(tool_call.id.clone());
+                                streaming_tool_executor.enqueue(tool_call, is_concurrency_safe);
+                            }
+                            Some(Ok(ChatChunk::ToolInputDelta { id, delta })) => {
+                                self.dev_log(
+                                    "LLM_TOOL_INPUT_DELTA",
+                                    &format!("id={} delta={}", id, Self::preview(&delta)),
+                                );
+                            }
+                            Some(Ok(ChatChunk::ThinkingStart { id, index })) => {
+                                self.dev_log("LLM_THINKING_START", &format!("id={} index={}", id, index));
+                            }
+                            Some(Ok(ChatChunk::ThinkingDelta { id, delta })) => {
+                                self.dev_log(
+                                    "LLM_THINKING_DELTA",
+                                    &format!("id={} delta={}", id, Self::preview(&delta)),
+                                );
+                            }
+                            Some(Ok(ChatChunk::ThinkingEnd { id })) => {
+                                self.dev_log("LLM_THINKING_END", &format!("id={}", id));
+                            }
+                            Some(Ok(ChatChunk::Done)) | None => {
+                                stream_done = true;
+                            }
+                            Some(Err(e)) => {
+                                error!(error = %e, "LLM chat error");
+                                self.event_bus.publish(Event::new(
+                                    Component::Agent,
+                                    EventType::AgentError,
+                                    EventData::Error {
+                                        error: format!("LLM chat error: {}", e),
+                                    },
+                                ));
+                                return Err(format!("LLM chat error: {}", e));
+                            }
+                        }
+                    }
+                    completed = streaming_tool_executor.wait_next(), if streaming_tool_executor.has_running() => {
+                        if let Some(completed) = completed {
+                            self.record_tool_completion(&completed);
+                            completed_tools_by_id.insert(completed.call.id.clone(), completed);
+                        }
+                    }
                 }
-                Err(e) => {
-                    error!(error = %e, "LLM chat error");
-                    self.event_bus.publish(Event::new(
-                        Component::Agent,
-                        EventType::AgentError,
-                        EventData::Error {
-                            error: format!("LLM chat error: {}", e),
-                        },
-                    ));
-                    return Err(format!("LLM chat error: {}", e));
-                }
-            };
+            }
 
             // Publish LLM complete event.
             self.event_bus.publish(Event::new(
@@ -347,7 +424,7 @@ impl Agent {
                     message: format!(
                         "LLM complete: {} chars, {} tool call(s)",
                         full_text.chars().count(),
-                        tool_calls.len()
+                        tool_call_order.len()
                     ),
                 },
             ));
@@ -356,50 +433,9 @@ impl Agent {
                 &format!(
                     "chars={} tool_calls={}",
                     full_text.chars().count(),
-                    tool_calls.len()
+                    tool_call_order.len()
                 ),
             );
-
-            // Enqueue and execute tool calls.
-            let mut tool_call_order: Vec<String> = Vec::new();
-            let mut completed_tools_by_id: HashMap<String, CompletedTool> = HashMap::new();
-            let mut streaming_tool_executor =
-                StreamingToolExecutor::new(self.tool_registry.clone());
-
-            if !tool_calls.is_empty() {
-                for tc in &tool_calls {
-                    self.event_bus.publish(Event::new(
-                        Component::Llm,
-                        EventType::LlmToolCall,
-                        EventData::ToolCall {
-                            tool: tc.name.clone(),
-                            input: tc.arguments.clone(),
-                        },
-                    ));
-                    self.dev_log(
-                        "LLM_TOOL_CALL",
-                        &format!("id={} name={} args={}", tc.id, tc.name, tc.arguments),
-                    );
-                    self.event_bus.publish(Event::new(
-                        Component::Tool,
-                        EventType::ToolCall,
-                        EventData::ToolCall {
-                            tool: tc.name.clone(),
-                            input: tc.arguments.clone(),
-                        },
-                    ));
-                    let is_concurrency_safe = self.is_tool_concurrency_safe(&tc.name);
-                    self.dev_log(
-                        "TOOL_CALL",
-                        &format!(
-                            "queued id={} name={} concurrency_safe={}",
-                            tc.id, tc.name, is_concurrency_safe
-                        ),
-                    );
-                    tool_call_order.push(tc.id.clone());
-                    streaming_tool_executor.enqueue(tc.clone(), is_concurrency_safe);
-                }
-            }
 
             // Add assistant message to history, preserving tool_use blocks.
             let assistant_message = if assistant_blocks.is_empty() {
@@ -456,20 +492,6 @@ impl Agent {
                             completed_tools_by_id.insert(completed.call.id.clone(), completed);
                         }
                     }
-                }
-            }
-
-            // Drain tool executions.
-            while streaming_tool_executor.has_running() || streaming_tool_executor.has_queued() {
-                if !streaming_tool_executor.has_running() {
-                    streaming_tool_executor.process_queue();
-                    if !streaming_tool_executor.has_running() {
-                        break;
-                    }
-                }
-                if let Some(completed) = streaming_tool_executor.wait_next().await {
-                    self.record_tool_completion(&completed);
-                    completed_tools_by_id.insert(completed.call.id.clone(), completed);
                 }
             }
 
