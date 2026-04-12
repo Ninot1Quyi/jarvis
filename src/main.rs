@@ -7,6 +7,7 @@ use clap::Parser;
 use dum_e::harness::{self};
 use dum_e::llm::{LLMProvider, MiniMaxLLM};
 use dum_e::tools::*;
+use dum_e::tui;
 use dum_e::{init_event_bus_with_traces_dir, Agent, Config, SoulManager};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -43,6 +44,10 @@ struct Args {
     /// Run integration harness (verifies actual runtime behavior)
     #[arg(long)]
     harness: bool,
+
+    /// Use the legacy plain REPL instead of the CLI TUI
+    #[arg(long)]
+    plain_repl: bool,
 }
 
 #[tokio::main]
@@ -130,9 +135,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     } else {
-        // Run interactive REPL
-        info!("Starting REPL...");
-        run_repl(agent).await?;
+        if args.plain_repl {
+            info!("Starting plain REPL...");
+            run_repl(agent).await?;
+        } else {
+            info!("Starting CLI TUI...");
+            tui::run_tui(agent).await?;
+        }
     }
 
     info!("Dum-E shutting down");
