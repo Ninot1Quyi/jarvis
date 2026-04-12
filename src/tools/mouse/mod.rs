@@ -3,8 +3,10 @@
 //! Supports macOS (cliclick) and Linux (xdotool).
 //! Coordinates are normalized [0, 1000] where (0,0) is top-left.
 
+use crate::accessibility::{capture_state, diff_state, StateSnapshot};
 use crate::tools::{Tool, ToolContext, ToolResult};
 use async_trait::async_trait;
+use serde_json::json;
 
 /// Coordinate in normalized [0, 1000] range
 #[derive(Debug, Clone)]
@@ -195,6 +197,52 @@ async fn exec_command(cmd: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+async fn capture_ui_feedback(x: i32, y: i32) -> Option<StateSnapshot> {
+    capture_state(Some((x, y)))
+        .await
+        .ok()
+        .filter(|snapshot| snapshot.success)
+}
+
+fn format_feedback_output(
+    action: &str,
+    coord: &NormalizedCoord,
+    screen_xy: (i32, i32),
+    before: Option<&StateSnapshot>,
+    after: Option<&StateSnapshot>,
+) -> String {
+    let mut payload = json!({
+        "action": action,
+        "normalized": { "x": coord.x, "y": coord.y },
+        "screen": { "x": screen_xy.0, "y": screen_xy.1 },
+    });
+
+    if let (Some(before), Some(after)) = (before, after) {
+        let diff = diff_state(before, after);
+        payload["feedback"] = json!({
+            "available": true,
+            "summary": diff.summary,
+            "applicationChanged": diff.application_changed,
+            "windowFocusChanged": diff.window_focus_changed,
+            "focusChanged": diff.focus_changed,
+            "clickedElementChanged": diff.clicked_element_changed,
+            "busyStateChanged": diff.busy_state_changed,
+            "focusedWindowAfter": after.focused_window.as_ref().and_then(|w| w.title.clone()),
+            "elementAtPointAfter": after
+                .element_at_point
+                .as_ref()
+                .map(|el| json!({"role": el.role, "title": el.title, "identifier": el.identifier})),
+        });
+    } else {
+        payload["feedback"] = json!({
+            "available": false,
+            "reason": "accessibility_snapshot_unavailable"
+        });
+    }
+
+    payload.to_string()
+}
+
 /// Left single click (primary mouse button)
 pub struct LeftSingleTool;
 
@@ -245,18 +293,24 @@ impl Tool for LeftSingleTool {
     ) -> Result<ToolResult, String> {
         let coord = NormalizedCoord::from_json(&input["coordinate"])?;
         let screen = ScreenSize::get().await?;
+        let (x, y) = coord.to_screen(screen.width, screen.height);
+        let before = capture_ui_feedback(x, y).await;
 
         #[cfg(target_os = "macos")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             // Use -r flag for raw/physical pixels (critical for Retina displays)
             // Screenshot returns physical pixels, so clicks must match
             exec_command(&format!("cliclick -r c:{},{}", x, y)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "left_single",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -264,17 +318,21 @@ impl Tool for LeftSingleTool {
 
         #[cfg(target_os = "linux")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             exec_command(&format!(
                 "xdotool mousemove --sync {} {} && xdotool click 1",
                 x, y
             ))
             .await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "left_single",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -282,7 +340,6 @@ impl Tool for LeftSingleTool {
 
         #[cfg(target_os = "windows")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             let ps = format!(
                 r#"Add-Type @"
 using System;
@@ -306,11 +363,16 @@ public class WinMouse {{
                 x, y
             );
             exec_command(&format!("powershell -NoProfile -Command \"{}\"", ps)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "left_single",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -373,16 +435,22 @@ impl Tool for LeftDoubleTool {
     ) -> Result<ToolResult, String> {
         let coord = NormalizedCoord::from_json(&input["coordinate"])?;
         let screen = ScreenSize::get().await?;
+        let (x, y) = coord.to_screen(screen.width, screen.height);
+        let before = capture_ui_feedback(x, y).await;
 
         #[cfg(target_os = "macos")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             exec_command(&format!("cliclick -r dc:{},{}", x, y)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Double-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "left_double",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -390,17 +458,21 @@ impl Tool for LeftDoubleTool {
 
         #[cfg(target_os = "linux")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             exec_command(&format!(
                 "xdotool mousemove --sync {} {} && xdotool click --repeat 2 1",
                 x, y
             ))
             .await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Double-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "left_double",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -408,7 +480,6 @@ impl Tool for LeftDoubleTool {
 
         #[cfg(target_os = "windows")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             let ps = format!(
                 r#"Add-Type @"
 using System;
@@ -435,11 +506,16 @@ Start-Sleep -Milliseconds 50;
                 x, y
             );
             exec_command(&format!("powershell -NoProfile -Command \"{}\"", ps)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Double-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "left_double",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -502,16 +578,22 @@ impl Tool for RightSingleTool {
     ) -> Result<ToolResult, String> {
         let coord = NormalizedCoord::from_json(&input["coordinate"])?;
         let screen = ScreenSize::get().await?;
+        let (x, y) = coord.to_screen(screen.width, screen.height);
+        let before = capture_ui_feedback(x, y).await;
 
         #[cfg(target_os = "macos")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             exec_command(&format!("cliclick -r rc:{},{}", x, y)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Right-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "right_single",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -519,17 +601,21 @@ impl Tool for RightSingleTool {
 
         #[cfg(target_os = "linux")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             exec_command(&format!(
                 "xdotool mousemove --sync {} {} && xdotool click 3",
                 x, y
             ))
             .await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Right-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "right_single",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -537,7 +623,6 @@ impl Tool for RightSingleTool {
 
         #[cfg(target_os = "windows")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             let ps = format!(
                 r#"Add-Type @"
 using System;
@@ -561,11 +646,16 @@ public class WinMouse {{
                 x, y
             );
             exec_command(&format!("powershell -NoProfile -Command \"{}\"", ps)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Right-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "right_single",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -628,16 +718,22 @@ impl Tool for MiddleClickTool {
     ) -> Result<ToolResult, String> {
         let coord = NormalizedCoord::from_json(&input["coordinate"])?;
         let screen = ScreenSize::get().await?;
+        let (x, y) = coord.to_screen(screen.width, screen.height);
+        let before = capture_ui_feedback(x, y).await;
 
         #[cfg(target_os = "macos")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             exec_command(&format!("cliclick -r mc:{},{}", x, y)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Middle-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "middle_click",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -645,17 +741,21 @@ impl Tool for MiddleClickTool {
 
         #[cfg(target_os = "linux")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             exec_command(&format!(
                 "xdotool mousemove --sync {} {} && xdotool click 2",
                 x, y
             ))
             .await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Middle-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "middle_click",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -663,7 +763,6 @@ impl Tool for MiddleClickTool {
 
         #[cfg(target_os = "windows")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             let ps = format!(
                 r#"Add-Type @"
 using System;
@@ -687,11 +786,16 @@ public class WinMouse {{
                 x, y
             );
             exec_command(&format!("powershell -NoProfile -Command \"{}\"", ps)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Middle-clicked at ({}, {}) -> screen ({}, {})",
-                    coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "middle_click",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -760,11 +864,12 @@ impl Tool for DragTool {
         let start = NormalizedCoord::from_json(&input["startCoordinate"])?;
         let end = NormalizedCoord::from_json(&input["endCoordinate"])?;
         let screen = ScreenSize::get().await?;
+        let (x1, y1) = start.to_screen(screen.width, screen.height);
+        let (x2, y2) = end.to_screen(screen.width, screen.height);
+        let before = capture_ui_feedback(x1, y1).await;
 
         #[cfg(target_os = "macos")]
         {
-            let (x1, y1) = start.to_screen(screen.width, screen.height);
-            let (x2, y2) = end.to_screen(screen.width, screen.height);
             // Use -r for raw/physical pixels (critical for Retina displays)
             // Note: drag starts from current position, so caller should move there first
             exec_command(&format!(
@@ -772,11 +877,16 @@ impl Tool for DragTool {
                 x2, y2
             ))
             .await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x2, y2).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Dragged from ({}, {}) -> ({}, {}) -> screen ({},{}) -> ({},{})",
-                    start.x, start.y, end.x, end.y, x1, y1, x2, y2
+                output: format_feedback_output(
+                    "drag",
+                    &end,
+                    (x2, y2),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -784,18 +894,21 @@ impl Tool for DragTool {
 
         #[cfg(target_os = "linux")]
         {
-            let (x1, y1) = start.to_screen(screen.width, screen.height);
-            let (x2, y2) = end.to_screen(screen.width, screen.height);
             exec_command(&format!(
                 "xdotool mousemove --sync {} {} && xdotool mousedown 1 && xdotool mousemove --sync {} {} && xdotool mouseup 1",
                 x1, y1, x2, y2
             ))
             .await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x2, y2).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Dragged from ({}, {}) -> ({}, {}) -> screen ({},{}) -> ({},{})",
-                    start.x, start.y, end.x, end.y, x1, y1, x2, y2
+                output: format_feedback_output(
+                    "drag",
+                    &end,
+                    (x2, y2),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -803,8 +916,6 @@ impl Tool for DragTool {
 
         #[cfg(target_os = "windows")]
         {
-            let (x1, y1) = start.to_screen(screen.width, screen.height);
-            let (x2, y2) = end.to_screen(screen.width, screen.height);
             let ps = format!(
                 r#"Add-Type @"
 using System;
@@ -831,11 +942,16 @@ public class WinMouse {{
                 x1, y1, x2, y2
             );
             exec_command(&format!("powershell -NoProfile -Command \"{}\"", ps)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x2, y2).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Dragged from ({}, {}) -> ({}, {}) -> screen ({},{}) -> ({},{})",
-                    start.x, start.y, end.x, end.y, x1, y1, x2, y2
+                output: format_feedback_output(
+                    "drag",
+                    &end,
+                    (x2, y2),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -909,12 +1025,14 @@ impl Tool for ScrollTool {
         let direction = input["direction"]
             .as_str()
             .ok_or("Missing 'direction' parameter")?;
+        #[allow(unused_variables)]
         let amount = input["amount"].as_u64().unwrap_or(3) as u32;
         let screen = ScreenSize::get().await?;
+        let (x, y) = coord.to_screen(screen.width, screen.height);
+        let before = capture_ui_feedback(x, y).await;
 
         #[cfg(target_os = "macos")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             // Map direction to cliclick scroll commands: up→wu, down→wd, left→wl, right→wr
             // Use -r flag for raw/physical pixels (critical for Retina displays)
             let cliclick_dir = match direction {
@@ -925,11 +1043,16 @@ impl Tool for ScrollTool {
                 _ => return Err(format!("Invalid direction: {}", direction)),
             };
             exec_command(&format!("cliclick -r {}:{},{}", cliclick_dir, x, y)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Scrolled {} {} times at ({}, {}) -> screen ({}, {})",
-                    direction, amount, coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "scroll",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -937,7 +1060,6 @@ impl Tool for ScrollTool {
 
         #[cfg(target_os = "linux")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             // xdotool scroll mapping: up=4, down=5, left=6, right=7
             let button = match direction {
                 "up" => "4",
@@ -951,11 +1073,16 @@ impl Tool for ScrollTool {
                 x, y, amount, button
             ))
             .await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Scrolled {} {} times at ({}, {}) -> screen ({}, {})",
-                    direction, amount, coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "scroll",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })
@@ -963,7 +1090,6 @@ impl Tool for ScrollTool {
 
         #[cfg(target_os = "windows")]
         {
-            let (x, y) = coord.to_screen(screen.width, screen.height);
             // Windows wheel event: up=120, down=-120, left/right require horizontal wheel
             let wheel_delta = match direction {
                 "up" => (amount * 120) as i32,
@@ -1027,11 +1153,16 @@ public class WinMouse {{
                 x, y, wheel_delta
             );
             exec_command(&format!("powershell -NoProfile -Command \"{}\"", ps)).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+            let after = capture_ui_feedback(x, y).await;
             Ok(ToolResult {
                 success: true,
-                output: format!(
-                    "Scrolled {} {} times at ({}, {}) -> screen ({}, {})",
-                    direction, amount, coord.x, coord.y, x, y
+                output: format_feedback_output(
+                    "scroll",
+                    &coord,
+                    (x, y),
+                    before.as_ref(),
+                    after.as_ref(),
                 ),
                 error: None,
             })

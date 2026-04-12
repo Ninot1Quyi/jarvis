@@ -53,7 +53,21 @@ impl LLMProvider for SequencedLlm {
         _messages: &[Message],
         _tools: Option<&[dum_e::llm::ToolDefinition]>,
     ) -> Pin<Box<dyn Stream<Item = Result<ChatChunk, LLMError>> + Send + '_>> {
-        Box::pin(futures::stream::once(async { Ok(ChatChunk::Done) }))
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        let chunks = match *calls {
+            1 => vec![
+                Ok(ChatChunk::Text("Using a tool".to_string())),
+                Ok(ChatChunk::ToolUse(LlmToolCall {
+                    id: "toolu_1".to_string(),
+                    name: "mock_tool".to_string(),
+                    arguments: serde_json::json!({"value": "hello"}),
+                })),
+                Ok(ChatChunk::Done),
+            ],
+            _ => vec![Ok(ChatChunk::Text("done".to_string())), Ok(ChatChunk::Done)],
+        };
+        Box::pin(futures::stream::iter(chunks))
     }
 
     fn supports_tools(&self) -> bool {
@@ -95,7 +109,10 @@ impl Tool for MockTool {
             success: true,
             output: format!(
                 "echo:{}",
-                input.get("value").and_then(|v| v.as_str()).unwrap_or_default()
+                input
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
             ),
             error: None,
         })
@@ -111,8 +128,7 @@ async fn tool_lifecycle_events_include_correlation_ids() {
     registry.register(MockTool);
 
     let soul_path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
-    let mut soul_manager = SoulManager::new(soul_path.to_path_buf());
-    soul_manager.load().unwrap();
+    let soul_manager = SoulManager::new(soul_path.to_path_buf());
 
     let llm = Arc::new(SequencedLlm::new());
     let mut agent = Agent::new(registry, Config::default(), soul_manager, event_bus).with_llm(llm);
@@ -142,27 +158,35 @@ async fn tool_lifecycle_events_include_correlation_ids() {
             ) if tool == "mock_tool" && tool_use_id == "toolu_1" && correlation_id == "toolu_1"
         )
     });
-    assert!(tool_call_seen, "expected tool call event with correlation fields");
+    assert!(
+        tool_call_seen,
+        "expected tool call event with correlation fields"
+    );
 
     let mut lifecycle_states = events
         .iter()
-        .filter_map(|event| match (&event.component, &event.event_type, &event.data) {
-            (
-                Component::Tool,
-                EventType::ToolProgress,
-                EventData::ToolProgress {
-                    tool,
-                    tool_use_id: Some(tool_use_id),
-                    correlation_id: Some(correlation_id),
-                    state: Some(state),
-                    is_concurrency_safe: Some(true),
-                    ..
-                },
-            ) if tool == "mock_tool" && tool_use_id == "toolu_1" && correlation_id == "toolu_1" => {
-                Some(state.clone())
-            }
-            _ => None,
-        })
+        .filter_map(
+            |event| match (&event.component, &event.event_type, &event.data) {
+                (
+                    Component::Tool,
+                    EventType::ToolProgress,
+                    EventData::ToolProgress {
+                        tool,
+                        tool_use_id: Some(tool_use_id),
+                        correlation_id: Some(correlation_id),
+                        state: Some(state),
+                        is_concurrency_safe: Some(true),
+                        ..
+                    },
+                ) if tool == "mock_tool"
+                    && tool_use_id == "toolu_1"
+                    && correlation_id == "toolu_1" =>
+                {
+                    Some(state.clone())
+                }
+                _ => None,
+            },
+        )
         .collect::<Vec<_>>();
     lifecycle_states.sort();
 

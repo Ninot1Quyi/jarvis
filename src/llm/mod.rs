@@ -51,6 +51,11 @@ pub struct ToolDefinition {
 /// Streaming chunk from LLM
 #[derive(Debug)]
 pub enum ChatChunk {
+    /// Message lifecycle started
+    MessageStart {
+        message_id: Option<String>,
+        role: Option<String>,
+    },
     /// Text chunk received
     Text(String),
     /// A complete tool_use block received (with id, name, and full input)
@@ -63,6 +68,10 @@ pub enum ChatChunk {
     ThinkingDelta { id: String, delta: String },
     /// Thinking block ended (timeout or completion)
     ThinkingEnd { id: String },
+    /// Message-level metadata changed during streaming
+    MessageDelta { stop_reason: Option<String> },
+    /// Message lifecycle stopped
+    MessageStop { stop_reason: Option<String> },
     /// Stream completed
     Done,
 }

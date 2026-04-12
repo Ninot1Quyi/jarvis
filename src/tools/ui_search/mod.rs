@@ -1,7 +1,8 @@
 //! UISearchTool - Search UI elements using accessibility APIs
 //!
-//! Searches for UI elements using macOS accessibility APIs via AppleScript.
+//! Searches for UI elements using accessibility snapshots/search APIs.
 
+use crate::accessibility;
 use crate::tools::{Tool, ToolContext, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -169,9 +170,9 @@ impl UISearchTool {
             .as_str()
             .ok_or("Missing 'keyword' parameter")?;
         let role_filter = input["role"].as_str();
-        let app = input["app"].as_str();
+        let _app = input["app"].as_str();
 
-        let elements = self.query_accessibility(keyword, role_filter, app).await?;
+        let elements = self.query_accessibility(keyword, role_filter).await?;
 
         if elements.is_empty() {
             return Ok(ToolResult {
@@ -204,9 +205,9 @@ impl UISearchTool {
         // For locate, we need more specific targeting - use role + position info
         let keyword = input["keyword"].as_str().unwrap_or("");
         let role_filter = input["role"].as_str();
-        let app = input["app"].as_str();
+        let _app = input["app"].as_str();
 
-        let elements = self.query_accessibility(keyword, role_filter, app).await?;
+        let elements = self.query_accessibility(keyword, role_filter).await?;
 
         if elements.is_empty() {
             return Ok(ToolResult {
@@ -248,79 +249,37 @@ impl UISearchTool {
         &self,
         keyword: &str,
         role_filter: Option<&str>,
-        app: Option<&str>,
     ) -> Result<Vec<UIElement>, String> {
-        // Build AppleScript to query accessibility
-        let script = if let Some(app_name) = app {
-            format!(
-                r#"tell application "{}"
-                    get every UI element whose title contains "{}" or value contains "{}"
-                end tell"#,
-                app_name, keyword, keyword
-            )
-        } else {
-            format!(
-                r#"tell application "System Events"
-                    get every UI element whose title contains "{}" or value contains "{}"
-                end tell"#,
-                keyword, keyword
-            )
-        };
-
-        let output = tokio::process::Command::new("osascript")
-            .args(["-e", &script])
-            .output()
-            .await
-            .map_err(|e| format!("Failed to execute AppleScript: {}", e))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        if stdout.trim().is_empty() || stdout.contains("error") {
-            // Fallback: try to get all elements and filter
-            return self.get_all_elements(role_filter).await;
+        let search = accessibility::search_ui_elements(keyword, 8).await?;
+        if !search.success {
+            return Err(search
+                .error
+                .unwrap_or_else(|| "Accessibility UI search failed".to_string()));
         }
 
-        let elements: Vec<UIElement> = stdout
-            .lines()
-            .filter_map(|line| UIElement::from_applescript_line(line))
-            .filter(|e| {
-                // Apply role filter if specified
-                if let Some(rf) = role_filter {
-                    e.role.contains(rf)
-                } else {
-                    true
+        let elements: Vec<UIElement> = search
+            .results
+            .into_iter()
+            .map(|element| {
+                let [x, y] = element.center;
+                let [_, _, width, height] = element.bounds;
+                UIElement {
+                    role: if element.raw_role.is_empty() {
+                        element.role
+                    } else {
+                        element.raw_role
+                    },
+                    title: element.title,
+                    value: element.value.unwrap_or_default(),
+                    x: x as f64,
+                    y: y as f64,
+                    width: width as f64,
+                    height: height as f64,
                 }
             })
             .filter(|e| {
-                // Filter by keyword in title or value
-                e.title.to_lowercase().contains(&keyword.to_lowercase())
-                    || e.value.to_lowercase().contains(&keyword.to_lowercase())
-            })
-            .collect();
-
-        Ok(elements)
-    }
-
-    /// Get all UI elements (fallback for broader search)
-    async fn get_all_elements(&self, role_filter: Option<&str>) -> Result<Vec<UIElement>, String> {
-        let script = r#"tell application "System Events"
-            get properties of every UI element
-        end tell"#;
-
-        let output = tokio::process::Command::new("osascript")
-            .args(["-e", script])
-            .output()
-            .await
-            .map_err(|e| format!("Failed to execute AppleScript: {}", e))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        let elements: Vec<UIElement> = stdout
-            .lines()
-            .filter_map(|line| UIElement::from_applescript_line(line))
-            .filter(|e| {
                 if let Some(rf) = role_filter {
-                    e.role.contains(rf)
+                    e.role.to_lowercase().contains(&rf.to_lowercase())
                 } else {
                     true
                 }

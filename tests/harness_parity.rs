@@ -96,6 +96,10 @@ fn replay_frames_are_sorted_and_preserve_detail() {
         EventData::ToolProgress {
             tool: "bash".to_string(),
             output: "ok".to_string(),
+            tool_use_id: Some("tool-1".to_string()),
+            correlation_id: Some("tool-1".to_string()),
+            state: Some("completed".to_string()),
+            is_concurrency_safe: Some(false),
         },
     );
     let earlier = test_event(

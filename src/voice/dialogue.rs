@@ -10,7 +10,6 @@ use crate::message::{Message, MessageRole};
 use crate::observability::{Component, Event, EventBus, EventData, EventType};
 use std::future::Future;
 use std::pin::Pin;
-use crate::observability::{Component, EventBus, EventData, EventType};
 use std::sync::Arc;
 
 /// Voice dialogue state
@@ -57,9 +56,11 @@ impl LLMProvider for AgentVoiceLLM {
         &self,
         messages: &[crate::message::Message],
     ) -> Pin<Box<dyn Future<Output = Result<String, VoiceError>> + Send + '_>> {
+        let inner = self.inner.clone();
+        let messages = messages.to_vec();
         Box::pin(async move {
-            self.inner
-                .chat_stream(messages, None)
+            inner
+                .chat_stream(&messages, None)
                 .await
                 .map(|response| response.message)
                 .map_err(|err| VoiceError::Api(format!("voice llm request failed: {}", err)))
@@ -226,9 +227,7 @@ impl VoiceDialogue {
         let speak_handle = tokio::spawn({
             let voice = self.voice.clone();
             let response = response.clone();
-            async move {
-                voice.speak(&response, SpeakParams::default()).await
-            }
+            async move { voice.speak(&response, SpeakParams::default()).await }
         });
 
         tokio::select! {
@@ -327,7 +326,9 @@ mod tests {
         fn stop_speaking(&self) {}
 
         async fn listen(&self) -> Result<super::super::Transcription, VoiceError> {
-            Err(VoiceError::NotSupported("listen should be bypassed in test".to_string()))
+            Err(VoiceError::NotSupported(
+                "listen should be bypassed in test".to_string(),
+            ))
         }
 
         async fn listen_streaming(&self) -> Result<super::super::StreamingAudio, VoiceError> {
@@ -374,7 +375,9 @@ mod tests {
         }
 
         assert_eq!(dialogue.state(), VoiceDialogueState::Idle);
-        assert!(event_types.iter().any(|ty| matches!(ty, EventType::LlmChunk)));
+        assert!(event_types
+            .iter()
+            .any(|ty| matches!(ty, EventType::LlmChunk)));
         assert!(event_types
             .iter()
             .any(|ty| matches!(ty, EventType::VoiceSpeakStart)));

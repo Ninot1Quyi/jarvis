@@ -6,6 +6,7 @@
 //! - **Streaming-first** — tools execute as LLM generates them
 //! - **Voice-native** — MiniMax TTS/ASR as first-class I/O channel
 
+pub mod accessibility;
 pub mod agent;
 pub mod compaction;
 pub mod config;
@@ -18,6 +19,7 @@ pub mod observability;
 pub mod permissions;
 pub mod soul;
 pub mod tools;
+pub mod tui;
 pub mod voice;
 
 // Re-exports for convenience

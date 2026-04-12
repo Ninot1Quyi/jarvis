@@ -103,6 +103,25 @@ impl Event {
         }
     }
 
+    /// Create a new event within an existing trace.
+    pub fn new_in_trace(
+        trace_id: TraceId,
+        component: Component,
+        event_type: EventType,
+        data: EventData,
+    ) -> Self {
+        Self {
+            trace_id,
+            span_id: SpanId::new(),
+            parent_span_id: None,
+            timestamp: Utc::now(),
+            component,
+            event_type,
+            duration_ms: None,
+            data,
+        }
+    }
+
     /// Create with parent span
     pub fn with_parent(
         component: Component,

@@ -468,7 +468,7 @@ impl LLMProvider for MiniMaxLLM {
         messages: &[DumEMessage],
         tools: Option<&[ToolDefinition]>,
     ) -> Pin<Box<dyn Stream<Item = Result<ChatChunk, LLMError>> + Send + '_>> {
-        use crate::llm::sse::parse_sse_stream;
+        use crate::llm::sse::SseStreamParser;
 
         let messages = messages.to_vec();
         let tools = tools.map(|t| t.to_vec());
@@ -532,7 +532,10 @@ impl LLMProvider for MiniMaxLLM {
                 system,
                 messages: anthropic_messages,
                 tools: anthropic_tools,
-                thinking: None,
+                thinking: Some(AnthropicThinking {
+                    type_: "thinking".to_string(),
+                    budget_tokens: 128,
+                }),
             };
 
             let url = this.messages_url();
@@ -545,9 +548,9 @@ impl LLMProvider for MiniMaxLLM {
                 }
             };
 
-            // Consume HTTP body as a true stream and parse incrementally.
-            let mut raw_sse = String::new();
-            let mut emitted_count = 0usize;
+            // Consume HTTP body as a true stream and parse incrementally through
+            // a stateful content-block parser.
+            let mut parser = SseStreamParser::new();
             let byte_stream = response.bytes_stream();
             let mut stream = byte_stream.fuse();
             // Track thinking blocks: index -> (id, last_activity_instant)
@@ -572,35 +575,27 @@ impl LLMProvider for MiniMaxLLM {
             thinking_start_time = std::time::Instant::now();
             let chunk_str = String::from_utf8_lossy(&first_bytes);
             debug!("First HTTP chunk received, len={}", first_bytes.len());
-            raw_sse.push_str(&chunk_str);
-            let parsed = parse_sse_stream(&raw_sse);
-            let parsed_len = parsed.len();
-
-            if parsed_len > emitted_count {
-                let new_chunks: Vec<_> = parsed.into_iter().skip(emitted_count).collect();
-                for chunk in new_chunks {
-                    match &chunk {
-                        Ok(ChatChunk::ThinkingStart { id, index }) => {
-                            thinking_active.insert(*index, (id.clone(), std::time::Instant::now()));
-                            debug!("thinking block started: id={} index={}", id, index);
-                        }
-                        Ok(ChatChunk::ThinkingDelta { id, .. }) => {
-                            for (_, (tid, instant)) in thinking_active.iter_mut() {
-                                if *tid == *id {
-                                    *instant = std::time::Instant::now();
-                                    break;
-                                }
+            for chunk in parser.push_bytes(&chunk_str) {
+                match &chunk {
+                    Ok(ChatChunk::ThinkingStart { id, index }) => {
+                        thinking_active.insert(*index, (id.clone(), std::time::Instant::now()));
+                        debug!("thinking block started: id={} index={}", id, index);
+                    }
+                    Ok(ChatChunk::ThinkingDelta { id, .. }) => {
+                        for (_, (tid, instant)) in thinking_active.iter_mut() {
+                            if *tid == *id {
+                                *instant = std::time::Instant::now();
+                                break;
                             }
                         }
-                        Ok(ChatChunk::ThinkingEnd { id }) => {
-                            thinking_active.retain(|_, (tid, _)| tid != id);
-                        }
-                        _ => {}
                     }
-                    debug!("SSE yield: {:?}", chunk);
-                    yield chunk;
+                    Ok(ChatChunk::ThinkingEnd { id }) => {
+                        thinking_active.retain(|_, (tid, _)| tid != id);
+                    }
+                    _ => {}
                 }
-                emitted_count = parsed_len;
+                debug!("SSE yield: {:?}", chunk);
+                yield chunk;
             }
 
             // Process remaining chunks. Use tokio::time::timeout to periodically wake up
@@ -608,59 +603,49 @@ impl LLMProvider for MiniMaxLLM {
             let mut tick = tokio::time::interval(Duration::from_secs(5));
             // Drop the first immediate tick.
             tick.tick().await;
-            // Flag set to true when the stream has ended (fuse returns None).
             let mut stream_ended = false;
             while !stream_ended {
                 tokio::select! {
                     biased;
-                    // Stream branch: when data arrives, process it immediately.
-                    Some(bytes_result) = stream.next() => {
-                        let bytes = match bytes_result {
-                            Ok(bytes) => bytes,
-                            Err(e) => {
+                    maybe_bytes = stream.next() => {
+                        match maybe_bytes {
+                            Some(Ok(bytes)) => {
+                                let chunk_str = String::from_utf8_lossy(&bytes);
+                                debug!("HTTP chunk received, len={}", bytes.len());
+                                for chunk in parser.push_bytes(&chunk_str) {
+                                    match &chunk {
+                                        Ok(ChatChunk::ThinkingStart { id, index }) => {
+                                            thinking_active.insert(*index, (id.clone(), std::time::Instant::now()));
+                                            debug!("thinking block started: id={} index={}", id, index);
+                                        }
+                                        Ok(ChatChunk::ThinkingDelta { id, .. }) => {
+                                            for (_, (tid, instant)) in thinking_active.iter_mut() {
+                                                if *tid == *id {
+                                                    *instant = std::time::Instant::now();
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        Ok(ChatChunk::ThinkingEnd { id }) => {
+                                            thinking_active.retain(|_, (tid, _)| tid != id);
+                                        }
+                                        _ => {}
+                                    }
+                                    debug!("SSE yield: {:?}", chunk);
+                                    yield chunk;
+                                }
+                            }
+                            Some(Err(e)) => {
                                 yield Err(LLMError::Api(format!("SSE stream read failed: {}", e)));
                                 return;
                             }
-                        };
-
-                        let chunk_str = String::from_utf8_lossy(&bytes);
-                        debug!("HTTP chunk received, len={}", bytes.len());
-                        raw_sse.push_str(&chunk_str);
-                        let parsed = parse_sse_stream(&raw_sse);
-                        let parsed_len = parsed.len();
-                        debug!("SSE parse result: len={} emitted={}", parsed_len, emitted_count);
-
-                        if parsed_len > emitted_count {
-                            let new_chunks: Vec<_> = parsed.into_iter().skip(emitted_count).collect();
-                            for chunk in new_chunks {
-                                match &chunk {
-                                    Ok(ChatChunk::ThinkingStart { id, index }) => {
-                                        thinking_active.insert(*index, (id.clone(), std::time::Instant::now()));
-                                        debug!("thinking block started: id={} index={}", id, index);
-                                    }
-                                    Ok(ChatChunk::ThinkingDelta { id, .. }) => {
-                                        for (_, (tid, instant)) in thinking_active.iter_mut() {
-                                            if *tid == *id {
-                                                *instant = std::time::Instant::now();
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    Ok(ChatChunk::ThinkingEnd { id }) => {
-                                        thinking_active.retain(|_, (tid, _)| tid != id);
-                                    }
-                                    _ => {}
-                                }
-                                debug!("SSE yield: {:?}", chunk);
-                                yield chunk;
+                            None => {
+                                stream_ended = true;
                             }
-                            emitted_count = parsed_len;
                         }
                     }
 
-                    // Timer branch: check thinking timeout periodically, and exit when stream ended.
                     _ = tick.tick() => {
-                        // Periodic check: has thinking exceeded its timeout?
                         let elapsed = thinking_start_time.elapsed().as_secs();
                         debug!(
                             "thinking timeout check: thinking_timeout_fired={} thinking_active.len={} elapsed={}s",
@@ -674,35 +659,20 @@ impl LLMProvider for MiniMaxLLM {
                                 THINKING_TIMEOUT_SECS,
                                 thinking_active.len()
                             );
-                            for (_, (id, _)) in thinking_active.drain() {
+                            for id in parser.force_close_thinking_blocks() {
                                 debug!("emitting ThinkingEnd for id={}", id);
                                 yield Ok(ChatChunk::ThinkingEnd { id });
                             }
+                            thinking_active.clear();
                             thinking_timeout_fired = true;
-                            // Flush any accumulated chunks from SSE parser.
-                            let residual = parse_sse_stream(&raw_sse);
-                            for chunk in residual.into_iter().skip(emitted_count) {
-                                debug!("SSE yield (post-timeout): {:?}", chunk);
-                                yield chunk;
-                                emitted_count += 1;
-                            }
                         }
                     }
                 };
-                // After the select, check if the stream has ended by polling it.
-                // We do this outside the select to avoid the None pattern issue.
-                if stream.next().await.is_none() {
-                    stream_ended = true;
-                }
             }
 
-            // Flush any residual parsed events from the final buffer.
-            let parsed = parse_sse_stream(&raw_sse);
-            if parsed.len() > emitted_count {
-                for chunk in parsed.into_iter().skip(emitted_count) {
-                    debug!("SSE final chunk: {:?}", chunk);
-                    yield chunk;
-                }
+            for chunk in parser.finish() {
+                debug!("SSE final chunk: {:?}", chunk);
+                yield chunk;
             }
             yield Ok(ChatChunk::Done);
         })

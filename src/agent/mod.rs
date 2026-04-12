@@ -7,10 +7,10 @@ mod state;
 use crate::config::Config;
 use crate::llm::{parse_tool_calls_from_text, ChatChunk, LLMProvider, ToolCall, ToolDefinition};
 use crate::message::{Message, MessageRole};
-use crate::observability::{Component, Event, EventBus, EventData, EventType};
+use crate::observability::{Component, Event, EventBus, EventData, EventType, TraceId};
 use crate::soul::SoulManager;
 use crate::tools::{ToolContext, ToolRegistry, ToolResult};
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 pub use state::AgentState;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -33,6 +33,7 @@ pub struct Agent {
     soul_manager: SoulManager,
     event_bus: Arc<EventBus>,
     llm: Option<Arc<dyn LLMProvider>>,
+    current_trace_id: Option<TraceId>,
 }
 
 #[derive(Debug)]
@@ -225,6 +226,7 @@ impl Agent {
             soul_manager,
             event_bus,
             llm: None,
+            current_trace_id: None,
         }
     }
 
@@ -237,12 +239,14 @@ impl Agent {
     /// Run the agent with a task
     pub async fn run(&mut self, task: &str) -> Result<AgentResult, String> {
         let session_id = Uuid::new_v4().to_string();
-        let _trace_id = Uuid::new_v4().to_string();
+        let trace_id = TraceId::new();
+        self.current_trace_id = Some(trace_id.clone());
 
         info!(session_id = %session_id, task = %task, "Agent.run started");
 
         // Emit task start event
-        let event = Event::new(
+        let event = Event::new_in_trace(
+            trace_id.clone(),
             Component::Agent,
             EventType::AgentStart,
             EventData::Message {
@@ -271,7 +275,8 @@ impl Agent {
             debug!(step = steps, "Agent step");
 
             // Emit step event
-            let step_event = Event::new(
+            let step_event = Event::new_in_trace(
+                trace_id.clone(),
                 Component::Agent,
                 EventType::AgentStep,
                 EventData::Message {
@@ -298,7 +303,8 @@ impl Agent {
             } else {
                 Some(tools.as_slice())
             };
-            self.event_bus.publish(Event::new(
+            self.event_bus.publish(Event::new_in_trace(
+                trace_id.clone(),
                 Component::Llm,
                 EventType::LlmStart,
                 EventData::Message {
@@ -332,6 +338,7 @@ impl Agent {
                 StreamingToolExecutor::new(self.tool_registry.clone());
             let mut stream = llm.chat_streaming(&messages, tools_ref);
             let mut stream_done = false;
+            let mut thinking_visible = false;
 
             while !stream_done
                 || streaming_tool_executor.has_running()
@@ -340,11 +347,22 @@ impl Agent {
                 tokio::select! {
                     chunk = stream.next(), if !stream_done => {
                         match chunk {
+                            Some(Ok(ChatChunk::MessageStart { message_id, role })) => {
+                                self.dev_log(
+                                    "LLM_MESSAGE_START",
+                                    &format!(
+                                        "message_id={} role={}",
+                                        message_id.as_deref().unwrap_or("<none>"),
+                                        role.as_deref().unwrap_or("<none>")
+                                    ),
+                                );
+                            }
                             Some(Ok(ChatChunk::Text(text))) => {
                                 eprint!("{}", text);
                                 full_text.push_str(&text);
                                 Self::append_text_block(&mut assistant_blocks, &text);
-                                self.event_bus.publish(Event::new(
+                                self.event_bus.publish(Event::new_in_trace(
+                                    trace_id.clone(),
                                     Component::Llm,
                                     EventType::LlmChunk,
                                     EventData::LlmChunk { text: text.clone() },
@@ -354,12 +372,16 @@ impl Agent {
                             Some(Ok(ChatChunk::ToolUse(tool_call))) => {
                                 let is_concurrency_safe =
                                     self.is_tool_concurrency_safe(&tool_call.name);
-                                self.event_bus.publish(Event::new(
+                                self.event_bus.publish(Event::new_in_trace(
+                                    trace_id.clone(),
                                     Component::Llm,
                                     EventType::LlmToolCall,
                                     EventData::ToolCall {
                                         tool: tool_call.name.clone(),
                                         input: tool_call.arguments.clone(),
+                                        tool_use_id: Some(tool_call.id.clone()),
+                                        correlation_id: Some(tool_call.id.clone()),
+                                        is_concurrency_safe: Some(is_concurrency_safe),
                                     },
                                 ));
                                 self.dev_log(
@@ -369,12 +391,16 @@ impl Agent {
                                         tool_call.id, tool_call.name, tool_call.arguments
                                     ),
                                 );
-                                self.event_bus.publish(Event::new(
+                                self.event_bus.publish(Event::new_in_trace(
+                                    trace_id.clone(),
                                     Component::Tool,
                                     EventType::ToolCall,
                                     EventData::ToolCall {
                                         tool: tool_call.name.clone(),
                                         input: tool_call.arguments.clone(),
+                                        tool_use_id: Some(tool_call.id.clone()),
+                                        correlation_id: Some(tool_call.id.clone()),
+                                        is_concurrency_safe: Some(is_concurrency_safe),
                                     },
                                 ));
                                 assistant_blocks.push(serde_json::json!({
@@ -390,8 +416,17 @@ impl Agent {
                                         tool_call.id, tool_call.name, is_concurrency_safe
                                     ),
                                 );
+                                self.record_tool_lifecycle(
+                                    &tool_call.id,
+                                    &tool_call.name,
+                                    "queued",
+                                    is_concurrency_safe,
+                                    Some("queued"),
+                                    None,
+                                );
                                 tool_call_order.push(tool_call.id.clone());
                                 streaming_tool_executor.enqueue(tool_call, is_concurrency_safe);
+                                self.record_started_tools(streaming_tool_executor.take_started());
                             }
                             Some(Ok(ChatChunk::ToolInputDelta { id, delta })) => {
                                 self.dev_log(
@@ -400,35 +435,73 @@ impl Agent {
                                 );
                             }
                             Some(Ok(ChatChunk::ThinkingStart { id, index })) => {
+                                if !thinking_visible {
+                                    eprint!("\n[THINK] ");
+                                    thinking_visible = true;
+                                }
                                 self.dev_log("LLM_THINKING_START", &format!("id={} index={}", id, index));
                             }
                             Some(Ok(ChatChunk::ThinkingDelta { id, delta })) => {
+                                if !thinking_visible {
+                                    eprint!("\n[THINK] ");
+                                    thinking_visible = true;
+                                }
+                                eprint!("{}", delta);
                                 self.dev_log(
                                     "LLM_THINKING_DELTA",
                                     &format!("id={} delta={}", id, Self::preview(&delta)),
                                 );
                             }
                             Some(Ok(ChatChunk::ThinkingEnd { id })) => {
+                                if thinking_visible {
+                                    eprint!("\n[LUM] ");
+                                    thinking_visible = false;
+                                }
                                 self.dev_log("LLM_THINKING_END", &format!("id={}", id));
                             }
+                            Some(Ok(ChatChunk::MessageDelta { stop_reason })) => {
+                                self.dev_log(
+                                    "LLM_MESSAGE_DELTA",
+                                    &format!(
+                                        "stop_reason={}",
+                                        stop_reason.as_deref().unwrap_or("<none>")
+                                    ),
+                                );
+                            }
+                            Some(Ok(ChatChunk::MessageStop { stop_reason })) => {
+                                self.dev_log(
+                                    "LLM_MESSAGE_STOP",
+                                    &format!(
+                                        "stop_reason={}",
+                                        stop_reason.as_deref().unwrap_or("<none>")
+                                    ),
+                                );
+                            }
                             Some(Ok(ChatChunk::Done)) | None => {
+                                if thinking_visible {
+                                    eprint!("\n[LUM] ");
+                                    thinking_visible = false;
+                                }
                                 stream_done = true;
                             }
                             Some(Err(e)) => {
                                 error!(error = %e, "LLM chat error");
-                                self.event_bus.publish(Event::new(
+                                self.event_bus.publish(Event::new_in_trace(
+                                    trace_id.clone(),
                                     Component::Agent,
                                     EventType::AgentError,
                                     EventData::Error {
                                         error: format!("LLM chat error: {}", e),
                                     },
                                 ));
+                                self.current_trace_id = None;
                                 return Err(format!("LLM chat error: {}", e));
                             }
                         }
                     }
                     completed = streaming_tool_executor.wait_next(), if streaming_tool_executor.has_running() => {
                         if let Some(completed) = completed {
+                            self.record_started_tools(streaming_tool_executor.take_started());
                             self.record_tool_completion(&completed);
                             completed_tools_by_id.insert(completed.call.id.clone(), completed);
                         }
@@ -436,8 +509,11 @@ impl Agent {
                 }
             }
 
+            self.record_started_tools(streaming_tool_executor.take_started());
+
             // Publish LLM complete event.
-            self.event_bus.publish(Event::new(
+            self.event_bus.publish(Event::new_in_trace(
+                trace_id.clone(),
                 Component::Llm,
                 EventType::LlmComplete,
                 EventData::Message {
@@ -456,62 +532,6 @@ impl Agent {
                     tool_call_order.len()
                 ),
             );
-
-            // Enqueue and execute tool calls.
-            let mut tool_call_order: Vec<String> = Vec::new();
-            let mut completed_tools_by_id: HashMap<String, CompletedTool> = HashMap::new();
-            let mut streaming_tool_executor =
-                StreamingToolExecutor::new(self.tool_registry.clone());
-
-            if !tool_calls.is_empty() {
-                for tc in &tool_calls {
-                    let is_concurrency_safe = self.is_tool_concurrency_safe(&tc.name);
-                    self.event_bus.publish(Event::new(
-                        Component::Llm,
-                        EventType::LlmToolCall,
-                        EventData::ToolCall {
-                            tool: tc.name.clone(),
-                            input: tc.arguments.clone(),
-                            tool_use_id: Some(tc.id.clone()),
-                            correlation_id: Some(tc.id.clone()),
-                            is_concurrency_safe: None,
-                        },
-                    ));
-                    self.dev_log(
-                        "LLM_TOOL_CALL",
-                        &format!("id={} name={} args={}", tc.id, tc.name, tc.arguments),
-                    );
-                    self.event_bus.publish(Event::new(
-                        Component::Tool,
-                        EventType::ToolCall,
-                        EventData::ToolCall {
-                            tool: tc.name.clone(),
-                            input: tc.arguments.clone(),
-                            tool_use_id: Some(tc.id.clone()),
-                            correlation_id: Some(tc.id.clone()),
-                            is_concurrency_safe: Some(is_concurrency_safe),
-                        },
-                    ));
-                    self.dev_log(
-                        "TOOL_CALL",
-                        &format!(
-                            "queued id={} name={} concurrency_safe={}",
-                            tc.id, tc.name, is_concurrency_safe
-                        ),
-                    );
-                    self.record_tool_lifecycle(
-                        &tc.id,
-                        &tc.name,
-                        "queued",
-                        is_concurrency_safe,
-                        Some("queued"),
-                        None,
-                    );
-                    tool_call_order.push(tc.id.clone());
-                    streaming_tool_executor.enqueue(tc.clone(), is_concurrency_safe);
-                    self.record_started_tools(streaming_tool_executor.take_started());
-                }
-            }
 
             // Add assistant message to history, preserving tool_use blocks.
             let assistant_message = if assistant_blocks.is_empty() {
@@ -537,7 +557,7 @@ impl Agent {
                         StreamingToolExecutor::new(self.tool_registry.clone());
                     for tool_call in parsed_calls {
                         let is_concurrency_safe = self.is_tool_concurrency_safe(&tool_call.name);
-                        self.event_bus.publish(Event::new(
+                        self.publish_observability_event(
                             Component::Tool,
                             EventType::ToolCall,
                             EventData::ToolCall {
@@ -547,7 +567,7 @@ impl Agent {
                                 correlation_id: Some(tool_call.id.clone()),
                                 is_concurrency_safe: Some(is_concurrency_safe),
                             },
-                        ));
+                        );
                         self.dev_log(
                             "TOOL_CALL",
                             &format!(
@@ -618,7 +638,8 @@ impl Agent {
         }
 
         // Emit task complete event
-        let event = Event::new(
+        let event = Event::new_in_trace(
+            trace_id.clone(),
             Component::Agent,
             EventType::AgentComplete,
             EventData::Message {
@@ -636,6 +657,8 @@ impl Agent {
             .find(|m| m.role == MessageRole::Assistant)
             .map(|m| m.content.clone())
             .unwrap_or_else(|| format!("Executed task in {} steps", steps));
+
+        self.current_trace_id = None;
 
         Ok(AgentResult {
             success: true,
@@ -689,6 +712,9 @@ impl Agent {
             }
         }
 
+        prompt.push_str(
+            "\nDo not claim that external side effects succeeded (opening apps, saving files, showing UI changes, clicking anything) unless a tool result explicitly confirmed it.\n",
+        );
         prompt.push_str("\nWhen you have completed the task, respond with 'done' or 'finished'.\n");
 
         prompt
@@ -712,7 +738,7 @@ impl Agent {
                 Some(output_preview.as_str()),
                 None,
             );
-            self.event_bus.publish(Event::new(
+            self.publish_observability_event(
                 Component::Tool,
                 EventType::ToolComplete,
                 EventData::ToolProgress {
@@ -723,7 +749,7 @@ impl Agent {
                     state: Some("completed".to_string()),
                     is_concurrency_safe: Some(self.is_tool_concurrency_safe(&completed.call.name)),
                 },
-            ));
+            );
             self.dev_log(
                 "TOOL_RESULT",
                 &format!(
@@ -745,13 +771,13 @@ impl Agent {
                 None,
                 Some(error_text.as_str()),
             );
-            self.event_bus.publish(Event::new(
+            self.publish_observability_event(
                 Component::Tool,
                 EventType::ToolError,
                 EventData::Error {
                     error: format!("{}: {}", completed.call.name, error_text),
                 },
-            ));
+            );
             self.dev_log(
                 "TOOL_RESULT",
                 &format!(
@@ -791,7 +817,7 @@ impl Agent {
             }
             output_text.push_str(error_text);
         }
-        self.event_bus.publish(Event::new(
+        self.publish_observability_event(
             Component::Tool,
             EventType::ToolProgress,
             EventData::ToolProgress {
@@ -802,7 +828,21 @@ impl Agent {
                 state: Some(state.to_string()),
                 is_concurrency_safe: Some(is_concurrency_safe),
             },
-        ));
+        );
+    }
+
+    fn publish_observability_event(
+        &self,
+        component: Component,
+        event_type: EventType,
+        data: EventData,
+    ) {
+        let event = if let Some(trace_id) = self.current_trace_id.clone() {
+            Event::new_in_trace(trace_id, component, event_type, data)
+        } else {
+            Event::new(component, event_type, data)
+        };
+        self.event_bus.publish(event);
     }
 
     fn tool_result_to_message(result: &ToolResult) -> String {
