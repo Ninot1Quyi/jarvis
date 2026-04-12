@@ -23,14 +23,20 @@ struct ToolView {
     detail: String,
 }
 
+struct ChatEntry {
+    speaker: &'static str,
+    content: String,
+}
+
 #[derive(Default)]
 struct TuiState {
     mode: String,
     status: String,
-    current_task: Option<String>,
+    current_turn: Option<String>,
     summary: String,
     thinking: String,
-    transcript: String,
+    current_assistant: String,
+    conversation: Vec<ChatEntry>,
     tools: BTreeMap<String, ToolView>,
 }
 
@@ -39,10 +45,11 @@ impl TuiState {
         Self {
             mode: "TUI".to_string(),
             status: "idle".to_string(),
-            current_task: None,
+            current_turn: None,
             summary: "ready".to_string(),
             thinking: String::new(),
-            transcript: String::new(),
+            current_assistant: String::new(),
+            conversation: Vec::new(),
             tools: BTreeMap::new(),
         }
     }
@@ -53,23 +60,44 @@ impl TuiState {
 
     fn begin_task(&mut self, task: &str) {
         self.status = "running".to_string();
-        self.current_task = Some(task.to_string());
+        self.current_turn = Some(task.to_string());
         self.thinking.clear();
-        self.transcript.clear();
+        self.current_assistant.clear();
         self.tools.clear();
+        self.conversation.push(ChatEntry {
+            speaker: "You",
+            content: task.to_string(),
+        });
         self.set_summary(format!("▶ {}", task));
     }
 
     fn complete_task(&mut self, result: &AgentResult) {
         self.status = "idle".to_string();
-        self.current_task = None;
+        self.current_turn = None;
+        self.finish_assistant_message(&result.output);
         self.set_summary(format!("✓ completed in {} step(s)", result.steps));
     }
 
     fn fail_task(&mut self, error: &str) {
         self.status = "idle".to_string();
-        self.current_task = None;
+        self.current_turn = None;
+        self.finish_assistant_message("");
         self.set_summary(format!("✗ {}", error));
+    }
+
+    fn finish_assistant_message(&mut self, fallback: &str) {
+        let content = if self.current_assistant.trim().is_empty() {
+            fallback.trim().to_string()
+        } else {
+            self.current_assistant.trim().to_string()
+        };
+        if !content.is_empty() {
+            self.conversation.push(ChatEntry {
+                speaker: "Dum-E",
+                content,
+            });
+        }
+        self.current_assistant.clear();
     }
 
     fn apply_event(&mut self, event: Event) {
@@ -90,7 +118,7 @@ impl TuiState {
                 self.set_summary(message);
             }
             (Component::Llm, EventType::LlmChunk, EventData::LlmChunk { text }) => {
-                self.transcript.push_str(&text);
+                self.current_assistant.push_str(&text);
             }
             (Component::Llm, EventType::LlmComplete, EventData::Message { message }) => {
                 self.set_summary(message);
@@ -201,15 +229,11 @@ fn render(state: &TuiState) -> std::io::Result<()> {
     let divider = "─".repeat(columns.saturating_sub(2).max(10));
     let thinking_rows = rows.clamp(24, 50) / 5;
     let tools_rows = rows.clamp(24, 50) / 4;
-    let transcript_rows = rows.saturating_sub(thinking_rows + tools_rows + 12).max(6);
+    let conversation_rows = rows.saturating_sub(thinking_rows + tools_rows + 12).max(8);
 
     write!(out, "\x1b[2J\x1b[H")?;
 
-    writeln!(
-        out,
-        "╭{}╮",
-        "─".repeat(columns.saturating_sub(2).max(10))
-    )?;
+    writeln!(out, "╭{}╮", "─".repeat(columns.saturating_sub(2).max(10)))?;
     writeln!(
         out,
         "│ {:<width$}│",
@@ -224,9 +248,10 @@ fn render(state: &TuiState) -> std::io::Result<()> {
         out,
         "│ {:<width$}│",
         format!(
-            "mode: {}   task: {}",
+            "mode: {}   turn: {}   messages: {}",
             state.mode,
-            state.current_task.as_deref().unwrap_or("(idle)")
+            state.current_turn.as_deref().unwrap_or("(idle)"),
+            state.conversation.len() + usize::from(!state.current_assistant.trim().is_empty())
         ),
         width = columns.saturating_sub(3).max(10)
     )?;
@@ -259,7 +284,10 @@ fn render(state: &TuiState) -> std::io::Result<()> {
                 let mut lines = vec![format!(
                     "{} {}",
                     tool_state_badge(&view.state),
-                    truncate(&format!("{} [{}]", tool_id, view.state), columns.saturating_sub(6))
+                    truncate(
+                        &format!("{} [{}]", tool_id, view.state),
+                        columns.saturating_sub(6)
+                    )
                 )];
                 if !view.detail.is_empty() {
                     lines.extend(
@@ -276,25 +304,47 @@ fn render(state: &TuiState) -> std::io::Result<()> {
 
     render_section(
         &mut out,
-        "Transcript",
-        &tail_wrapped(
-            if state.transcript.is_empty() {
-                "(no assistant output yet)"
-            } else {
-                state.transcript.as_str()
-            },
-            columns,
-            transcript_rows,
-        ),
+        "Conversation",
+        &conversation_lines(state, columns, conversation_rows),
         &divider,
     )?;
 
     writeln!(
         out,
         "{}",
-        dim("Type a task and press Enter. Type `exit` to quit. Use --plain-repl for legacy mode.")
+        dim("Type a message and press Enter. Type `exit` to quit. Use --plain-repl for legacy mode.")
     )?;
     out.flush()
+}
+
+fn conversation_lines(state: &TuiState, columns: usize, max_lines: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for entry in &state.conversation {
+        lines.push(format!(
+            "{} {}",
+            speaker_badge(entry.speaker),
+            entry.speaker
+        ));
+        lines.extend(
+            wrap_text(&entry.content, columns.saturating_sub(4))
+                .into_iter()
+                .map(|line| format!("  {}", line)),
+        );
+        lines.push(String::new());
+    }
+    if !state.current_assistant.trim().is_empty() {
+        lines.push(format!("{} Dum-E", speaker_badge("Dum-E")));
+        lines.extend(
+            wrap_text(&state.current_assistant, columns.saturating_sub(4))
+                .into_iter()
+                .map(|line| format!("  {}", line)),
+        );
+    }
+    if lines.is_empty() {
+        lines.push("(no conversation yet)".to_string());
+    }
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].to_vec()
 }
 
 fn truncate(input: &str, limit: usize) -> String {
@@ -394,10 +444,19 @@ fn tool_state_badge(state: &str) -> String {
         "\x1b[31m●\x1b[0m".to_string()
     } else if state.contains("completed") {
         "\x1b[32m●\x1b[0m".to_string()
-    } else if state.contains("queued") || state.contains("executing") || state.contains("building") {
+    } else if state.contains("queued") || state.contains("executing") || state.contains("building")
+    {
         "\x1b[33m●\x1b[0m".to_string()
     } else {
         "•".to_string()
+    }
+}
+
+fn speaker_badge(speaker: &str) -> String {
+    match speaker {
+        "You" => "\x1b[35m◉\x1b[0m".to_string(),
+        "Dum-E" => "\x1b[36m◉\x1b[0m".to_string(),
+        _ => "•".to_string(),
     }
 }
 
@@ -471,6 +530,7 @@ mod tests {
     #[test]
     fn state_tracks_tool_lifecycle_and_thinking() {
         let mut state = TuiState::new();
+        state.begin_task("hello?");
         state.apply_event(Event::new_in_trace(
             TraceId::from_str("trace-1"),
             Component::Llm,
@@ -502,8 +562,9 @@ mod tests {
             })),
         ));
 
-        assert_eq!(state.transcript, "hello");
+        assert_eq!(state.current_assistant, "hello");
         assert_eq!(state.thinking, "ponder");
         assert_eq!(state.tools.get("tool-1").unwrap().state, "completed");
+        assert_eq!(state.conversation[0].speaker, "You");
     }
 }
