@@ -156,4 +156,8 @@ fn parity_report_flags_first_mismatch_location() {
     let report = build_parity_report("scenario-1", &events, &expected);
     assert_eq!(report.diff_verdict, "FAIL");
     assert_eq!(report.first_mismatch_location, Some(1));
+    let rendered = report.to_string();
+    assert!(rendered.contains("scenario id: scenario-1"));
+    assert!(rendered.contains("diff verdict: FAIL"));
+    assert!(rendered.contains("first mismatch location: 1"));
 }

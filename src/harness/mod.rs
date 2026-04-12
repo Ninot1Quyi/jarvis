@@ -156,6 +156,33 @@ pub struct ParityReport {
     pub first_mismatch_location: Option<usize>,
 }
 
+impl std::fmt::Display for ParityReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let dum_e = self
+            .dum_e_sequence_summary
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        let claude = self
+            .claude_code_sequence_summary
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        let mismatch = self
+            .first_mismatch_location
+            .map(|idx| idx.to_string())
+            .unwrap_or_else(|| "none".to_string());
+
+        write!(
+            f,
+            "scenario id: {}\ndum-e sequence summary: {}\nclaude-code sequence summary: {}\ndiff verdict: {}\nfirst mismatch location: {}",
+            self.scenario_id, dum_e, claude, self.diff_verdict, mismatch
+        )
+    }
+}
+
 /// Build the canonical scenario corpus scaffold for parity work.
 pub fn canonical_parity_corpus() -> Vec<ParityScenarioSpec> {
     vec![
@@ -305,7 +332,7 @@ fn semantic_sequence(labels: &[&str]) -> Vec<SequenceSummaryEntry> {
 
 /// Convert events into a compressed semantic sequence summary.
 pub fn summarize_event_sequence(events: &[Event]) -> Vec<SequenceSummaryEntry> {
-    let mut summary = Vec::new();
+    let mut summary: Vec<SequenceSummaryEntry> = Vec::new();
 
     for event in events {
         let label = event_sequence_label(event);
