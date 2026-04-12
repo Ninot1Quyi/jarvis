@@ -143,10 +143,25 @@ pub enum EventData {
     ToolCall {
         tool: String,
         input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_use_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        correlation_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_concurrency_safe: Option<bool>,
     },
     ToolProgress {
         tool: String,
+        #[serde(skip_serializing_if = "String::is_empty")]
         output: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_use_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        correlation_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_concurrency_safe: Option<bool>,
     },
     LlmChunk {
         text: String,
@@ -376,5 +391,21 @@ mod tests {
 
         let received = rx.recv().await.unwrap();
         assert_eq!(received.component, Component::Llm);
+    }
+
+    #[test]
+    fn test_tool_progress_serialization_with_correlation_fields() {
+        let data = EventData::ToolProgress {
+            tool: "bash".to_string(),
+            output: "queued".to_string(),
+            tool_use_id: Some("toolu_123".to_string()),
+            correlation_id: Some("toolu_123".to_string()),
+            state: Some("queued".to_string()),
+            is_concurrency_safe: Some(false),
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(json.contains("\"tool_use_id\":\"toolu_123\""));
+        assert!(json.contains("\"correlation_id\":\"toolu_123\""));
+        assert!(json.contains("\"state\":\"queued\""));
     }
 }
