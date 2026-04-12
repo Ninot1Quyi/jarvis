@@ -10,6 +10,7 @@ use crate::observability::{Event, EventBus};
 use crate::soul::SoulManager;
 use crate::tools::ToolRegistry;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -89,6 +90,334 @@ impl TestResult {
     pub fn pass(mut self) -> Self {
         self.passed = true;
         self
+    }
+}
+
+/// Semantic sequence entry used by parity diffs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequenceSummaryEntry {
+    pub label: String,
+    pub count: usize,
+}
+
+impl SequenceSummaryEntry {
+    pub fn new(label: impl Into<String>, count: usize) -> Self {
+        Self {
+            label: label.into(),
+            count,
+        }
+    }
+}
+
+impl std::fmt::Display for SequenceSummaryEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.count > 1 {
+            write!(f, "{}×{}", self.label, self.count)
+        } else {
+            write!(f, "{}", self.label)
+        }
+    }
+}
+
+/// Deterministic replay frame extracted from persisted/collected events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayFrame {
+    pub ordinal: usize,
+    pub timestamp: DateTime<Utc>,
+    pub component: String,
+    pub event_type: String,
+    pub detail: String,
+}
+
+/// Canonical parity scenario scaffold derived from the streaming parity test spec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParityScenarioSpec {
+    pub id: String,
+    pub description: String,
+    pub expected_sequence: Vec<SequenceSummaryEntry>,
+}
+
+/// Sequence diff summary for dum-e vs reference behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParityComparison {
+    pub passed: bool,
+    pub first_mismatch_index: Option<usize>,
+    pub actual_len: usize,
+    pub expected_len: usize,
+}
+
+/// Structured parity report matching the test-spec reporting contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParityReport {
+    pub scenario_id: String,
+    pub dum_e_sequence_summary: Vec<SequenceSummaryEntry>,
+    pub claude_code_sequence_summary: Vec<SequenceSummaryEntry>,
+    pub diff_verdict: &'static str,
+    pub first_mismatch_location: Option<usize>,
+}
+
+/// Build the canonical scenario corpus scaffold for parity work.
+pub fn canonical_parity_corpus() -> Vec<ParityScenarioSpec> {
+    vec![
+        ParityScenarioSpec {
+            id: "pure_text_stream".to_string(),
+            description: "Pure text stream, no tool.".to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_chunk",
+                "llm_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "single_tool_call".to_string(),
+            description: "Single tool call with input deltas.".to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_tool_call",
+                "tool_call",
+                "tool_complete",
+                "llm_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "multi_tool_mixed_concurrency".to_string(),
+            description: "Multi-tool turn with mixed concurrency-safe and exclusive tools."
+                .to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_tool_call",
+                "tool_call",
+                "tool_progress",
+                "tool_complete",
+                "llm_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "tool_error_no_orphan".to_string(),
+            description: "Tool error must still resolve without orphaned results.".to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_tool_call",
+                "tool_call",
+                "tool_error",
+                "llm_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "fallback_mid_turn".to_string(),
+            description: "Streaming fallback mid-turn without dangling tool_use.".to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_chunk",
+                "llm_tool_call",
+                "tool_call",
+                "tool_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "user_interrupt_mid_tool".to_string(),
+            description: "Interrupt during tool execution emits stable terminal lifecycle."
+                .to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_tool_call",
+                "tool_call",
+                "user_interrupt",
+                "tool_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "thinking_block_lifecycle".to_string(),
+            description: "Thinking start/delta/end lifecycle remains deterministic.".to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_chunk",
+                "llm_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "voice_stream_interrupt".to_string(),
+            description: "Voice-mode stream with interrupt handling.".to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "voice_speak_start",
+                "voice_speak_chunk",
+                "voice_interrupt",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "cross_provider_smoke".to_string(),
+            description: "Cross-provider adapter contract smoke scenario.".to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "llm_complete",
+                "agent_complete",
+            ]),
+        },
+        ParityScenarioSpec {
+            id: "replay_reconstruction".to_string(),
+            description: "Trace replay reconstructs scenario semantics deterministically."
+                .to_string(),
+            expected_sequence: semantic_sequence(&[
+                "agent_start",
+                "agent_step",
+                "llm_start",
+                "tool_call",
+                "tool_complete",
+                "agent_complete",
+            ]),
+        },
+    ]
+}
+
+fn semantic_sequence(labels: &[&str]) -> Vec<SequenceSummaryEntry> {
+    labels
+        .iter()
+        .map(|label| SequenceSummaryEntry::new(*label, 1))
+        .collect()
+}
+
+/// Convert events into a compressed semantic sequence summary.
+pub fn summarize_event_sequence(events: &[Event]) -> Vec<SequenceSummaryEntry> {
+    let mut summary = Vec::new();
+
+    for event in events {
+        let label = event_sequence_label(event);
+        match summary.last_mut() {
+            Some(entry) if entry.label == label => entry.count += 1,
+            _ => summary.push(SequenceSummaryEntry::new(label, 1)),
+        }
+    }
+
+    summary
+}
+
+/// Rebuild a deterministic event timeline for replay/diffing.
+pub fn replay_frames(events: &[Event]) -> Vec<ReplayFrame> {
+    let mut ordered = events.to_vec();
+    ordered.sort_by(|left, right| {
+        left.timestamp
+            .cmp(&right.timestamp)
+            .then_with(|| format!("{:?}", left.component).cmp(&format!("{:?}", right.component)))
+            .then_with(|| format!("{:?}", left.event_type).cmp(&format!("{:?}", right.event_type)))
+    });
+
+    ordered
+        .into_iter()
+        .enumerate()
+        .map(|(idx, event)| ReplayFrame {
+            ordinal: idx,
+            timestamp: event.timestamp,
+            component: format!("{:?}", event.component).to_lowercase(),
+            event_type: event_sequence_label(&event),
+            detail: event_detail(&event),
+        })
+        .collect()
+}
+
+/// Compare actual dum-e sequence with a reference sequence.
+pub fn compare_sequence_summaries(
+    actual: &[SequenceSummaryEntry],
+    expected: &[SequenceSummaryEntry],
+) -> ParityComparison {
+    let max_len = actual.len().max(expected.len());
+    let first_mismatch_index = (0..max_len).find(|idx| actual.get(*idx) != expected.get(*idx));
+
+    ParityComparison {
+        passed: first_mismatch_index.is_none(),
+        first_mismatch_index,
+        actual_len: actual.len(),
+        expected_len: expected.len(),
+    }
+}
+
+/// Build a parity report for a finished scenario run.
+pub fn build_parity_report(
+    scenario_id: impl Into<String>,
+    events: &[Event],
+    reference_sequence: &[SequenceSummaryEntry],
+) -> ParityReport {
+    let actual = summarize_event_sequence(events);
+    let comparison = compare_sequence_summaries(&actual, reference_sequence);
+
+    ParityReport {
+        scenario_id: scenario_id.into(),
+        dum_e_sequence_summary: actual,
+        claude_code_sequence_summary: reference_sequence.to_vec(),
+        diff_verdict: if comparison.passed { "PASS" } else { "FAIL" },
+        first_mismatch_location: comparison.first_mismatch_index,
+    }
+}
+
+fn event_sequence_label(event: &Event) -> String {
+    use crate::observability::EventType;
+
+    match &event.event_type {
+        EventType::AgentStart => "agent_start",
+        EventType::AgentStep => "agent_step",
+        EventType::AgentComplete => "agent_complete",
+        EventType::AgentError => "agent_error",
+        EventType::LlmStart => "llm_start",
+        EventType::LlmChunk => "llm_chunk",
+        EventType::LlmComplete => "llm_complete",
+        EventType::LlmToolCall => "llm_tool_call",
+        EventType::ToolCall => "tool_call",
+        EventType::ToolProgress => "tool_progress",
+        EventType::ToolComplete => "tool_complete",
+        EventType::ToolError => "tool_error",
+        EventType::MemorySearch => "memory_search",
+        EventType::MemoryStore => "memory_store",
+        EventType::MemoryCompact => "memory_compact",
+        EventType::VoiceSpeakStart => "voice_speak_start",
+        EventType::VoiceSpeakChunk => "voice_speak_chunk",
+        EventType::VoiceSpeakComplete => "voice_speak_complete",
+        EventType::VoiceListenStart => "voice_listen_start",
+        EventType::VoiceListenComplete => "voice_listen_complete",
+        EventType::VoiceInterrupt => "voice_interrupt",
+        EventType::UserInterrupt => "user_interrupt",
+        EventType::UserInput => "user_input",
+    }
+    .to_string()
+}
+
+fn event_detail(event: &Event) -> String {
+    use crate::observability::EventData;
+
+    match &event.data {
+        EventData::Empty => String::new(),
+        EventData::Message { message } => message.clone(),
+        EventData::Error { error } => error.clone(),
+        EventData::ToolCall { tool, input } => format!("{} {}", tool, input),
+        EventData::ToolProgress { tool, output } => format!("{} {}", tool, output),
+        EventData::LlmChunk { text } => text.clone(),
+        EventData::VoiceChunk { audio_size } => format!("audio_size={}", audio_size),
+        EventData::Custom(value) => value.to_string(),
     }
 }
 

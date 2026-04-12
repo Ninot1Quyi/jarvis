@@ -84,7 +84,11 @@ pub fn parse_sse_stream(body: &str) -> Vec<Result<ChatChunk, LLMError>> {
             // This handles SSE servers that send multiple events without blank lines
             // (e.g. content_block_start followed immediately by content_block_delta).
             if current_event.is_some() && !data_lines.is_empty() {
-                debug!("process_pending: event={:?} data_lines={}", current_event, data_lines.len());
+                debug!(
+                    "process_pending: event={:?} data_lines={}",
+                    current_event,
+                    data_lines.len()
+                );
                 process_event(
                     current_event.take(),
                     &mut data_lines,
@@ -163,7 +167,10 @@ fn process_event(
                             id: thinking_id.clone(),
                             index: block.index,
                         });
-                        debug!("sse push ThinkingStart id={} index={}", thinking_id, block.index);
+                        debug!(
+                            "sse push ThinkingStart id={} index={}",
+                            thinking_id, block.index
+                        );
                         results.push(chunk);
                     }
                     _ => {}
@@ -195,12 +202,18 @@ fn process_event(
                                 .get(&delta.index)
                                 .cloned()
                                 .unwrap_or_else(|| format!("thinking_{}", delta.index));
-                            debug!("process thinking_delta: id={} text={}", id, delta.delta.thinking);
+                            debug!(
+                                "process thinking_delta: id={} text={}",
+                                id, delta.delta.thinking
+                            );
                             let chunk = Ok(ChatChunk::ThinkingDelta {
                                 id: id.clone(),
                                 delta: delta.delta.thinking.clone(),
                             });
-                            debug!("sse push ThinkingDelta id={} text={}", id, delta.delta.thinking);
+                            debug!(
+                                "sse push ThinkingDelta id={} text={}",
+                                id, delta.delta.thinking
+                            );
                             results.push(chunk);
                         }
                     }
