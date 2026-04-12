@@ -7,13 +7,12 @@ use crate::agent::AgentResult;
 use crate::get_event_bus;
 use crate::observability::{Component, Event, EventData, EventType};
 use crate::Agent;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io::{stdout, Write};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
-const MAX_LOG_LINES: usize = 18;
 const MAX_TOOL_LINES: usize = 8;
 
 #[derive(Default)]
@@ -27,7 +26,7 @@ struct TuiState {
     mode: String,
     status: String,
     current_task: Option<String>,
-    logs: VecDeque<String>,
+    summary: String,
     thinking: String,
     transcript: String,
     tools: BTreeMap<String, ToolView>,
@@ -39,18 +38,15 @@ impl TuiState {
             mode: "TUI".to_string(),
             status: "idle".to_string(),
             current_task: None,
-            logs: VecDeque::new(),
+            summary: "ready".to_string(),
             thinking: String::new(),
             transcript: String::new(),
             tools: BTreeMap::new(),
         }
     }
 
-    fn push_log(&mut self, line: impl Into<String>) {
-        self.logs.push_back(line.into());
-        while self.logs.len() > MAX_LOG_LINES {
-            self.logs.pop_front();
-        }
+    fn set_summary(&mut self, line: impl Into<String>) {
+        self.summary = line.into();
     }
 
     fn begin_task(&mut self, task: &str) {
@@ -59,43 +55,43 @@ impl TuiState {
         self.thinking.clear();
         self.transcript.clear();
         self.tools.clear();
-        self.push_log(format!("▶ {}", task));
+        self.set_summary(format!("▶ {}", task));
     }
 
     fn complete_task(&mut self, result: &AgentResult) {
         self.status = "idle".to_string();
         self.current_task = None;
-        self.push_log(format!("✓ completed in {} step(s)", result.steps));
+        self.set_summary(format!("✓ completed in {} step(s)", result.steps));
     }
 
     fn fail_task(&mut self, error: &str) {
         self.status = "idle".to_string();
         self.current_task = None;
-        self.push_log(format!("✗ {}", error));
+        self.set_summary(format!("✗ {}", error));
     }
 
     fn apply_event(&mut self, event: Event) {
         match (event.component, event.event_type, event.data) {
             (Component::Agent, EventType::AgentStart, EventData::Message { message }) => {
-                self.push_log(message);
+                self.set_summary(message);
             }
             (Component::Agent, EventType::AgentStep, EventData::Message { message }) => {
-                self.push_log(message);
+                self.set_summary(message);
             }
             (Component::Agent, EventType::AgentComplete, EventData::Message { message }) => {
-                self.push_log(message);
+                self.set_summary(message);
             }
             (Component::Agent, EventType::AgentError, EventData::Error { error }) => {
-                self.push_log(format!("agent error: {}", error));
+                self.set_summary(format!("agent error: {}", error));
             }
             (Component::Llm, EventType::LlmStart, EventData::Message { message }) => {
-                self.push_log(message);
+                self.set_summary(message);
             }
             (Component::Llm, EventType::LlmChunk, EventData::LlmChunk { text }) => {
                 self.transcript.push_str(&text);
             }
             (Component::Llm, EventType::LlmComplete, EventData::Message { message }) => {
-                self.push_log(message);
+                self.set_summary(message);
             }
             (
                 Component::Llm,
@@ -135,7 +131,7 @@ impl TuiState {
                 view.detail = output;
             }
             (Component::Tool, EventType::ToolError, EventData::Error { error }) => {
-                self.push_log(format!("tool error: {}", error));
+                self.set_summary(format!("tool error: {}", error));
             }
             (Component::Llm, _, EventData::Custom(value)) => {
                 let kind = value
@@ -170,10 +166,10 @@ impl TuiState {
                 }
             }
             (Component::Voice, EventType::VoiceSpeakStart, _) => {
-                self.push_log("voice speak start");
+                self.set_summary("voice speak start");
             }
             (Component::Voice, EventType::VoiceSpeakComplete, _) => {
-                self.push_log("voice speak complete");
+                self.set_summary("voice speak complete");
             }
             _ => {}
         }
@@ -208,6 +204,7 @@ fn render(state: &TuiState) -> std::io::Result<()> {
         "task: {}",
         state.current_task.as_deref().unwrap_or("(idle)")
     )?;
+    writeln!(out, "summary: {}", state.summary)?;
     writeln!(out, "{}", "─".repeat(80))?;
 
     writeln!(out, "Thinking:")?;
@@ -247,11 +244,6 @@ fn render(state: &TuiState) -> std::io::Result<()> {
     }
     writeln!(out, "{}", "─".repeat(80))?;
 
-    writeln!(out, "Log:")?;
-    for line in &state.logs {
-        writeln!(out, "{}", line)?;
-    }
-    writeln!(out, "{}", "─".repeat(80))?;
     writeln!(out, "Input a task and press Enter. Type `exit` to quit.")?;
     out.flush()
 }
@@ -267,6 +259,7 @@ fn truncate(input: &str, limit: usize) -> String {
 }
 
 pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
+    std::env::set_var("DUME_SUPPRESS_DEV_EVENT_STDERR", "1");
     let _terminal = TerminalGuard::enter()?;
     let event_bus = get_event_bus().ok_or("event bus not initialized")?;
     let mut events = event_bus.subscribe();

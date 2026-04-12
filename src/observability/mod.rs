@@ -241,13 +241,19 @@ impl EventBus {
                 .join(format!("{}.jsonl", event.trace_id));
             self.storage.store(&event, &trace_file);
 
-            if let Ok(line) = serde_json::to_string(&event) {
-                eprintln!("[DEV_EVENT] {}", line);
-            } else {
-                eprintln!(
-                    "[DEV_EVENT] component={:?} type={:?}",
-                    event.component, event.event_type
-                );
+            if std::env::var("DUME_SUPPRESS_DEV_EVENT_STDERR")
+                .ok()
+                .as_deref()
+                != Some("1")
+            {
+                if let Ok(line) = serde_json::to_string(&event) {
+                    eprintln!("[DEV_EVENT] {}", line);
+                } else {
+                    eprintln!(
+                        "[DEV_EVENT] component={:?} type={:?}",
+                        event.component, event.event_type
+                    );
+                }
             }
         }
 

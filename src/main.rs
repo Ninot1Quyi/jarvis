@@ -53,9 +53,10 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let use_tui = args.task.is_none() && !args.plain_repl;
 
     // Initialize logging
-    logging::init(args.verbose);
+    logging::init(args.verbose, !use_tui);
 
     info!("Dum-E starting...");
 
