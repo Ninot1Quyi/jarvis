@@ -5,7 +5,11 @@
 //!
 //! State flow: Idle -> Listening -> Processing -> Speaking -> (Idle | Interrupted)
 
-use super::{InterruptHandler, VoiceError, VoiceProvider};
+use super::{AudioStream, InterruptHandler, SpeakParams, VoiceError, VoiceProvider};
+use crate::message::{Message, MessageRole};
+use crate::observability::{Component, Event, EventBus, EventData, EventType};
+use std::future::Future;
+use std::pin::Pin;
 use crate::observability::{Component, EventBus, EventData, EventType};
 use std::sync::Arc;
 
@@ -32,6 +36,8 @@ pub struct VoiceDialogue {
     llm: Arc<dyn LLMProvider>,
     event_bus: Option<Arc<EventBus>>,
     interrupt_handler: Arc<InterruptHandler>,
+    pending_user_text: Option<String>,
+    pending_response_text: Option<String>,
 }
 
 /// LLM provider trait (simplified for voice)
@@ -39,7 +45,26 @@ pub trait LLMProvider: Send + Sync {
     fn chat_stream(
         &self,
         messages: &[crate::message::Message],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, VoiceError>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<String, VoiceError>> + Send + '_>>;
+}
+
+struct AgentVoiceLLM {
+    inner: Arc<dyn crate::llm::LLMProvider>,
+}
+
+impl LLMProvider for AgentVoiceLLM {
+    fn chat_stream(
+        &self,
+        messages: &[crate::message::Message],
+    ) -> Pin<Box<dyn Future<Output = Result<String, VoiceError>> + Send + '_>> {
+        Box::pin(async move {
+            self.inner
+                .chat_stream(messages, None)
+                .await
+                .map(|response| response.message)
+                .map_err(|err| VoiceError::Api(format!("voice llm request failed: {}", err)))
+        })
+    }
 }
 
 impl VoiceDialogue {
@@ -56,12 +81,34 @@ impl VoiceDialogue {
             llm,
             event_bus,
             interrupt_handler,
+            pending_user_text: None,
+            pending_response_text: None,
         }
+    }
+
+    /// Create a voice dialogue using the main agent LLM provider.
+    pub fn new_with_agent_llm(
+        voice: Arc<dyn VoiceProvider>,
+        llm: Arc<dyn crate::llm::LLMProvider>,
+        event_bus: Option<Arc<EventBus>>,
+        interrupt_handler: Arc<InterruptHandler>,
+    ) -> Self {
+        Self::new(
+            voice,
+            Arc::new(AgentVoiceLLM { inner: llm }),
+            event_bus,
+            interrupt_handler,
+        )
     }
 
     /// Get current state
     pub fn state(&self) -> VoiceDialogueState {
         self.state
+    }
+
+    /// Seed a transcript so the dialogue can run without microphone input.
+    pub fn seed_transcript(&mut self, text: impl Into<String>) {
+        self.pending_user_text = Some(text.into());
     }
 
     /// Run the voice dialogue loop
@@ -95,10 +142,40 @@ impl VoiceDialogue {
         }
     }
 
+    /// Run a single voice turn and return once the state comes back to idle.
+    pub async fn run_once(&mut self) -> Result<(), VoiceError> {
+        loop {
+            match self.state {
+                VoiceDialogueState::Idle => {
+                    if self.pending_user_text.is_none() && self.pending_response_text.is_none() {
+                        self.on_idle().await?;
+                    } else if self.pending_response_text.is_some() {
+                        self.state = VoiceDialogueState::Speaking;
+                    } else {
+                        self.state = VoiceDialogueState::Processing;
+                    }
+                }
+                VoiceDialogueState::Listening => self.on_listening().await?,
+                VoiceDialogueState::Processing => self.on_processing().await?,
+                VoiceDialogueState::Speaking => self.on_speaking().await?,
+                VoiceDialogueState::Interrupted => self.on_interrupted().await?,
+            }
+
+            if self.state == VoiceDialogueState::Idle
+                && self.pending_user_text.is_none()
+                && self.pending_response_text.is_none()
+            {
+                return Ok(());
+            }
+        }
+    }
+
     async fn on_idle(&mut self) -> Result<(), VoiceError> {
-        // Wait for wake or explicit start
-        // For now, just transition to listening
-        self.state = VoiceDialogueState::Listening;
+        self.state = if self.pending_user_text.is_some() {
+            VoiceDialogueState::Processing
+        } else {
+            VoiceDialogueState::Listening
+        };
         Ok(())
     }
 
@@ -115,33 +192,49 @@ impl VoiceDialogue {
             },
         );
 
-        // Transition to processing
+        self.pending_user_text = Some(transcription.text);
         self.state = VoiceDialogueState::Processing;
         Ok(())
     }
 
     async fn on_processing(&mut self) -> Result<(), VoiceError> {
-        // This is where we'd process with LLM
-        // For now, just transition to speaking
+        let user_text = self.pending_user_text.take().unwrap_or_default();
+        if user_text.trim().is_empty() {
+            self.state = VoiceDialogueState::Idle;
+            return Ok(());
+        }
+
+        let response = self
+            .llm
+            .chat_stream(&[Message::new(MessageRole::User, &user_text)])
+            .await?;
+        self.emit_llm_chunk(&response);
+        self.pending_response_text = Some(response);
         self.state = VoiceDialogueState::Speaking;
         Ok(())
     }
 
     async fn on_speaking(&mut self) -> Result<(), VoiceError> {
+        let response = self.pending_response_text.take().unwrap_or_default();
+        if response.trim().is_empty() {
+            self.state = VoiceDialogueState::Idle;
+            return Ok(());
+        }
+
         self.emit_event(EventType::VoiceSpeakStart, EventData::Empty);
 
-        // Check for interrupt while speaking
         let speak_handle = tokio::spawn({
-            let _voice = self.voice.clone();
+            let voice = self.voice.clone();
+            let response = response.clone();
             async move {
-                // Placeholder - in real impl, would speak actual text
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                Ok::<(), VoiceError>(())
+                voice.speak(&response, SpeakParams::default()).await
             }
         });
 
         tokio::select! {
-            _ = speak_handle => {
+            result = speak_handle => {
+                let audio = result.map_err(|err| VoiceError::Device(format!("voice speak task failed: {}", err)))??;
+                self.emit_voice_audio_chunk(&audio);
                 self.emit_event(EventType::VoiceSpeakComplete, EventData::Empty);
                 self.state = VoiceDialogueState::Idle;
             }
@@ -171,9 +264,9 @@ impl VoiceDialogue {
     }
 
     async fn wait_for_interrupt(&self) {
-        let _ = self.interrupt_handler.receiver();
-        // In real impl, would wait for signal
-        tokio::time::sleep(tokio::time::Duration::MAX).await;
+        while !self.interrupt_handler.check() {
+            tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
+        }
     }
 
     fn emit_event(&self, event_type: EventType, data: EventData) {
@@ -181,6 +274,112 @@ impl VoiceDialogue {
             let _span = bus.span(Component::Voice, event_type, data);
         }
     }
+
+    fn emit_llm_chunk(&self, text: &str) {
+        if let Some(bus) = &self.event_bus {
+            bus.publish(Event::new(
+                Component::Llm,
+                EventType::LlmChunk,
+                EventData::LlmChunk {
+                    text: text.to_string(),
+                },
+            ));
+        }
+    }
+
+    fn emit_voice_audio_chunk(&self, audio: &AudioStream) {
+        self.emit_event(
+            EventType::VoiceSpeakChunk,
+            EventData::VoiceChunk {
+                audio_size: audio.total_size,
+            },
+        );
+    }
 }
 
 // Re-export message type
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::EventType;
+    use async_trait::async_trait;
+
+    struct FakeVoiceProvider;
+
+    #[async_trait]
+    impl VoiceProvider for FakeVoiceProvider {
+        async fn speak(&self, text: &str, _params: SpeakParams) -> Result<AudioStream, VoiceError> {
+            Ok(AudioStream {
+                chunks: vec![text.as_bytes().to_vec()],
+                total_size: text.len(),
+            })
+        }
+
+        async fn speak_streaming(
+            &self,
+            _text: &str,
+            _params: SpeakParams,
+        ) -> Result<super::super::StreamingAudio, VoiceError> {
+            Err(VoiceError::NotSupported("unused in test".to_string()))
+        }
+
+        fn stop_speaking(&self) {}
+
+        async fn listen(&self) -> Result<super::super::Transcription, VoiceError> {
+            Err(VoiceError::NotSupported("listen should be bypassed in test".to_string()))
+        }
+
+        async fn listen_streaming(&self) -> Result<super::super::StreamingAudio, VoiceError> {
+            Err(VoiceError::NotSupported("unused in test".to_string()))
+        }
+
+        fn is_speaking(&self) -> bool {
+            false
+        }
+
+        fn is_listening(&self) -> bool {
+            false
+        }
+    }
+
+    struct FakeLLM;
+
+    impl LLMProvider for FakeLLM {
+        fn chat_stream(
+            &self,
+            _messages: &[crate::message::Message],
+        ) -> Pin<Box<dyn Future<Output = Result<String, VoiceError>> + Send + '_>> {
+            Box::pin(async { Ok("voice response".to_string()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_once_processes_seeded_transcript_and_emits_voice_events() {
+        let bus = Arc::new(EventBus::new(false));
+        let mut rx = bus.subscribe();
+        let mut dialogue = VoiceDialogue::new(
+            Arc::new(FakeVoiceProvider),
+            Arc::new(FakeLLM),
+            Some(bus),
+            Arc::new(InterruptHandler::new()),
+        );
+        dialogue.seed_transcript("hello");
+
+        dialogue.run_once().await.unwrap();
+
+        let mut event_types = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            event_types.push(event.event_type);
+        }
+
+        assert_eq!(dialogue.state(), VoiceDialogueState::Idle);
+        assert!(event_types.iter().any(|ty| matches!(ty, EventType::LlmChunk)));
+        assert!(event_types
+            .iter()
+            .any(|ty| matches!(ty, EventType::VoiceSpeakStart)));
+        assert!(event_types
+            .iter()
+            .any(|ty| matches!(ty, EventType::VoiceSpeakComplete)));
+    }
+}
