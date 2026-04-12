@@ -47,6 +47,13 @@ struct CompletedTool {
     result: ToolResult,
 }
 
+#[derive(Debug)]
+struct StartedTool {
+    id: String,
+    name: String,
+    is_concurrency_safe: bool,
+}
+
 /// Claude Code-like streaming tool executor:
 /// - ToolUse arrives during model stream -> enqueue immediately
 /// - concurrency-safe tools can run in parallel
@@ -56,6 +63,7 @@ struct StreamingToolExecutor {
     queue: VecDeque<QueuedTool>,
     running: HashMap<String, bool>, // tool_use_id -> is_concurrency_safe
     join_set: JoinSet<CompletedTool>,
+    started: Vec<StartedTool>,
     executing_count: usize,
     concurrency_safe_count: usize,
 }
@@ -67,6 +75,7 @@ impl StreamingToolExecutor {
             queue: VecDeque::new(),
             running: HashMap::new(),
             join_set: JoinSet::new(),
+            started: Vec::new(),
             executing_count: 0,
             concurrency_safe_count: 0,
         }
@@ -86,6 +95,10 @@ impl StreamingToolExecutor {
 
     fn has_queued(&self) -> bool {
         !self.queue.is_empty()
+    }
+
+    fn take_started(&mut self) -> Vec<StartedTool> {
+        std::mem::take(&mut self.started)
     }
 
     fn can_execute(&self, is_concurrency_safe: bool) -> bool {
@@ -113,11 +126,18 @@ impl StreamingToolExecutor {
 
     fn start_tool(&mut self, queued: QueuedTool) {
         let id = queued.call.id.clone();
+        let name = queued.call.name.clone();
+        let is_concurrency_safe = queued.is_concurrency_safe;
         self.executing_count += 1;
-        if queued.is_concurrency_safe {
+        if is_concurrency_safe {
             self.concurrency_safe_count += 1;
         }
-        self.running.insert(id, queued.is_concurrency_safe);
+        self.running.insert(id.clone(), is_concurrency_safe);
+        self.started.push(StartedTool {
+            id,
+            name,
+            is_concurrency_safe,
+        });
 
         let registry = self.registry.clone();
         self.join_set
@@ -437,6 +457,62 @@ impl Agent {
                 ),
             );
 
+            // Enqueue and execute tool calls.
+            let mut tool_call_order: Vec<String> = Vec::new();
+            let mut completed_tools_by_id: HashMap<String, CompletedTool> = HashMap::new();
+            let mut streaming_tool_executor =
+                StreamingToolExecutor::new(self.tool_registry.clone());
+
+            if !tool_calls.is_empty() {
+                for tc in &tool_calls {
+                    let is_concurrency_safe = self.is_tool_concurrency_safe(&tc.name);
+                    self.event_bus.publish(Event::new(
+                        Component::Llm,
+                        EventType::LlmToolCall,
+                        EventData::ToolCall {
+                            tool: tc.name.clone(),
+                            input: tc.arguments.clone(),
+                            tool_use_id: Some(tc.id.clone()),
+                            correlation_id: Some(tc.id.clone()),
+                            is_concurrency_safe: None,
+                        },
+                    ));
+                    self.dev_log(
+                        "LLM_TOOL_CALL",
+                        &format!("id={} name={} args={}", tc.id, tc.name, tc.arguments),
+                    );
+                    self.event_bus.publish(Event::new(
+                        Component::Tool,
+                        EventType::ToolCall,
+                        EventData::ToolCall {
+                            tool: tc.name.clone(),
+                            input: tc.arguments.clone(),
+                            tool_use_id: Some(tc.id.clone()),
+                            correlation_id: Some(tc.id.clone()),
+                            is_concurrency_safe: Some(is_concurrency_safe),
+                        },
+                    ));
+                    self.dev_log(
+                        "TOOL_CALL",
+                        &format!(
+                            "queued id={} name={} concurrency_safe={}",
+                            tc.id, tc.name, is_concurrency_safe
+                        ),
+                    );
+                    self.record_tool_lifecycle(
+                        &tc.id,
+                        &tc.name,
+                        "queued",
+                        is_concurrency_safe,
+                        Some("queued"),
+                        None,
+                    );
+                    tool_call_order.push(tc.id.clone());
+                    streaming_tool_executor.enqueue(tc.clone(), is_concurrency_safe);
+                    self.record_started_tools(streaming_tool_executor.take_started());
+                }
+            }
+
             // Add assistant message to history, preserving tool_use blocks.
             let assistant_message = if assistant_blocks.is_empty() {
                 Message::new(MessageRole::Assistant, &full_text)
@@ -460,15 +536,18 @@ impl Agent {
                     let mut parsed_executor =
                         StreamingToolExecutor::new(self.tool_registry.clone());
                     for tool_call in parsed_calls {
+                        let is_concurrency_safe = self.is_tool_concurrency_safe(&tool_call.name);
                         self.event_bus.publish(Event::new(
                             Component::Tool,
                             EventType::ToolCall,
                             EventData::ToolCall {
                                 tool: tool_call.name.clone(),
                                 input: tool_call.arguments.clone(),
+                                tool_use_id: Some(tool_call.id.clone()),
+                                correlation_id: Some(tool_call.id.clone()),
+                                is_concurrency_safe: Some(is_concurrency_safe),
                             },
                         ));
-                        let is_concurrency_safe = self.is_tool_concurrency_safe(&tool_call.name);
                         self.dev_log(
                             "TOOL_CALL",
                             &format!(
@@ -477,7 +556,16 @@ impl Agent {
                             ),
                         );
                         tool_call_order.push(tool_call.id.clone());
+                        self.record_tool_lifecycle(
+                            &tool_call.id,
+                            &tool_call.name,
+                            "queued",
+                            is_concurrency_safe,
+                            Some("queued (parsed)"),
+                            None,
+                        );
                         parsed_executor.enqueue(tool_call, is_concurrency_safe);
+                        self.record_started_tools(parsed_executor.take_started());
                     }
 
                     while parsed_executor.has_running() || parsed_executor.has_queued() {
@@ -488,10 +576,26 @@ impl Agent {
                             }
                         }
                         if let Some(completed) = parsed_executor.wait_next().await {
+                            self.record_started_tools(parsed_executor.take_started());
                             self.record_tool_completion(&completed);
                             completed_tools_by_id.insert(completed.call.id.clone(), completed);
                         }
                     }
+                }
+            }
+
+            // Drain tool executions.
+            while streaming_tool_executor.has_running() || streaming_tool_executor.has_queued() {
+                if !streaming_tool_executor.has_running() {
+                    streaming_tool_executor.process_queue();
+                    if !streaming_tool_executor.has_running() {
+                        break;
+                    }
+                }
+                if let Some(completed) = streaming_tool_executor.wait_next().await {
+                    self.record_started_tools(streaming_tool_executor.take_started());
+                    self.record_tool_completion(&completed);
+                    completed_tools_by_id.insert(completed.call.id.clone(), completed);
                 }
             }
 
@@ -600,12 +704,24 @@ impl Agent {
     fn record_tool_completion(&self, completed: &CompletedTool) {
         let output_preview = Self::preview(&completed.result.output);
         if completed.result.success {
+            self.record_tool_lifecycle(
+                &completed.call.id,
+                &completed.call.name,
+                "completed",
+                self.is_tool_concurrency_safe(&completed.call.name),
+                Some(output_preview.as_str()),
+                None,
+            );
             self.event_bus.publish(Event::new(
                 Component::Tool,
                 EventType::ToolComplete,
                 EventData::ToolProgress {
                     tool: completed.call.name.clone(),
                     output: output_preview.clone(),
+                    tool_use_id: Some(completed.call.id.clone()),
+                    correlation_id: Some(completed.call.id.clone()),
+                    state: Some("completed".to_string()),
+                    is_concurrency_safe: Some(self.is_tool_concurrency_safe(&completed.call.name)),
                 },
             ));
             self.dev_log(
@@ -621,6 +737,14 @@ impl Agent {
                 .error
                 .clone()
                 .unwrap_or_else(|| "unknown tool error".to_string());
+            self.record_tool_lifecycle(
+                &completed.call.id,
+                &completed.call.name,
+                "error",
+                self.is_tool_concurrency_safe(&completed.call.name),
+                None,
+                Some(error_text.as_str()),
+            );
             self.event_bus.publish(Event::new(
                 Component::Tool,
                 EventType::ToolError,
@@ -636,6 +760,49 @@ impl Agent {
                 ),
             );
         }
+    }
+
+    fn record_started_tools(&self, started_tools: Vec<StartedTool>) {
+        for started in started_tools {
+            self.record_tool_lifecycle(
+                &started.id,
+                &started.name,
+                "executing",
+                started.is_concurrency_safe,
+                Some("executing"),
+                None,
+            );
+        }
+    }
+
+    fn record_tool_lifecycle(
+        &self,
+        tool_use_id: &str,
+        tool: &str,
+        state: &str,
+        is_concurrency_safe: bool,
+        output: Option<&str>,
+        error: Option<&str>,
+    ) {
+        let mut output_text = output.unwrap_or_default().to_string();
+        if let Some(error_text) = error {
+            if !output_text.is_empty() {
+                output_text.push_str(" | ");
+            }
+            output_text.push_str(error_text);
+        }
+        self.event_bus.publish(Event::new(
+            Component::Tool,
+            EventType::ToolProgress,
+            EventData::ToolProgress {
+                tool: tool.to_string(),
+                output: output_text,
+                tool_use_id: Some(tool_use_id.to_string()),
+                correlation_id: Some(tool_use_id.to_string()),
+                state: Some(state.to_string()),
+                is_concurrency_safe: Some(is_concurrency_safe),
+            },
+        ));
     }
 
     fn tool_result_to_message(result: &ToolResult) -> String {

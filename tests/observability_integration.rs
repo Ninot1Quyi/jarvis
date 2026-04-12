@@ -25,9 +25,13 @@ fn test_event_data_tool_call() {
     let data = EventData::ToolCall {
         tool: "bash".to_string(),
         input: serde_json::json!({"cmd": "ls"}),
+        tool_use_id: Some("toolu_test".to_string()),
+        correlation_id: Some("toolu_test".to_string()),
+        is_concurrency_safe: Some(false),
     };
     let json = serde_json::to_string(&data).unwrap();
     assert!(json.contains("bash"));
+    assert!(json.contains("toolu_test"));
 }
 
 #[test]
