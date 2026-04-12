@@ -10,7 +10,7 @@ use crate::message::{Message, MessageRole};
 use crate::observability::{Component, Event, EventBus, EventData, EventType};
 use crate::soul::SoulManager;
 use crate::tools::{ToolContext, ToolRegistry, ToolResult};
-use futures::{FutureExt, StreamExt};
+use futures::FutureExt;
 pub use state::AgentState;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

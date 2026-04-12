@@ -4,7 +4,10 @@
 //! Supports native tool calls via the Anthropic tool_use format.
 //! Supports streaming via SSE.
 
-use crate::llm::{ChatChunk, ChatCompletion, LLMError, LLMProvider, ToolCall, ToolDefinition};
+use crate::llm::{
+    ChatChunk, ChatCompletion, LLMError, LLMProvider, ProviderCapabilities, ToolCall,
+    ToolDefinition,
+};
 use crate::message::{Message as DumEMessage, MessageRole};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
@@ -450,6 +453,14 @@ impl LLMProvider for MiniMaxLLM {
 
     fn supports_tools(&self) -> bool {
         true
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "minimax"
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::minimax()
     }
 
     fn chat_streaming(
