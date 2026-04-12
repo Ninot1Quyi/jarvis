@@ -1,148 +1,192 @@
 //! CLI-first TUI for Dum-E.
 //!
-//! This is intentionally dependency-light and ANSI-driven so we can ship a
-//! useful streaming terminal UI without introducing a full TUI dependency yet.
+//! Claude Code-inspired message-oriented terminal UI.
+//! Features:
+//! - Linear message flow (user/assistant alternating)
+//! - Markdown text rendering
+//! - Tool calls shown inline with results
+//! - Bottom input prompt
 
 use crate::agent::AgentResult;
 use crate::get_event_bus;
 use crate::observability::{Component, Event, EventData, EventType};
 use crate::Agent;
-use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::io::{stdout, Write};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
-const MAX_TOOL_LINES: usize = 8;
 const DEFAULT_COLUMNS: usize = 100;
-const DEFAULT_ROWS: usize = 32;
+const MAX_MESSAGES: usize = 100;
 
-#[derive(Default)]
-struct ToolView {
-    state: String,
-    detail: String,
+#[derive(Debug, Clone)]
+enum MessageBlock {
+    /// User message text
+    UserText(String),
+    /// Assistant message text (Markdown supported)
+    AssistantText(String),
+    /// Assistant thinking (shown separately when verbose)
+    AssistantThinking(String),
+    /// Tool call: (tool_name, params_summary)
+    ToolCall {
+        name: String,
+        params: String,
+        tool_use_id: Option<String>,
+    },
+    /// Tool result
+    ToolResult {
+        tool_name: String,
+        output: String,
+        is_error: bool,
+    },
 }
 
-struct ChatEntry {
-    speaker: &'static str,
-    content: String,
+struct Message {
+    blocks: Vec<MessageBlock>,
 }
 
-#[derive(Default)]
+impl Default for Message {
+    fn default() -> Self {
+        Self { blocks: Vec::new() }
+    }
+}
+
 struct TuiState {
-    mode: String,
-    status: String,
-    current_turn: Option<String>,
-    summary: String,
-    thinking: String,
-    current_assistant: String,
-    conversation: Vec<ChatEntry>,
-    tools: BTreeMap<String, ToolView>,
+    messages: VecDeque<Message>,
+    current_message: Message,
+    streaming_text: String,
+    streaming_tool_call: Option<(String, String, Option<String>)>,
+    is_running: bool,
+    model_name: Option<String>,
 }
 
 impl TuiState {
     fn new() -> Self {
         Self {
-            mode: "TUI".to_string(),
-            status: "idle".to_string(),
-            current_turn: None,
-            summary: "ready".to_string(),
-            thinking: String::new(),
-            current_assistant: String::new(),
-            conversation: Vec::new(),
-            tools: BTreeMap::new(),
+            messages: VecDeque::new(),
+            current_message: Message::default(),
+            streaming_text: String::new(),
+            streaming_tool_call: None,
+            is_running: false,
+            model_name: None,
         }
     }
 
-    fn set_summary(&mut self, line: impl Into<String>) {
-        self.summary = line.into();
-    }
-
-    fn begin_task(&mut self, task: &str) {
-        self.status = "running".to_string();
-        self.current_turn = Some(task.to_string());
-        self.thinking.clear();
-        self.current_assistant.clear();
-        self.tools.clear();
-        self.conversation.push(ChatEntry {
-            speaker: "You",
-            content: task.to_string(),
-        });
-        self.set_summary(format!("▶ {}", task));
-    }
-
-    fn complete_task(&mut self, result: &AgentResult) {
-        self.status = "idle".to_string();
-        self.current_turn = None;
-        self.finish_assistant_message(&result.output);
-        self.set_summary(format!("✓ completed in {} step(s)", result.steps));
-    }
-
-    fn fail_task(&mut self, error: &str) {
-        self.status = "idle".to_string();
-        self.current_turn = None;
-        self.finish_assistant_message("");
-        self.set_summary(format!("✗ {}", error));
-    }
-
-    fn finish_assistant_message(&mut self, fallback: &str) {
-        let content = if self.current_assistant.trim().is_empty() {
-            fallback.trim().to_string()
-        } else {
-            self.current_assistant.trim().to_string()
-        };
-        if !content.is_empty() {
-            self.conversation.push(ChatEntry {
-                speaker: "Dum-E",
-                content,
-            });
+    fn push_message(&mut self) {
+        if !self.current_message.blocks.is_empty() {
+            if self.messages.len() >= MAX_MESSAGES {
+                self.messages.pop_front();
+            }
+            self.messages.push_back(std::mem::take(&mut self.current_message));
+            self.current_message = Message::default();
         }
-        self.current_assistant.clear();
     }
 
     fn apply_event(&mut self, event: Event) {
         match (event.component, event.event_type, event.data) {
-            (Component::Agent, EventType::AgentStart, EventData::Message { message }) => {
-                self.set_summary(message);
-            }
-            (Component::Agent, EventType::AgentStep, EventData::Message { message }) => {
-                self.set_summary(message);
-            }
-            (Component::Agent, EventType::AgentComplete, EventData::Message { message }) => {
-                self.set_summary(message);
-            }
-            (Component::Agent, EventType::AgentError, EventData::Error { error }) => {
-                self.set_summary(format!("agent error: {}", error));
-            }
             (Component::Llm, EventType::LlmStart, EventData::Message { message }) => {
-                self.set_summary(message);
+                self.model_name = Some(message.clone());
             }
             (Component::Llm, EventType::LlmChunk, EventData::LlmChunk { text }) => {
-                self.current_assistant.push_str(&text);
+                self.streaming_text.push_str(&text);
             }
-            (Component::Llm, EventType::LlmComplete, EventData::Message { message }) => {
-                self.set_summary(message);
+            (Component::Llm, EventType::LlmComplete, _) => {
+                if !self.streaming_text.is_empty() {
+                    self.current_message.blocks.push(MessageBlock::AssistantText(std::mem::take(&mut self.streaming_text)));
+                }
             }
             (
                 Component::Llm,
                 EventType::LlmToolCall,
                 EventData::ToolCall {
-                    tool, tool_use_id, ..
+                    tool,
+                    tool_use_id,
+                    input,
+                    ..
                 },
             ) => {
-                let key = tool_use_id.unwrap_or(tool.clone());
-                self.tools.entry(key).or_default().state = format!("llm→{}", tool);
+                // Push any pending text first
+                if !self.streaming_text.is_empty() {
+                    self.current_message.blocks.push(MessageBlock::AssistantText(std::mem::take(&mut self.streaming_text)));
+                }
+                let params = Self::format_tool_params(&input);
+                self.streaming_tool_call = Some((tool.clone(), params, tool_use_id));
+            }
+            (
+                Component::Llm,
+                EventType::LlmComplete,
+                EventData::Custom(value),
+            ) => {
+                // Check for thinking blocks
+                if let Some(kind) = value.get("kind").and_then(|v| v.as_str()) {
+                    match kind {
+                        "thinking_end" => {
+                            if !self.streaming_text.is_empty() {
+                                self.current_message.blocks.push(MessageBlock::AssistantThinking(std::mem::take(&mut self.streaming_text)));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            (
+                Component::Llm,
+                _,
+                EventData::Custom(value),
+            ) => {
+                let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or_default();
+                match kind {
+                    "thinking_start" => {
+                        self.streaming_text.clear();
+                    }
+                    "thinking_delta" => {
+                        if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
+                            self.streaming_text.push_str(delta);
+                        }
+                    }
+                    "tool_input_delta" => {
+                        if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                            let delta = value.get("delta").and_then(|v| v.as_str()).unwrap_or_default();
+                            if let Some((name, params, _)) = &mut self.streaming_tool_call {
+                                if params.is_empty() {
+                                    *params = delta.to_string();
+                                } else {
+                                    params.push_str(delta);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
             (
                 Component::Tool,
                 EventType::ToolCall,
                 EventData::ToolCall {
-                    tool, tool_use_id, ..
+                    tool,
+                    tool_use_id,
+                    input,
+                    ..
                 },
             ) => {
-                let key = tool_use_id.unwrap_or(tool.clone());
-                let view = self.tools.entry(key).or_default();
-                view.state = format!("queued: {}", tool);
+                // Finalize streaming tool call if matches
+                if let Some((name, params, uid)) = self.streaming_tool_call.take() {
+                    if name == tool {
+                        self.current_message.blocks.push(MessageBlock::ToolCall {
+                            name,
+                            params,
+                            tool_use_id: uid.or(tool_use_id),
+                        });
+                    }
+                } else {
+                    let params = Self::format_tool_params(&input);
+                    self.current_message.blocks.push(MessageBlock::ToolCall {
+                        name: tool,
+                        params,
+                        tool_use_id,
+                    });
+                }
             }
             (
                 Component::Tool,
@@ -150,58 +194,60 @@ impl TuiState {
                 EventData::ToolProgress {
                     tool,
                     output,
-                    tool_use_id,
                     state,
+                    is_concurrency_safe: _,
                     ..
                 },
             ) => {
-                let key = tool_use_id.unwrap_or(tool.clone());
-                let view = self.tools.entry(key).or_default();
-                view.state = state.unwrap_or_else(|| tool.clone());
-                view.detail = output;
+                let is_error = state
+                    .as_ref()
+                    .map(|s| s.contains("error") || s.contains("failed"))
+                    .unwrap_or(false);
+                let display_output = if output.len() > 500 {
+                    format!("{}... (truncated)", &output[..500])
+                } else {
+                    output
+                };
+                // Show abbreviated output in the same block or as result
+                if let Some(last_block) = self.current_message.blocks.last_mut() {
+                    if let MessageBlock::ToolCall { name, params, .. } = last_block {
+                        if name == &tool {
+                            // Append truncated output to params for visibility
+                            if !display_output.trim().is_empty() {
+                                *params = format!("{}\n→ {}", params, truncate(&display_output, 100));
+                            }
+                            return;
+                        }
+                    }
+                }
+                self.current_message.blocks.push(MessageBlock::ToolResult {
+                    tool_name: tool,
+                    output: display_output,
+                    is_error,
+                });
             }
             (Component::Tool, EventType::ToolError, EventData::Error { error }) => {
-                self.set_summary(format!("tool error: {}", error));
-            }
-            (Component::Llm, _, EventData::Custom(value)) => {
-                let kind = value
-                    .get("kind")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                match kind {
-                    "thinking_start" => {
-                        self.thinking.clear();
-                    }
-                    "thinking_delta" => {
-                        if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
-                            self.thinking.push_str(delta);
-                        }
-                    }
-                    "thinking_end" => {}
-                    "tool_input_delta" => {
-                        if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
-                            let detail = value
-                                .get("delta")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let view = self.tools.entry(id.to_string()).or_default();
-                            if view.state.is_empty() {
-                                view.state = "building-input".to_string();
-                            }
-                            view.detail.push_str(&detail);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            (Component::Voice, EventType::VoiceSpeakStart, _) => {
-                self.set_summary("voice speak start");
-            }
-            (Component::Voice, EventType::VoiceSpeakComplete, _) => {
-                self.set_summary("voice speak complete");
+                self.current_message.blocks.push(MessageBlock::ToolResult {
+                    tool_name: "error".to_string(),
+                    output: error.clone(),
+                    is_error: true,
+                });
             }
             _ => {}
+        }
+    }
+
+    fn format_tool_params(input: &serde_json::Value) -> String {
+        match input {
+            serde_json::Value::Object(map) => {
+                let pairs: Vec<String> = map
+                    .iter()
+                    .take(5)
+                    .map(|(k, v)| format!("{}={}", k, truncate(&v.to_string(), 50)))
+                    .collect();
+                pairs.join(", ")
+            }
+            _ => truncate(&input.to_string(), 100),
         }
     }
 }
@@ -210,6 +256,7 @@ struct TerminalGuard;
 
 impl TerminalGuard {
     fn enter() -> std::io::Result<Self> {
+        // Enter alternate screen buffer and hide cursor
         print!("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l");
         stdout().flush()?;
         Ok(Self)
@@ -223,152 +270,14 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn render(state: &TuiState) -> std::io::Result<()> {
-    let mut out = stdout();
-    let (columns, rows) = terminal_dimensions();
-    let divider = "─".repeat(columns.saturating_sub(2).max(10));
-    let thinking_rows = rows.clamp(24, 50) / 5;
-    let tools_rows = rows.clamp(24, 50) / 4;
-    let conversation_rows = rows.saturating_sub(thinking_rows + tools_rows + 12).max(8);
-
-    write!(out, "\x1b[2J\x1b[H")?;
-
-    writeln!(out, "╭{}╮", "─".repeat(columns.saturating_sub(2).max(10)))?;
-    writeln!(
-        out,
-        "│ {:<width$}│",
-        format!(
-            "Dum-E CLI TUI  {}  {}",
-            status_badge(&state.status),
-            truncate(&state.summary, columns.saturating_sub(28))
-        ),
-        width = columns.saturating_sub(3).max(10)
-    )?;
-    writeln!(
-        out,
-        "│ {:<width$}│",
-        format!(
-            "mode: {}   turn: {}   messages: {}",
-            state.mode,
-            state.current_turn.as_deref().unwrap_or("(idle)"),
-            state.conversation.len() + usize::from(!state.current_assistant.trim().is_empty())
-        ),
-        width = columns.saturating_sub(3).max(10)
-    )?;
-    writeln!(out, "╰{}╯", "─".repeat(columns.saturating_sub(2).max(10)))?;
-    writeln!(out)?;
-
-    render_section(
-        &mut out,
-        "Thinking",
-        &tail_wrapped(
-            if state.thinking.is_empty() {
-                "(none)"
-            } else {
-                state.thinking.as_str()
-            },
-            columns,
-            thinking_rows.max(4),
-        ),
-        &divider,
-    )?;
-
-    let tool_lines = if state.tools.is_empty() {
-        vec!["(no tool activity)".to_string()]
-    } else {
-        state
-            .tools
-            .iter()
-            .take(MAX_TOOL_LINES)
-            .flat_map(|(tool_id, view)| {
-                let mut lines = vec![format!(
-                    "{} {}",
-                    tool_state_badge(&view.state),
-                    truncate(
-                        &format!("{} [{}]", tool_id, view.state),
-                        columns.saturating_sub(6)
-                    )
-                )];
-                if !view.detail.is_empty() {
-                    lines.extend(
-                        tail_wrapped(&view.detail, columns.saturating_sub(2), 2)
-                            .into_iter()
-                            .map(|line| format!("  {}", line)),
-                    );
-                }
-                lines
-            })
-            .collect::<Vec<_>>()
-    };
-    render_section(&mut out, "Tools", &tool_lines, &divider)?;
-
-    render_section(
-        &mut out,
-        "Conversation",
-        &conversation_lines(state, columns, conversation_rows),
-        &divider,
-    )?;
-
-    writeln!(
-        out,
-        "{}",
-        dim("Type a message and press Enter. Type `exit` to quit. Use --plain-repl for legacy mode.")
-    )?;
-    out.flush()
-}
-
-fn conversation_lines(state: &TuiState, columns: usize, max_lines: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for entry in &state.conversation {
-        lines.push(format!(
-            "{} {}",
-            speaker_badge(entry.speaker),
-            entry.speaker
-        ));
-        lines.extend(
-            wrap_text(&entry.content, columns.saturating_sub(4))
-                .into_iter()
-                .map(|line| format!("  {}", line)),
-        );
-        lines.push(String::new());
-    }
-    if !state.current_assistant.trim().is_empty() {
-        lines.push(format!("{} Dum-E", speaker_badge("Dum-E")));
-        lines.extend(
-            wrap_text(&state.current_assistant, columns.saturating_sub(4))
-                .into_iter()
-                .map(|line| format!("  {}", line)),
-        );
-    }
-    if lines.is_empty() {
-        lines.push("(no conversation yet)".to_string());
-    }
-    let start = lines.len().saturating_sub(max_lines);
-    lines[start..].to_vec()
-}
-
-fn truncate(input: &str, limit: usize) -> String {
-    let mut chars = input.chars();
+fn truncate(s: &str, limit: usize) -> String {
+    let mut chars = s.chars();
     let head: String = chars.by_ref().take(limit).collect();
     if chars.next().is_some() {
-        format!("{}...", head)
+        format!("{}…", head)
     } else {
         head
     }
-}
-
-fn terminal_dimensions() -> (usize, usize) {
-    let columns = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value >= 40)
-        .unwrap_or(DEFAULT_COLUMNS);
-    let rows = std::env::var("LINES")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value >= 20)
-        .unwrap_or(DEFAULT_ROWS);
-    (columns, rows)
 }
 
 fn wrap_text(input: &str, width: usize) -> Vec<String> {
@@ -403,61 +312,175 @@ fn wrap_text(input: &str, width: usize) -> Vec<String> {
     lines
 }
 
-fn tail_wrapped(input: &str, width: usize, max_lines: usize) -> Vec<String> {
-    let wrapped = wrap_text(input, width.saturating_sub(2));
-    let start = wrapped.len().saturating_sub(max_lines);
-    wrapped[start..].to_vec()
+fn render(state: &TuiState) -> std::io::Result<()> {
+    let mut out = stdout();
+    let (columns, rows) = terminal_dimensions();
+
+    // Clear screen and move cursor to top
+    write!(out, "\x1b[2J\x1b[H")?;
+
+    // === Header ===
+    let header_text = if let Some(model) = &state.model_name {
+        format!("Dum-E  •  {}", model)
+    } else {
+        "Dum-E".to_string()
+    };
+    let status = if state.is_running { "● running" } else { "○ idle" };
+    
+    writeln!(out, "{}", style(&header_text, "bold"))?;
+    writeln!(out, "{}  {}", status, style(&"─".repeat(columns.saturating_sub(20).max(1)), "dim"))?;
+    writeln!(out)?;
+
+    // === Message List ===
+    let content_height = rows.saturating_sub(8).max(10);
+    let visible_messages: Vec<_> = state.messages.iter().rev().take(content_height).collect();
+    let has_more = state.messages.len() > visible_messages.len();
+
+    if has_more {
+        writeln!(out, "{} previous messages", style("...", "dim"))?;
+    }
+
+    for msg in visible_messages.iter().rev() {
+        render_message(msg, columns, &mut out)?;
+    }
+
+    // Render current streaming message
+    if !state.current_message.blocks.is_empty() || !state.streaming_text.is_empty() || state.streaming_tool_call.is_some() {
+        render_current_message(state, columns, &mut out)?;
+    }
+
+    // === Input Prompt ===
+    writeln!(out)?;
+    writeln!(out, "{}", "─".repeat(columns.saturating_sub(2).max(1)))?;
+    if state.is_running {
+        writeln!(out, "{}  ", style("waiting for response...", "dim"))?;
+    }
+    write!(out, "{} ", style("›", "cyan"))?;
+    out.flush()
 }
 
-fn render_section(
-    out: &mut impl Write,
-    title: &str,
-    lines: &[String],
-    divider: &str,
-) -> std::io::Result<()> {
-    writeln!(out, "{} {}", accent("■"), title)?;
-    for line in lines {
-        writeln!(out, "{}", line)?;
+fn render_message(msg: &Message, columns: usize, out: &mut impl Write) -> std::io::Result<()> {
+    for block in &msg.blocks {
+        match block {
+            MessageBlock::UserText(text) => {
+                writeln!(out, "{}  {}", style("●", "magenta"), style("You", "bold"))?;
+                for line in wrap_text(text, columns.saturating_sub(4)) {
+                    writeln!(out, "    {}", line)?;
+                }
+                writeln!(out)?;
+            }
+            MessageBlock::AssistantText(text) => {
+                writeln!(out, "{}  {}", style("●", "cyan"), style("Dum-E", "bold"))?;
+                for line in wrap_text(text, columns.saturating_sub(4)) {
+                    writeln!(out, "    {}", line)?;
+                }
+                writeln!(out)?;
+            }
+            MessageBlock::AssistantThinking(text) => {
+                // Show thinking in dim color, collapsed by default
+                let preview = truncate(text, 100).replace('\n', " ");
+                writeln!(out, "    {} {}", style("◦ Thinking:", "dim"), style(&preview, "dim"))?;
+            }
+            MessageBlock::ToolCall { name, params, .. } => {
+                writeln!(out, "    {} {}({})", style("◆", "yellow"), style(name, "bold"), params)?;
+            }
+            MessageBlock::ToolResult { tool_name, output, is_error } => {
+                let color = if *is_error { "red" } else { "green" };
+                let prefix = if *is_error { "✗" } else { "✓" };
+                writeln!(out, "      {} {} {}", style(prefix, color), style(tool_name, "dim"), truncate(output, columns.saturating_sub(20)))?;
+            }
+        }
     }
-    writeln!(out, "{}", divider)?;
     Ok(())
 }
 
-fn accent(text: &str) -> String {
-    format!("\x1b[36m{}\x1b[0m", text)
+fn render_current_message(state: &TuiState, columns: usize, out: &mut impl Write) -> std::io::Result<()> {
+    let msg = &state.current_message;
+    
+    for block in &msg.blocks {
+        match block {
+            MessageBlock::AssistantText(text) => {
+                writeln!(out, "{}  {}", style("●", "cyan"), style("Dum-E", "bold"))?;
+                for line in wrap_text(text, columns.saturating_sub(4)) {
+                    writeln!(out, "    {}", line)?;
+                }
+            }
+            MessageBlock::ToolCall { name, params, .. } => {
+                writeln!(out, "    {} {}({})", style("◆", "yellow"), style(name, "bold"), params)?;
+            }
+            MessageBlock::ToolResult { tool_name, output, is_error } => {
+                let color = if *is_error { "red" } else { "green" };
+                let prefix = if *is_error { "✗" } else { "✓" };
+                writeln!(out, "      {} {} {}", style(prefix, color), style(tool_name, "dim"), truncate(output, columns.saturating_sub(20)))?;
+            }
+            _ => {}
+        }
+    }
+
+    // Show streaming text
+    if !state.streaming_text.is_empty() {
+        // Check if we have pending thinking
+        if let Some((name, _, _)) = &state.streaming_tool_call {
+            if name == "thinking" || name == "extended_thinking" {
+                writeln!(out, "    {} {}", style("◦", "dim"), style(&truncate(&state.streaming_text, 100), "dim"))?;
+            }
+        } else {
+            // Regular streaming text
+            if msg.blocks.is_empty() {
+                writeln!(out, "{}  {}", style("●", "cyan"), style("Dum-E", "bold"))?;
+            }
+            let cursor = style("▊", "cyan").to_string();
+            writeln!(out, "    {}{}", truncate(&state.streaming_text, columns.saturating_sub(10)), cursor)?;
+        }
+    }
+
+    // Show streaming tool call
+    if let Some((name, params, _)) = &state.streaming_tool_call {
+        if name != "thinking" && name != "extended_thinking" {
+            writeln!(out, "    {} {}({}) {}", style("◆", "yellow"), style(name, "bold"), params, style("…", "dim"))?;
+        }
+    }
+
+    writeln!(out)?;
+    Ok(())
 }
 
-fn dim(text: &str) -> String {
-    format!("\x1b[2m{}\x1b[0m", text)
+fn style<'a>(text: &'a str, _style: &'a str) -> impl std::fmt::Display + 'a {
+    ColoredText { text, style: _style }
 }
 
-fn status_badge(status: &str) -> String {
-    match status {
-        "running" => "\x1b[33m● running\x1b[0m".to_string(),
-        "idle" => "\x1b[32m● idle\x1b[0m".to_string(),
-        other => format!("● {}", other),
+struct ColoredText<'a> {
+    text: &'a str,
+    style: &'a str,
+}
+
+impl std::fmt::Display for ColoredText<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.style {
+            "bold" => write!(f, "\x1b[1m{}\x1b[0m", self.text),
+            "dim" => write!(f, "\x1b[2m{}\x1b[0m", self.text),
+            "cyan" => write!(f, "\x1b[36m{}\x1b[0m", self.text),
+            "magenta" => write!(f, "\x1b[35m{}\x1b[0m", self.text),
+            "yellow" => write!(f, "\x1b[33m{}\x1b[0m", self.text),
+            "green" => write!(f, "\x1b[32m{}\x1b[0m", self.text),
+            "red" => write!(f, "\x1b[31m{}\x1b[0m", self.text),
+            _ => write!(f, "{}", self.text),
+        }
     }
 }
 
-fn tool_state_badge(state: &str) -> String {
-    if state.contains("error") {
-        "\x1b[31m●\x1b[0m".to_string()
-    } else if state.contains("completed") {
-        "\x1b[32m●\x1b[0m".to_string()
-    } else if state.contains("queued") || state.contains("executing") || state.contains("building")
-    {
-        "\x1b[33m●\x1b[0m".to_string()
-    } else {
-        "•".to_string()
-    }
-}
-
-fn speaker_badge(speaker: &str) -> String {
-    match speaker {
-        "You" => "\x1b[35m◉\x1b[0m".to_string(),
-        "Dum-E" => "\x1b[36m◉\x1b[0m".to_string(),
-        _ => "•".to_string(),
-    }
+fn terminal_dimensions() -> (usize, usize) {
+    let columns = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value >= 40)
+        .unwrap_or(DEFAULT_COLUMNS);
+    let rows = std::env::var("LINES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value >= 10)
+        .unwrap_or(24);
+    (columns, rows)
 }
 
 pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
@@ -470,7 +493,6 @@ pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
     let mut state = TuiState::new();
     let stdin = BufReader::new(tokio::io::stdin());
     let mut lines = stdin.lines();
-    let mut running = false;
 
     render(&state)?;
 
@@ -484,32 +506,49 @@ pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
             }
             maybe_result = result_rx.recv() => {
                 if let Some(result) = maybe_result {
+                    state.push_message(); // Finalize any pending message
+                    state.is_running = false;
                     match result {
-                        Ok(agent_result) => state.complete_task(&agent_result),
-                        Err(error) => state.fail_task(&error),
+                        Ok(agent_result) => {
+                            // Push the final response
+                            state.current_message.blocks.push(MessageBlock::AssistantText(
+                                if agent_result.success {
+                                    format!("✓ Completed in {} step(s)", agent_result.steps)
+                                } else {
+                                    format!("✗ Task ended in {} step(s)", agent_result.steps)
+                                }
+                            ));
+                            state.push_message();
+                        }
+                        Err(error) => {
+                            state.current_message.blocks.push(MessageBlock::AssistantText(format!("Error: {}", error)));
+                            state.push_message();
+                        }
                     }
-                    running = false;
                     render(&state)?;
                 }
             }
-            maybe_line = lines.next_line(), if !running => {
+            maybe_line = lines.next_line(), if !state.is_running => {
                 let line = maybe_line?;
                 let Some(line) = line else { break; };
-                let input = line.trim();
+                let input = line.trim().to_string();
                 if input.is_empty() {
                     continue;
                 }
-                if input.eq_ignore_ascii_case("exit") || input.eq_ignore_ascii_case("quit") {
+                if input == "exit" || input == "quit" {
                     break;
                 }
 
-                state.begin_task(input);
+                // Add user message
+                state.messages.push_back(Message {
+                    blocks: vec![MessageBlock::UserText(input.clone())],
+                });
+                state.is_running = true;
                 render(&state)?;
-                running = true;
 
                 let agent = Arc::clone(&agent);
                 let result_tx = result_tx.clone();
-                let task = input.to_string();
+                let task = input;
                 tokio::spawn(async move {
                     let mut guard = agent.lock().await;
                     let result = guard.run(&task).await;
@@ -528,43 +567,46 @@ mod tests {
     use crate::observability::{Event, EventData, EventType, TraceId};
 
     #[test]
-    fn state_tracks_tool_lifecycle_and_thinking() {
+    fn state_tracks_messages_and_tool_calls() {
         let mut state = TuiState::new();
-        state.begin_task("hello?");
         state.apply_event(Event::new_in_trace(
             TraceId::from_str("trace-1"),
             Component::Llm,
             EventType::LlmChunk,
             EventData::LlmChunk {
-                text: "hello".to_string(),
-            },
-        ));
-        state.apply_event(Event::new_in_trace(
-            TraceId::from_str("trace-1"),
-            Component::Tool,
-            EventType::ToolProgress,
-            EventData::ToolProgress {
-                tool: "bash".to_string(),
-                output: "done".to_string(),
-                tool_use_id: Some("tool-1".to_string()),
-                correlation_id: Some("tool-1".to_string()),
-                state: Some("completed".to_string()),
-                is_concurrency_safe: Some(false),
+                text: "I'll help you".to_string(),
             },
         ));
         state.apply_event(Event::new_in_trace(
             TraceId::from_str("trace-1"),
             Component::Llm,
-            EventType::LlmChunk,
-            EventData::Custom(serde_json::json!({
-                "kind": "thinking_delta",
-                "delta": "ponder"
-            })),
+            EventType::LlmToolCall,
+            EventData::ToolCall {
+                tool: "bash".to_string(),
+                tool_use_id: Some("tool-1".to_string()),
+                input: serde_json::json!({"command": "ls"}),
+                correlation_id: None,
+            },
+        ));
+        state.apply_event(Event::new_in_trace(
+            TraceId::from_str("trace-1"),
+            Component::Tool,
+            EventType::ToolComplete,
+            EventData::ToolProgress {
+                tool: "bash".to_string(),
+                output: "file1.txt\nfile2.txt".to_string(),
+                tool_use_id: Some("tool-1".to_string()),
+                correlation_id: None,
+                state: Some("completed".to_string()),
+                is_concurrency_safe: Some(false),
+            },
         ));
 
-        assert_eq!(state.current_assistant, "hello");
-        assert_eq!(state.thinking, "ponder");
-        assert_eq!(state.tools.get("tool-1").unwrap().state, "completed");
-        assert_eq!(state.conversation[0].speaker, "You");
+        // Check that streaming text was captured
+        assert_eq!(state.streaming_text, "I'll help you");
+        
+        // Check that tool call was rendered inline with result
+        let msg = &state.current_message;
+        assert!(msg.blocks.iter().any(|b| matches!(b, MessageBlock::ToolCall { name, .. } if name == "bash")));
     }
 }

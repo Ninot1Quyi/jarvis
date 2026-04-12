@@ -2,7 +2,7 @@
   "minimax": {
     "api_key": "sk-cp-Qi91YKI2Bfq0uEmeyE7Nqt-n5os43T-0mDmsMB-VYmpHpnWGGm8Xdo4IqMfFThM30F9jIQPXEPJuD1Ax7-mVV2--h4cxcIpFSGBm5P9QIdj0Cu8pIKZtevE",
     "base_url": "https://api.minimaxi.com",
-    "model": "MiniMax-M2",
+    "model": "MiniMax-M2.7-highspeed",
     "tts_model": "speech-2.8-hd",
     "default_voice_id": "male-qn-qingse",
     "default_emotion": "calm",
@@ -10,7 +10,7 @@
   },
   "llm": {
     "provider": "minimax",
-    "model": "MiniMax-M2"
+    "model": "MiniMax-M2.7-highspeed"
   },
   "voice": {
     "provider": "minimax",
