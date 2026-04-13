@@ -18,6 +18,7 @@ pub mod message;
 pub mod observability;
 pub mod permissions;
 pub mod soul;
+pub mod skills;
 pub mod tools;
 pub mod tui;
 pub mod voice;

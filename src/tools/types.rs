@@ -1,6 +1,8 @@
 //! Tool type definitions
 
+use crate::llm::LLMProvider;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 /// Tool definition
 #[async_trait]
@@ -33,10 +35,16 @@ pub trait Tool: Send + Sync {
 }
 
 /// Context for tool execution
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct ToolContext {
     pub session_id: String,
     pub trace_id: Option<String>,
+    /// LLM provider, if available (passed by Agent for tools that need it)
+    pub llm: Option<Arc<dyn LLMProvider>>,
+    /// Config, if available
+    pub config: Option<crate::config::Config>,
+    /// Soul version, if available
+    pub soul_version: Option<String>,
 }
 
 impl ToolContext {
@@ -44,6 +52,9 @@ impl ToolContext {
         Self {
             session_id: uuid::Uuid::new_v4().to_string(),
             trace_id: None,
+            llm: None,
+            config: None,
+            soul_version: None,
         }
     }
 }

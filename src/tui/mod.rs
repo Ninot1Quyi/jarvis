@@ -8,14 +8,17 @@
 //! - Bottom input prompt
 
 use crate::agent::AgentResult;
+use crate::config::EvolveConfig;
 use crate::get_event_bus;
 use crate::observability::{Component, Event, EventData, EventType};
 use crate::Agent;
 use std::collections::VecDeque;
 use std::io::{stdout, Write};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::{interval, Duration};
 
 const DEFAULT_COLUMNS: usize = 100;
 const MAX_MESSAGES: usize = 100;
@@ -59,10 +62,16 @@ struct TuiState {
     streaming_tool_call: Option<(String, String, Option<String>)>,
     is_running: bool,
     model_name: Option<String>,
+    /// Last user activity timestamp (for auto-evolve)
+    last_activity: Instant,
+    /// Evolve configuration
+    evolve_config: Option<EvolveConfig>,
+    /// Whether auto-evolve has been triggered this session
+    auto_evolve_triggered: bool,
 }
 
 impl TuiState {
-    fn new() -> Self {
+    fn new(evolve_config: Option<EvolveConfig>) -> Self {
         Self {
             messages: VecDeque::new(),
             current_message: Message::default(),
@@ -70,7 +79,23 @@ impl TuiState {
             streaming_tool_call: None,
             is_running: false,
             model_name: None,
+            last_activity: Instant::now(),
+            evolve_config,
+            auto_evolve_triggered: false,
         }
+    }
+
+    fn reset_idle_timer(&mut self) {
+        self.last_activity = Instant::now();
+    }
+
+    fn check_auto_evolve(&self) -> bool {
+        let Some(ref config) = self.evolve_config else { return false; };
+        if !config.enabled || self.auto_evolve_triggered {
+            return false;
+        }
+        let idle_secs = self.last_activity.elapsed().as_secs();
+        idle_secs >= config.auto_evolve_idle_minutes as u64 * 60
     }
 
     fn push_message(&mut self) {
@@ -91,11 +116,7 @@ impl TuiState {
             (Component::Llm, EventType::LlmChunk, EventData::LlmChunk { text }) => {
                 self.streaming_text.push_str(&text);
             }
-            (Component::Llm, EventType::LlmComplete, _) => {
-                if !self.streaming_text.is_empty() {
-                    self.current_message.blocks.push(MessageBlock::AssistantText(std::mem::take(&mut self.streaming_text)));
-                }
-            }
+            // Tool calls push pending text, then store tool call info
             (
                 Component::Llm,
                 EventType::LlmToolCall,
@@ -113,6 +134,16 @@ impl TuiState {
                 let params = Self::format_tool_params(&input);
                 self.streaming_tool_call = Some((tool.clone(), params, tool_use_id));
             }
+            // LlmComplete with Message data: push any remaining text
+            (Component::Llm, EventType::LlmComplete, EventData::Message { message }) => {
+                if !self.streaming_text.is_empty() {
+                    self.current_message.blocks.push(MessageBlock::AssistantText(std::mem::take(&mut self.streaming_text)));
+                } else if !message.is_empty() {
+                    // Fallback to message from data if streaming buffer empty
+                    self.current_message.blocks.push(MessageBlock::AssistantText(message.clone()));
+                }
+            }
+            // LlmComplete with Custom data: handle thinking_end
             (
                 Component::Llm,
                 EventType::LlmComplete,
@@ -130,6 +161,13 @@ impl TuiState {
                     }
                 }
             }
+            // LlmComplete with empty data: just push pending text
+            (Component::Llm, EventType::LlmComplete, _) => {
+                if !self.streaming_text.is_empty() {
+                    self.current_message.blocks.push(MessageBlock::AssistantText(std::mem::take(&mut self.streaming_text)));
+                }
+            }
+            // Custom events: handle thinking deltas and tool input streaming
             (
                 Component::Llm,
                 _,
@@ -146,9 +184,9 @@ impl TuiState {
                         }
                     }
                     "tool_input_delta" => {
-                        if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                        if let Some(_id) = value.get("id").and_then(|v| v.as_str()) {
                             let delta = value.get("delta").and_then(|v| v.as_str()).unwrap_or_default();
-                            if let Some((name, params, _)) = &mut self.streaming_tool_call {
+                            if let Some((_name, params, _)) = &mut self.streaming_tool_call {
                                 if params.is_empty() {
                                     *params = delta.to_string();
                                 } else {
@@ -490,14 +528,46 @@ pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
     let mut events = event_bus.subscribe();
     let agent = Arc::new(Mutex::new(agent));
     let (result_tx, mut result_rx) = mpsc::unbounded_channel::<Result<AgentResult, String>>();
-    let mut state = TuiState::new();
+
+    // Extract evolve config from agent (passed through a method we'll add)
+    // For now, read from config file
+    let evolve_config = crate::Config::load()
+        .ok()
+        .map(|c| c.evolve());
+
+    let mut state = TuiState::new(evolve_config);
     let stdin = BufReader::new(tokio::io::stdin());
     let mut lines = stdin.lines();
 
     render(&state)?;
 
+    // Periodic ticker for idle check (every 30 seconds)
+    let mut idle_checker = interval(Duration::from_secs(30));
+
     loop {
         tokio::select! {
+            // Periodic idle check (every 30 seconds)
+            _ = idle_checker.tick(), if !state.is_running => {
+                if state.check_auto_evolve() && !state.auto_evolve_triggered {
+                    state.auto_evolve_triggered = true;
+                    let input = "evolve_self".to_string();
+                    state.messages.push_back(Message {
+                        blocks: vec![MessageBlock::UserText(
+                            "[AUTO] Triggering self-evolution after idle timeout".to_string()
+                        )],
+                    });
+                    state.is_running = true;
+                    render(&state)?;
+
+                    let agent = Arc::clone(&agent);
+                    let result_tx = result_tx.clone();
+                    tokio::spawn(async move {
+                        let mut guard = agent.lock().await;
+                        let result = guard.run(&input).await;
+                        let _ = result_tx.send(result);
+                    });
+                }
+            }
             maybe_event = events.recv() => {
                 if let Some(event) = maybe_event {
                     state.apply_event(event);
@@ -539,6 +609,9 @@ pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
 
+                // Reset idle timer on user activity
+                state.reset_idle_timer();
+
                 // Add user message
                 state.messages.push_back(Message {
                     blocks: vec![MessageBlock::UserText(input.clone())],
@@ -568,7 +641,7 @@ mod tests {
 
     #[test]
     fn state_tracks_messages_and_tool_calls() {
-        let mut state = TuiState::new();
+        let mut state = TuiState::new(None);
         
         // First event: LLM generates some text
         state.apply_event(Event::new_in_trace(

@@ -8,6 +8,7 @@ use crate::config::Config;
 use crate::llm::{parse_tool_calls_from_text, ChatChunk, LLMProvider, ToolCall, ToolDefinition};
 use crate::message::{Message, MessageRole};
 use crate::observability::{Component, Event, EventBus, EventData, EventType, TraceId};
+use crate::skills;
 use crate::soul::SoulManager;
 use crate::tools::{ToolContext, ToolRegistry, ToolResult};
 use futures::{FutureExt, StreamExt};
@@ -61,6 +62,8 @@ struct StartedTool {
 /// - non-concurrent tools run exclusively
 struct StreamingToolExecutor {
     registry: Arc<ToolRegistry>,
+    llm: Option<Arc<dyn LLMProvider>>,
+    config: Config,
     queue: VecDeque<QueuedTool>,
     running: HashMap<String, bool>, // tool_use_id -> is_concurrency_safe
     join_set: JoinSet<CompletedTool>,
@@ -70,9 +73,11 @@ struct StreamingToolExecutor {
 }
 
 impl StreamingToolExecutor {
-    fn new(registry: Arc<ToolRegistry>) -> Self {
+    fn new(registry: Arc<ToolRegistry>, llm: Option<Arc<dyn LLMProvider>>, config: Config) -> Self {
         Self {
             registry,
+            llm,
+            config,
             queue: VecDeque::new(),
             running: HashMap::new(),
             join_set: JoinSet::new(),
@@ -141,8 +146,10 @@ impl StreamingToolExecutor {
         });
 
         let registry = self.registry.clone();
+        let llm = self.llm.clone();
+        let config = self.config.clone();
         self.join_set
-            .spawn(async move { run_tool_call(registry, queued.call).await });
+            .spawn(async move { run_tool_call(registry, llm, config, queued.call).await });
     }
 
     async fn wait_next(&mut self) -> Option<CompletedTool> {
@@ -174,7 +181,12 @@ impl StreamingToolExecutor {
     }
 }
 
-async fn run_tool_call(registry: Arc<ToolRegistry>, call: ToolCall) -> CompletedTool {
+async fn run_tool_call(
+    registry: Arc<ToolRegistry>,
+    llm: Option<Arc<dyn LLMProvider>>,
+    config: Config,
+    call: ToolCall,
+) -> CompletedTool {
     let call_clone = call.clone();
     let result = std::panic::AssertUnwindSafe(async {
         let tool = match registry.get(&call.name) {
@@ -188,7 +200,19 @@ async fn run_tool_call(registry: Arc<ToolRegistry>, call: ToolCall) -> Completed
             }
         };
 
-        let context = ToolContext::new();
+        let mut context = ToolContext::new();
+        context.llm = llm;
+        context.config = Some(config.clone());
+        // Read soul version if available
+        if let Ok(soul_content) = tokio::fs::read_to_string("data/soul.md").await {
+            for line in soul_content.lines() {
+                if line.trim().starts_with("major:") {
+                    if let Some(v) = line.trim().strip_prefix("major:") {
+                        context.soul_version = Some(v.trim().to_string());
+                    }
+                }
+            }
+        }
         match tool.call(&call.arguments, &context).await {
             Ok(result) => result,
             Err(e) => ToolResult {
@@ -257,6 +281,14 @@ impl Agent {
 
         // Build messages for LLM
         let mut messages = self.build_messages(task);
+
+        // Inject matching skills into the last message (system prompt)
+        if let Some(sys_msg) = messages.first_mut() {
+            let matched_skills = skills::find_matching_skills(task);
+            if !matched_skills.is_empty() {
+                sys_msg.content.push_str(&matched_skills);
+            }
+        }
 
         let mut steps = 0;
         let max_steps = 50;
@@ -335,7 +367,7 @@ impl Agent {
             let mut tool_call_order: Vec<String> = Vec::new();
             let mut completed_tools_by_id: HashMap<String, CompletedTool> = HashMap::new();
             let mut streaming_tool_executor =
-                StreamingToolExecutor::new(self.tool_registry.clone());
+                StreamingToolExecutor::new(self.tool_registry.clone(), Some(llm.clone()), self.config.clone());
             let mut stream = llm.chat_streaming(&messages, tools_ref);
             let mut stream_done = false;
             let mut thinking_visible = false;
@@ -554,7 +586,7 @@ impl Agent {
                     );
 
                     let mut parsed_executor =
-                        StreamingToolExecutor::new(self.tool_registry.clone());
+                        StreamingToolExecutor::new(self.tool_registry.clone(), Some(llm.clone()), self.config.clone());
                     for tool_call in parsed_calls {
                         let is_concurrency_safe = self.is_tool_concurrency_safe(&tool_call.name);
                         self.publish_observability_event(

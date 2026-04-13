@@ -74,6 +74,25 @@ fn default_voice_enabled() -> bool {
     true
 }
 
+/// Evolve configuration
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EvolveConfig {
+    #[serde(default = "default_evolve_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_auto_evolve_idle_minutes")]
+    pub auto_evolve_idle_minutes: u32,
+    #[serde(default)]
+    pub compare_targets: Vec<String>,
+}
+
+fn default_evolve_enabled() -> bool {
+    true
+}
+
+fn default_auto_evolve_idle_minutes() -> u32 {
+    60
+}
+
 /// Observability configuration
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObservabilityConfig {
@@ -101,6 +120,8 @@ pub struct Config {
     pub llm: Option<LLMConfig>,
     pub voice: Option<VoiceConfig>,
     pub observability: ObservabilityConfig,
+    #[serde(default)]
+    pub evolve: Option<EvolveConfig>,
 }
 
 impl Default for Config {
@@ -113,6 +134,7 @@ impl Default for Config {
                 dev_mode: false,
                 traces_dir: default_traces_dir(),
             },
+            evolve: None,
         }
     }
 }
@@ -149,6 +171,21 @@ impl Config {
             default_voice_id: default_voice_id(),
             default_emotion: default_emotion(),
             default_speed: default_speed(),
+        })
+    }
+
+    /// Get evolve config, returning defaults if not specified
+    pub fn evolve(&self) -> EvolveConfig {
+        self.evolve.clone().unwrap_or(EvolveConfig {
+            enabled: default_evolve_enabled(),
+            auto_evolve_idle_minutes: default_auto_evolve_idle_minutes(),
+            compare_targets: vec![
+                "claude-code".to_string(),
+                "codex".to_string(),
+                "harness".to_string(),
+                "gemini-cli".to_string(),
+                "agent-s".to_string(),
+            ],
         })
     }
 }

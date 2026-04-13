@@ -1,6 +1,7 @@
 //! Tools module - tool registry and execution
 
 pub mod bash;
+pub mod evolve;
 pub mod file;
 pub mod grep;
 pub mod keyboard;
@@ -27,6 +28,9 @@ pub use mouse::{
     DragTool, LeftDoubleTool, LeftSingleTool, MiddleClickTool, RightSingleTool, ScrollTool,
 };
 pub use registry::ToolRegistry;
+pub use evolve::{
+    CompareAgentsTool, EvolveStartNewTool, EvolveSwitchVersionTool, EvolveSelfTool,
+};
 pub use sessions_send::SessionsSendTool;
 pub use skill::{ActivateSkillTool, ListSkillsTool, SaveSkillTool};
 pub use system::{

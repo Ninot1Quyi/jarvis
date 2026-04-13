@@ -197,6 +197,17 @@ fn register_tools(registry: &mut ToolRegistry) {
     // MCP tools (MiniMax)
     registry.register(MiniMaxWebSearch::new());
     registry.register(MiniMaxUnderstandImage::new());
+
+    // Skill tools
+    registry.register(ActivateSkillTool::new());
+    registry.register(ListSkillsTool::new());
+    registry.register(SaveSkillTool::new());
+
+    // Evolve tools
+    registry.register(EvolveSelfTool::new());
+    registry.register(CompareAgentsTool::new());
+    registry.register(EvolveStartNewTool::new());
+    registry.register(EvolveSwitchVersionTool::new());
 }
 
 /// No-op LLM for when no API key is available

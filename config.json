@@ -19,5 +19,16 @@
   "observability": {
     "dev_mode": true,
     "traces_dir": "~/.dum-e/traces"
+  },
+  "evolve": {
+    "enabled": true,
+    "auto_evolve_idle_minutes": 1,
+    "compare_targets": [
+      "claude-code",
+      "codex",
+      "harness",
+      "gemini-cli",
+      "agent-s"
+    ]
   }
 }

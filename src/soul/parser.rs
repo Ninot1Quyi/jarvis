@@ -87,6 +87,59 @@ impl Default for SoulGoals {
     }
 }
 
+/// Soul version information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SoulVersion {
+    #[serde(default = "default_version")]
+    pub major: u32,
+    #[serde(default)]
+    pub minor: u32,
+    #[serde(default)]
+    pub patch: u32,
+    #[serde(default)]
+    pub running_from: Option<String>,
+}
+
+fn default_version() -> u32 {
+    1
+}
+
+impl Default for SoulVersion {
+    fn default() -> Self {
+        Self {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            running_from: None,
+        }
+    }
+}
+
+impl SoulVersion {
+    /// Bump the patch version (e.g., 1.0.0 -> 1.0.1)
+    pub fn bump_patch(&mut self) {
+        self.patch += 1;
+    }
+
+    /// Bump the minor version (e.g., 1.0.0 -> 1.1.0)
+    pub fn bump_minor(&mut self) {
+        self.minor += 1;
+        self.patch = 0;
+    }
+
+    /// Bump the major version (e.g., 1.0.0 -> 2.0.0)
+    pub fn bump_major(&mut self) {
+        self.major += 1;
+        self.minor = 0;
+        self.patch = 0;
+    }
+
+    /// Format version string like "v1.2.3"
+    pub fn version_string(&self) -> String {
+        format!("v{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
 /// Complete SOUL document structure
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Soul {
@@ -101,6 +154,8 @@ pub struct Soul {
     pub memory_weights: crate::soul::MemoryWeights,
     #[serde(default)]
     pub voice_preferences: crate::soul::VoicePreferences,
+    #[serde(default)]
+    pub version: SoulVersion,
 }
 
 impl Default for Soul {
@@ -114,6 +169,7 @@ impl Default for Soul {
             tool_weights: crate::soul::ToolWeights::default(),
             memory_weights: crate::soul::MemoryWeights::default(),
             voice_preferences: crate::soul::VoicePreferences::default(),
+            version: SoulVersion::default(),
         }
     }
 }
