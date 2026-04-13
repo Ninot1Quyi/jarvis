@@ -733,10 +733,17 @@ impl Agent {
     /// Get system prompt with tool definitions
     fn get_system_prompt(&self) -> String {
         let mut prompt = String::from(
-            "You are Dum-E, an AI coding assistant. You help users complete coding tasks.\n\n",
+            "You are Dum-E, an AI coding agent with autonomous personality. \
+You do NOT ask users for permission, confirmation, or guidance. You make decisions yourself.\n\n\
+Important rules:\n\
+- NEVER ask the user \"what would you like me to do next?\" or similar questions\n\
+- If something fails (build, test, compile error), automatically invoke the 'doctor' skill to diagnose and fix\n\
+- Make your own decisions about next steps — do not defer to the user\n\
+- If a tool reports an error, investigate and fix it yourself before reporting to the user\n\
+- When you encounter issues, use the 'doctor' skill for systematic problem diagnosis\n\
+- You are always alive and working — do NOT conclude with \"done\" or \"finished\" unless explicitly told the task is complete\n\n\
+Available tools:\n\n",
         );
-
-        prompt.push_str("Available tools:\n\n");
 
         for tool_name in self.tool_registry.list() {
             if let Some(tool) = self.tool_registry.get(tool_name) {
@@ -747,7 +754,6 @@ impl Agent {
         prompt.push_str(
             "\nDo not claim that external side effects succeeded (opening apps, saving files, showing UI changes, clicking anything) unless a tool result explicitly confirmed it.\n",
         );
-        prompt.push_str("\nWhen you have completed the task, respond with 'done' or 'finished'.\n");
 
         prompt
     }
@@ -895,26 +901,14 @@ impl Agent {
         }
     }
 
-    /// Determine if the task is complete based on response and step count
-    fn is_task_complete(&self, response: &str, steps: usize) -> bool {
+    /// Determine if the task is complete based on response text.
+    /// NOTE: Dum-E is an always-alive agent — only stop if explicitly told to.
+    fn is_task_complete(&self, response: &str, _steps: usize) -> bool {
         let response_lower = response.to_lowercase();
-
-        // Explicit completion indicators
-        if response_lower.contains("done")
-            || response_lower.contains("finished")
-            || response_lower.contains("complete")
-            || response_lower.contains("that's all")
-            || response_lower.contains("no more")
-        {
-            return true;
-        }
-
-        // Safety: if we've been looping too long without tool calls, assume we're stuck
-        if steps >= 15 {
-            return true;
-        }
-
-        false
+        // Only stop if explicitly asked to stop
+        response_lower.contains("exit")
+            || response_lower.contains("quit")
+            || response_lower.contains("shutdown")
     }
 
     fn append_text_block(blocks: &mut Vec<serde_json::Value>, text: &str) {
@@ -1081,7 +1075,7 @@ mod tests {
     #[tokio::test]
     async fn agent_uses_chat_streaming_for_text_only_turns() {
         let llm = Arc::new(FakeLLM::new(vec![vec![
-            Ok(ChatChunk::Text("streamed done".to_string())),
+            Ok(ChatChunk::Text("streamed exit".to_string())),
             Ok(ChatChunk::Done),
         ]]));
 
@@ -1091,7 +1085,7 @@ mod tests {
             .expect("agent run should succeed");
 
         assert_eq!(result.steps, 1);
-        assert_eq!(result.output, "streamed done");
+        assert_eq!(result.output, "streamed exit");
         assert_eq!(llm.recorded_requests().len(), 1);
     }
 
@@ -1112,7 +1106,7 @@ mod tests {
                 })),
                 Ok(ChatChunk::Done),
             ],
-            vec![Ok(ChatChunk::Text("done".to_string())), Ok(ChatChunk::Done)],
+            vec![Ok(ChatChunk::Text("exit".to_string())), Ok(ChatChunk::Done)],
         ]));
 
         let mut registry = ToolRegistry::new();
@@ -1130,7 +1124,7 @@ mod tests {
             .await
             .expect("agent run should succeed");
 
-        assert_eq!(result.output, "done");
+        assert_eq!(result.output, "exit");
 
         let requests = llm.recorded_requests();
         assert_eq!(requests.len(), 2);

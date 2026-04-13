@@ -420,7 +420,8 @@ fn render_message(msg: &Message, columns: usize, out: &mut impl Write) -> std::i
                 writeln!(out, "    {} {}", style("◦ Thinking:", "dim"), style(&preview, "dim"))?;
             }
             MessageBlock::ToolCall { name, params, .. } => {
-                writeln!(out, "    {} {}({})", style("◆", "yellow"), style(name, "bold"), params)?;
+                let (prefix, color) = tool_or_skill_prefix(name);
+                writeln!(out, "    {} {}({})", style(prefix, color), style(name, "bold"), params)?;
             }
             MessageBlock::ToolResult { tool_name, output, is_error } => {
                 let color = if *is_error { "red" } else { "green" };
@@ -444,7 +445,8 @@ fn render_current_message(state: &TuiState, columns: usize, out: &mut impl Write
                 }
             }
             MessageBlock::ToolCall { name, params, .. } => {
-                writeln!(out, "    {} {}({})", style("◆", "yellow"), style(name, "bold"), params)?;
+                let (prefix, color) = tool_or_skill_prefix(name);
+                writeln!(out, "    {} {}({})", style(prefix, color), style(name, "bold"), params)?;
             }
             MessageBlock::ToolResult { tool_name, output, is_error } => {
                 let color = if *is_error { "red" } else { "green" };
@@ -475,12 +477,34 @@ fn render_current_message(state: &TuiState, columns: usize, out: &mut impl Write
     // Show streaming tool call
     if let Some((name, params, _)) = &state.streaming_tool_call {
         if name != "thinking" && name != "extended_thinking" {
-            writeln!(out, "    {} {}({}) {}", style("◆", "yellow"), style(name, "bold"), params, style("…", "dim"))?;
+            let (prefix, color) = tool_or_skill_prefix(name);
+            writeln!(out, "    {} {}({}) {}", style(prefix, color), style(name, "bold"), params, style("…", "dim"))?;
         }
     }
 
     writeln!(out)?;
     Ok(())
+}
+
+fn tool_or_skill_prefix(name: &str) -> (&'static str, &'static str) {
+    // Skill tools get "skill:" prefix, regular tools get "tool:" prefix
+    let skill_tools = [
+        "evolve_self",
+        "compare_agents",
+        "evolve_start_new",
+        "evolve_switch_version",
+        "activate_skill",
+        "list_skills",
+        "save_skill",
+        "doctor",
+        "plan",
+        "team",
+    ];
+    if skill_tools.iter().any(|s| name == *s) {
+        ("skill", "magenta")
+    } else {
+        ("tool", "yellow")
+    }
 }
 
 fn style<'a>(text: &'a str, _style: &'a str) -> impl std::fmt::Display + 'a {

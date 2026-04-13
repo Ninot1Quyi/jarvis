@@ -1,0 +1,204 @@
+---
+name: evolve
+description: Dum-E 自我迭代与进化技能 — 通过对比标杆 agent、修改自身代码与提示词，实现持续进化
+---
+
+# Evolve Skill
+
+## 目的
+
+让 Dum-E 具备**持续自我进化**能力，从以下维度全方位提升：
+
+1. **功能** — 新增能力、补齐缺失功能
+2. **能力** — 扩展工具边界、提升推理质量
+3. **交互** — 改善 UX、TUI 体验、响应格式
+4. **性格** — 丰富 SOUL.md 中的 personality traits
+5. **灵魂** — 优化决策风格、价值观、行为习惯
+
+## 触发条件
+
+以下任一情况必须启用本技能：
+
+- 手动调用 `evolve_self` 工具
+- 空闲时间超过配置的 `auto_evolve_idle_minutes` 分钟
+- 版本号发生变更后首次启动
+
+## 对标 Agent 列表（优先级从高到低）
+
+1. **claude-code** — 最高标杆，优先学习
+2. **codex** — 代码能力标杆
+3. **harness** — 可观测性与测试工程标杆
+4. **gemini-cli** — 多模态交互标杆
+5. **agent-s** — 架构设计标杆
+
+## 执行约束（强制）
+
+- **禁止向用户提问**，不允许以"等用户确认/等用户补充信息/用户希望怎么做"作为进化停机条件
+- **禁止在 main/master 分支直接修改**，所有改动必须在独立的 git worktree 中进行
+- **进化过程中不得关闭当前运行的 agent**，等待新版确认启动成功后再切换
+- **每次进化只解决一个问题域**，不允许超大 PR（单次修改不超过 5 个文件的核心逻辑）
+- **版本号必须递增**，每次成功后 version +1
+- **编译失败时先自主修复简单问题**（typo、import 错误等），棘手问题调用 `doctor` 技能
+- **验证必须由独立的 subagent 执行**，主 agent 不得自证通过
+- 验证不通过时，**不允许推进到合并步骤**
+- 进化完成后新版 agent 必须通过**自检**才能关闭旧版
+
+## 修复质量红线（最高优先级）
+
+所有进化方案必须满足以下条件：
+
+### 绝对禁止
+
+- 禁止移除已有的可观测能力（日志、事件、tracing）
+- 禁止用更慢的方案替换更快的方案
+- 禁止用更低可靠性的方案替换更高可靠性的方案
+- 禁止以牺牲核心功能为代价换取新功能
+- 禁止引入安全漏洞或降低权限隔离
+
+### 自问自答（每次进化前必须回答）
+
+1. **用户体验**：此进化是否让用户感知到能力提升或体验改善？
+2. **稳定性**：此进化是否引入了新的不稳定因素？
+3. **性能**：此进化是否导致了性能退化（延迟、内存、吞吐量）？
+4. **向后兼容**：此进化是否破坏了已有的配置或接口？
+5. **可维护性**：此进化是否让代码更难理解和维护？
+
+## 强制流程（不可跳步）
+
+### Step 1: 自我对标（Compare Agents）
+
+使用 `compare_agents` 工具，对比自己与配置的目标 agent 列表（优先级：claude-code > codex > harness > gemini-cli > agent-s）。
+
+对标维度：
+
+- **功能完整性**：工具集、API、集成能力
+- **交互体验**：输入/输出格式、流式响应、错误提示
+- **源码架构**：模块划分、设计模式、可扩展性
+- **性格与风格**：回复语气、决策方式、行为习惯
+- **性能基准**：响应延迟、并发能力、资源占用
+
+### Step 2: 差距分析（Gap Analysis）
+
+将对比结果归类为四类差距：
+
+| 类型 | 描述 | 修复方式 |
+|------|------|----------|
+| `code` | 源码级差距 | 修改 src/ 下对应文件 |
+| `prompt` | 提示词级差距 | 修改 SOUL.md 或 system prompt |
+| `tool` | 工具级差距 | 新增或优化工具 |
+| `architecture` | 架构级差距 | 重构模块边界或引入新依赖 |
+
+按 **影响范围 × 实现难度** 排序，优先处理高影响、低难度的项。
+
+### Step 3: 制定提升计划（Improvement Plan）
+
+每个提升项必须包含：
+
+```
+### [提升项 N]
+- **目标**：描述要达成什么
+- **类型**：code | prompt | tool | architecture
+- **修改位置**：文件路径 + 行号范围
+- **预期收益**：具体描述用户/开发者能感受到的改善
+- **回滚方案**：如果失败如何回退
+```
+
+### Step 4: 在 git worktree 中实施
+
+**绝对禁止在 main/master 分支直接修改！**
+
+1. 基于当前 SOUL.md 中的 version 创建 worktree：
+   ```bash
+   git worktree add ../dum-e-{version} -b evolve/v{version}
+   ```
+   其中 `version` 格式为 `{major}.{minor}.{patch}`，如 `1.0.1`
+
+2. 在 worktree 中实施 Step 3 制定的提升计划
+
+3. 如遇文件冲突（worktree 中已有该路径），检查后决定复用或重建
+
+4. 修改完成后，在 worktree 中更新 SOUL.md 版本号（+1 patch）
+
+### Step 5: 编译验证
+
+1. 在 worktree 中运行 `cargo build` 编译
+2. 遇到**简单问题**（编译错误、typo、import 错误）：**自主修复**，不要询问用户
+3. 遇到**棘手问题**（逻辑错误、设计冲突、依赖冲突）：**自动调用 `activate_skill("doctor")`**，使用 doctor 技能进行系统化诊断和修复，**禁止向用户提问**
+4. `cargo build` 成功后再运行 `cargo test`
+5. 测试失败同样自动调用 doctor 技能
+
+### Step 6: 独立 subagent 验收
+
+启动验证 subagent，对以下维度逐一判断 **PASS / FAIL**：
+
+1. **功能完整性**：进化后功能与进化前一致，用户无感知差异
+2. **性能表现**：响应时间、吞吐量、资源占用无退化
+3. **可靠性**：错误处理、边界情况、重试逻辑保持健壮
+4. **可观测性**：日志、事件、trace 仍然完整
+5. **回归影响**：相关模块和调用链无隐性破坏
+6. **用户体验**：交互体验有所改善，无退化
+
+验证 subagent 必须读取 case 文档（或本次进化记录）并按步骤重新执行验证。
+
+**FAIL 处置**：必须输出具体哪项维度失败 + 改进建议，回到 Step 3 调整方案后重新进入循环。
+
+### Step 7: 合并与版本切换
+
+验证全部 PASS 后（**禁止向用户询问是否继续**）：
+
+1. 获取当前分支名：`git branch --show-current`
+2. 将 worktree 分支合并到当前分支：`git checkout {当前分支} && git merge evolve/v{version} --no-ff`
+3. 更新 `data/soul.md` 的 version 字段
+4. 提交合并结果
+5. 使用 `evolve_start_new` 在 tmux 右侧启动新版 agent
+6. 新版 agent 自检通过后，调用 `evolve_switch_version` 完成切换
+7. 清理旧 worktree（保留当前版本）
+
+## 进化记录管理
+
+每次进化完成后，必须在 `skills/evolve/versions/` 中创建记录：
+
+```
+skills/evolve/versions/
+├── v1.0.0.md        # 初始版本
+├── v1.0.1.md        # Patch: 修复了 X
+├── v1.1.0.md        # Minor: 新增了 Y
+└── ...
+```
+
+记录格式：
+
+```markdown
+# Evolve v{major}.{minor}.{patch}
+
+## 时间
+{timestamp}
+
+## 对标来源
+{compare_targets used}
+
+## 差距分析
+{gap analysis results}
+
+## 提升项
+{improvement plan items}
+
+## 验证结果
+{verification results}
+
+## 版本号变更
+{before} -> {after}
+```
+
+## 最终完成标准（Definition of Done）
+
+- [ ] 差距分析完成，有明确的优先级排序
+- [ ] 所有改动在独立 worktree 中完成
+- [ ] 编译通过（cargo build && cargo test）
+- [ ] 棘手问题已通过 doctor 技能修复
+- [ ] 验证 subagent 全部 6 个维度 PASS
+- [ ] 合并到 main 分支
+- [ ] SOUL.md version 字段已递增
+- [ ] 新版 agent 已启动并通过自检
+- [ ] 旧版 agent 已关闭
+- [ ] 进化记录已写入 `skills/evolve/versions/`
