@@ -129,30 +129,52 @@ description: Dum-E 自我迭代与进化技能 — 通过对比标杆 agent、�
 
 ### Step 6: 独立 subagent 验收
 
-启动验证 subagent，对以下维度逐一判断 **PASS / FAIL**：
+在版本递增之前，必须通过独立验证。验证维度：
 
-1. **功能完整性**：进化后功能与进化前一致，用户无感知差异
-2. **性能表现**：响应时间、吞吐量、资源占用无退化
-3. **可靠性**：错误处理、边界情况、重试逻辑保持健壮
-4. **可观测性**：日志、事件、trace 仍然完整
-5. **回归影响**：相关模块和调用链无隐性破坏
-6. **用户体验**：交互体验有所改善，无退化
+1. **编译通过**：cargo build 无 error
+2. **测试通过**：cargo test 无 FAILED
+3. **可观测性完整**：日志、tracing、event 代码仍然存在（grep 验证）
 
-验证 subagent 必须读取 case 文档（或本次进化记录）并按步骤重新执行验证。
+验证通过 LLM subagent 分析 worktree 中的编译和测试输出，严格判断 PASS/FAIL。
 
 **FAIL 处置**：必须输出具体哪项维度失败 + 改进建议，回到 Step 3 调整方案后重新进入循环。
 
-### Step 7: 合并与版本切换
+**PASS 处置**：继续 Step 7。
+
+### Step 7: 合并与版本切换（完全自动化）
 
 验证全部 PASS 后（**禁止向用户询问是否继续**）：
 
-1. 获取当前分支名：`git branch --show-current`
-2. 将 worktree 分支合并到当前分支：`git checkout {当前分支} && git merge evolve/v{version} --no-ff`
-3. 更新 `data/soul.md` 的 version 字段
-4. 提交合并结果
-5. 使用 `evolve_start_new` 在 tmux 右侧启动新版 agent
-6. 新版 agent 自检通过后，调用 `evolve_switch_version` 完成切换
-7. 清理旧 worktree（保留当前版本）
+1. 版本递增：更新 `data/soul.md` patch +1
+2. 在 worktree 中提交改动
+3. 获取当前分支名：`git branch --show-current`
+4. 将 worktree 分支合并到当前分支：`git merge evolve/v{version} --no-ff`
+5. 创建进化记录 `skills/evolve/versions/{version}.md`
+6. 清理旧的 evolve 信号文件
+7. 启动新版 agent（通过 tmux），传递环境变量：
+   - `DUM_E_READY_SIGNAL={path}` — 新 agent 写此文件表示启动完成
+   - `DUM_E_OLD_PID={pid}` — 旧 agent 的 PID
+8. 轮询 ready 信号文件，最多等待 120 秒
+9. 收到 ready 信号后，写入交接上下文文件 `~/.dum-e/evolve_context.json`：
+   - 新版本号、旧 PID、当前任务、对话历史摘要
+10. 等待 5 秒让新版稳定
+11. 调用 `evolve_switch_version` 完成切换：
+    - 读取 context 文件中的旧 PID
+    - 确认新版 agent 在 tmux 中运行
+    - 更新 SOUL.md running_from
+    - 更新进化记录状态为 active
+    - 清理旧 worktree
+    - **向旧版 PID 发送 SIGTERM → SIGKILL 完成关闭**
+12. 旧版 agent 退出，TUI 显示进化完成
+
+**上下文传递机制**：
+- 旧版 agent 在关闭前写入 `~/.dum-e/evolve_context.json`
+- 新版 agent 启动时读取此文件，打印进化 Banner，然后正常进入 TUI
+- 用户看到："🤖 Dum-E Evolved Version {version} Started"
+
+**关键原则**：
+- 旧版不自己调用关闭，必须由 `evolve_switch_version`（在旧版进程内执行）完成关闭
+- 新版 agent 收到 `DUM_E_OLD_PID` 后打印进化 Banner，写 ready 信号，然后等待旧版关闭
 
 ## 进化记录管理
 

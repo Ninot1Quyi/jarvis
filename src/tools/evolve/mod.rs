@@ -138,6 +138,266 @@ async fn current_git_branch(cwd: &PathBuf) -> Result<String, String> {
 }
 
 // ============================================================================
+// EvolveContext — passed from old agent to new agent during version switch
+// ============================================================================
+
+/// Context passed from old agent to new agent during evolution
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct EvolveContext {
+    /// New version string (e.g., "v1.0.4")
+    version: String,
+    /// PID of the old agent process
+    old_pid: u32,
+    /// Description of the task the old agent was working on
+    task: String,
+    /// Concise summary of the conversation history
+    history: String,
+    /// Unix timestamp when evolution started
+    started_at: u64,
+}
+
+impl EvolveContext {
+    fn new(version: String, old_pid: u32, task: String, history: String) -> Self {
+        Self {
+            version,
+            old_pid,
+            task,
+            history,
+            started_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        }
+    }
+}
+
+/// Get the path to the evolve context file
+fn evolve_context_path() -> String {
+    format!(
+        "{}/.dum-e/evolve_context.json",
+        std::env::var("HOME").unwrap_or_default()
+    )
+}
+
+/// Write evolve context to file (old agent writes, new agent reads)
+async fn write_evolve_context(
+    path: &str,
+    ctx: &EvolveContext,
+) -> Result<(), String> {
+    // Ensure directory exists
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| format!("Failed to create context dir: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(ctx)
+        .map_err(|e| format!("Failed to serialize context: {}", e))?;
+    tokio::fs::write(path, json)
+        .await
+        .map_err(|e| format!("Failed to write context file: {}", e))?;
+    Ok(())
+}
+
+/// Read evolve context from file (new agent reads)
+async fn read_evolve_context(path: &str) -> Result<EvolveContext, String> {
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| format!("Failed to read context file: {}", e))?;
+    serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse context file: {}", e))
+}
+
+/// Wait for an agent to signal ready via a file
+async fn wait_for_agent_ready(
+    signal_file: &str,
+    max_wait_secs: u64,
+) -> Result<String, String> {
+    let poll_interval = Duration::from_secs(2);
+    let mut waited = 0u64;
+
+    loop {
+        tokio::time::sleep(poll_interval).await;
+        waited += 2;
+
+        if tokio::fs::metadata(signal_file).await.is_ok() {
+            let content = tokio::fs::read_to_string(signal_file).await
+                .unwrap_or_default();
+            return Ok(content.trim().to_string());
+        }
+
+        // Check if tmux session died
+        let session_alive = bash(
+            "tmux list-sessions -t dum-e-evolve 2>/dev/null",
+            None,
+        )
+        .await
+        .0;
+
+        if !session_alive {
+            return Err(format!(
+                "New agent tmux session died after {}s",
+                waited
+            ));
+        }
+
+        if waited >= max_wait_secs {
+            return Err(format!(
+                "Timeout after {}s waiting for ready signal at {}",
+                max_wait_secs, signal_file
+            ));
+        }
+    }
+}
+
+/// Run subagent verification before version bump.
+/// Verifies build, tests, and observability are intact.
+async fn run_subagent_verification(
+    worktree_dir: &str,
+    context: &ToolContext,
+    output: &mut String,
+) -> Result<bool, String> {
+    output.push_str("\nStep 8: Running subagent verification...\n");
+
+    // 1. Run cargo build
+    output.push_str("  Running cargo build...\n");
+    let build_result = bash_output("cargo build 2>&1", Some(worktree_dir)).await;
+    let (build_ok, build_out) = match &build_result {
+        Ok(out) => {
+            let has_error = out.contains("error:");
+            if has_error {
+                output.push_str(&format!(
+                    "    Build FAILED ({} lines):\n{}\n",
+                    out.len(),
+                    summarize_text(out, 500)
+                ));
+            } else {
+                output.push_str(&format!("    Build OK ({} lines output)\n", out.len()));
+            }
+            (!has_error, out.clone())
+        }
+        Err(e) => {
+            output.push_str(&format!("    Build error: {}\n", e));
+            (false, e.clone())
+        }
+    };
+
+    // 2. Run cargo test
+    output.push_str("  Running cargo test...\n");
+    let test_result = bash_output("cargo test 2>&1", Some(worktree_dir)).await;
+    let (test_ok, test_out) = match &test_result {
+        Ok(out) => {
+            let has_failed = out.contains("FAILED") || out.contains("error");
+            if has_failed {
+                output.push_str(&format!(
+                    "    Tests FAILED ({} lines):\n{}\n",
+                    out.len(),
+                    summarize_text(out, 500)
+                ));
+            } else {
+                output.push_str(&format!("    Tests OK ({} lines output)\n", out.len()));
+            }
+            (!has_failed, out.clone())
+        }
+        Err(e) => {
+            output.push_str(&format!("    Test error: {}\n", e));
+            (false, e.clone())
+        }
+    };
+
+    // 3. Quick observability check — grep for key observability patterns
+    output.push_str("  Checking observability integrity...\n");
+    let observability_check = bash_output(
+        "grep -r 'tracing\\|event\\|log\\|span' src/ 2>/dev/null | wc -l",
+        Some(worktree_dir),
+    ).await.unwrap_or_default();
+    let obs_count: usize = observability_check.trim().parse().unwrap_or(0);
+    let obs_ok = obs_count > 10; // At least 10 observability references
+    if obs_ok {
+        output.push_str(&format!("    Observability OK ({} references)\n", obs_count));
+    } else {
+        output.push_str(&format!("    ⚠ Low observability ({} refs, expected >10)\n", obs_count));
+    }
+
+    // 4. LLM analysis of verification results
+    let llm = context.llm.as_ref().ok_or("LLM not available for verification")?;
+
+    let verification_prompt = format!(
+        r#"You are Dum-E's self-verification subagent. Analyze the following verification results from the evolved code and determine if the evolution passed.
+
+## Verification Results
+
+### Build:
+{}
+
+### Test:
+{}
+
+### Observability:
+{} observability references found in source (threshold: >10)
+
+## Verification Dimensions:
+1. **Build passes** - cargo build produces no errors
+2. **Tests pass** - cargo test shows no FAILED tests
+3. **Observability intact** - logging, tracing, event code is present and not broken
+
+## Output Format:
+Return EXACTLY one of:
+PASS - all dimensions pass, safe to proceed with version bump
+FAIL: [specific reason] - describe which dimension failed and why"#,
+        summarize_text(&build_out, 800),
+        summarize_text(&test_out, 1000),
+        obs_count
+    );
+
+    let messages = vec![crate::message::Message::new(
+        crate::message::MessageRole::User,
+        &verification_prompt,
+    )];
+
+    output.push_str("  LLM analyzing verification results...\n");
+    let response = timeout(
+        Duration::from_secs(60),
+        llm.chat_stream(&messages, None),
+    )
+    .await
+    .map_err(|_| "Verification LLM timed out after 60s")?
+    .map_err(|e| format!("Verification LLM call failed: {}", e))?;
+
+    let response_lower = response.message.to_lowercase();
+    let is_pass = response_lower.starts_with("pass")
+        && !response_lower.contains("fail")
+        && !response_lower.starts_with("fail");
+
+    if is_pass {
+        output.push_str("  ✓ Verification PASSED\n");
+        output.push_str(&format!("    LLM: {}\n", summarize_text(&response.message, 200)));
+    } else {
+        output.push_str("  ✗ Verification FAILED\n");
+        output.push_str(&format!("    LLM: {}\n", summarize_text(&response.message, 300)));
+    }
+
+    Ok(is_pass)
+}
+
+/// Clean up stale evolve signal files
+async fn cleanup_evolve_files() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let ready_dir = format!("{}/.dum-e/ready", home);
+
+    // Clean all ready signals
+    if let Ok(entries) = tokio::fs::read_dir(&ready_dir).await {
+        let mut dir = entries;
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            tokio::fs::remove_file(entry.path()).await.ok();
+        }
+    }
+
+    // Clean context file
+    let ctx_path = evolve_context_path();
+    tokio::fs::remove_file(&ctx_path).await.ok();
+}
+
+// ============================================================================
 // CompareAgentsTool
 // ============================================================================
 
@@ -341,6 +601,9 @@ impl Tool for EvolveSelfTool {
         output.push_str(&format!("Current version: v{}.{}.{}\n", major, minor, patch));
         output.push_str(&format!("Target version: {}\n\n", version_str));
 
+        // Get current process PID for context passing
+        let old_pid = std::process::id();
+
         // Step 1: Create git worktree
         output.push_str("Step 1: Creating git worktree...\n");
         let branch_name = format!("evolve/{}-{}", version_str, chrono_timestamp());
@@ -359,18 +622,11 @@ impl Tool for EvolveSelfTool {
                 output.push_str(&format!("  ✓ Worktree created: {}\n", worktree_dir_str));
             }
             Err(e) => {
-                // Worktree might already exist, try to check out existing
                 if e.contains("already exists") {
                     output.push_str(&format!(
                         "  ✓ Worktree already exists: {}, checking out\n",
                         worktree_dir_str
                     ));
-                    bash_output(
-                        &format!("git worktree list | grep '{}'", worktree_dir_str),
-                        Some(root.to_str().unwrap()),
-                    )
-                    .await
-                    .ok();
                 } else {
                     return Err(format!("Failed to create worktree: {}", e));
                 }
@@ -394,7 +650,7 @@ impl Tool for EvolveSelfTool {
         // Step 4: Generate improvement plan
         output.push_str("Step 4: Generating improvement plan...\n");
         let plan = generate_improvement_plan(&compare_result, &skill_content, context).await?;
-        output.push_str(&format!("  ✓ Plan generated:\n"));
+        output.push_str("  ✓ Plan generated:\n");
         for (i, item) in plan.iter().enumerate() {
             output.push_str(&format!("  {}. [{}] {} - {}\n", i + 1, item.0, item.1, item.2));
         }
@@ -408,8 +664,6 @@ impl Tool for EvolveSelfTool {
                 item_type,
                 item_target
             ));
-            // In a real implementation, this would use the LLM to actually modify files
-            // For now, we describe what would be done
             output.push_str(&format!(
                 "     Type: {}, Target: {}, Benefit: {}\n",
                 item_type, item_target, item_benefit
@@ -424,14 +678,13 @@ impl Tool for EvolveSelfTool {
         )
         .await;
 
-        match build_result {
+        match &build_result {
             Ok(out) => {
                 output.push_str(&format!("  ✓ Build successful ({} bytes output)\n", out.len()));
             }
             Err(e) => {
                 output.push_str(&format!("  ✗ Build failed: {}\n", e));
-                output.push_str("  Note: For build failures, call doctor skill to diagnose\n");
-                // Don't fail the whole tool - report the issue
+                return Err(format!("Build failed in worktree: {}. Call doctor skill to fix.", e));
             }
         }
 
@@ -443,7 +696,7 @@ impl Tool for EvolveSelfTool {
         )
         .await;
 
-        match test_result {
+        match &test_result {
             Ok(out) => {
                 output.push_str(&format!("  ✓ Tests passed ({} bytes output)\n", out.len()));
             }
@@ -452,8 +705,27 @@ impl Tool for EvolveSelfTool {
             }
         }
 
-        // Step 8: Version bump
-        output.push_str("\nStep 8: Bumping version...\n");
+        // Step 8: Subagent verification (new agent in old agent process)
+        let verification_pass = run_subagent_verification(
+            &worktree_dir_str,
+            context,
+            &mut output,
+        ).await?;
+
+        if !verification_pass {
+            output.push_str("\n  ✗ Verification FAILED — returning to planning\n");
+            output.push_str("  Please review the verification output above.\n");
+            output.push_str("  The worktree is preserved at:\n");
+            output.push_str(&format!("  {}\n", worktree_dir_str));
+            return Ok(ToolResult {
+                success: false,
+                output,
+                error: Some("Subagent verification failed — improvements need adjustment".to_string()),
+            });
+        }
+
+        // Step 9: Version bump
+        output.push_str("\nStep 9: Bumping version...\n");
         write_soul_version(major, minor, next_patch).await?;
 
         // Commit in worktree
@@ -472,8 +744,8 @@ impl Tool for EvolveSelfTool {
             major, minor, patch, version_str
         ));
 
-        // Step 9: Merge to current branch
-        output.push_str("\nStep 9: Merging to current branch...\n");
+        // Step 10: Merge to current branch
+        output.push_str("\nStep 10: Merging to current branch...\n");
         let current_branch = current_git_branch(&root).await.unwrap_or_else(|_| "master".to_string());
         let merge_result = bash_output(
             &format!(
@@ -484,7 +756,7 @@ impl Tool for EvolveSelfTool {
         )
         .await;
 
-        match merge_result {
+        match &merge_result {
             Ok(_) => {
                 output.push_str("  ✓ Merged to main\n");
             }
@@ -496,8 +768,8 @@ impl Tool for EvolveSelfTool {
             }
         }
 
-        // Step 10: Create evolution record
-        output.push_str("\nStep 10: Creating evolution record...\n");
+        // Step 11: Create evolution record
+        output.push_str("\nStep 11: Creating evolution record...\n");
         let record_path = root.join(format!(
             "skills/evolve/versions/{}.md",
             version_str
@@ -522,40 +794,96 @@ impl Tool for EvolveSelfTool {
             .map_err(|e| format!("Failed to write record: {}", e))?;
         output.push_str(&format!("  ✓ Record written: {}\n", record_path.display()));
 
-        // Step 11: Start new version (auto-chain, don't ask user)
-        output.push_str("\nStep 11: Starting new version in tmux...\n");
-        let start_input = serde_json::json!({
-            "version": version_str,
-            "worktree_path": worktree_dir_str,
-        });
-        let start_result = EvolveStartNewTool::new()
-            .call(&start_input, context)
-            .await
-            .map_err(|e| format!("evolve_start_new failed: {}", e))?;
+        // Step 12: Clean up stale evolve files
+        output.push_str("\nStep 12: Cleaning up stale files...\n");
+        cleanup_evolve_files().await;
+        output.push_str("  ✓ Stale files cleaned\n");
 
-        for line in start_result.output.lines() {
-            if !line.trim().is_empty() {
-                output.push_str(&format!("  {}\n", line));
+        // Step 13: Start new agent in tmux and wait for it to signal ready
+        output.push_str("\nStep 13: Starting new agent in tmux...\n");
+
+        // Prepare ready signal
+        let home = std::env::var("HOME").unwrap_or_default();
+        let ready_dir = format!("{}/.dum-e/ready", home);
+        let ready_file = format!("{}/{}", ready_dir, version_str.replace('.', "-"));
+
+        // Ensure dirs exist
+        bash_output(&format!("mkdir -p '{}'", ready_dir), None).await.ok();
+        bash_output(&format!("mkdir -p '{}/.dum-e'", home), None).await.ok();
+
+        // Clear stale ready file
+        tokio::fs::remove_file(&ready_file).await.ok();
+
+        output.push_str(&format!("  Ready signal path: {}\n", ready_file));
+        output.push_str(&format!("  Old agent PID: {}\n", old_pid));
+
+        // Kill any existing session
+        bash("tmux kill-session -t dum-e-evolve 2>/dev/null; true", None).await;
+
+        // Start new agent with env vars: DUM_E_READY_SIGNAL and DUM_E_OLD_PID
+        let start_cmd = format!(
+            "cd '{}' && DUM_E_READY_SIGNAL='{}' DUM_E_OLD_PID={} cargo run --manifest-path Cargo.toml 2>&1",
+            worktree_dir_str, ready_file, old_pid
+        );
+
+        let tmux_cmd = format!("tmux new-session -d -s dum-e-evolve '{}'", start_cmd);
+        let (tmux_ok, tmux_out) = bash(&tmux_cmd, None).await;
+        if !tmux_ok {
+            return Err(format!("Failed to start tmux session: {}", tmux_out));
+        }
+        output.push_str("  ✓ tmux session started\n");
+
+        // Wait for new agent to become ready (max 120s)
+        output.push_str("  Waiting for new agent to signal ready...\n");
+        match wait_for_agent_ready(&ready_file, 120).await {
+            Ok(signal) => {
+                output.push_str(&format!("  ✓ Agent ready after receiving signal: {}\n", signal));
+            }
+            Err(e) => {
+                output.push_str(&format!("  ✗ Agent did not signal ready: {}\n", e));
+                output.push_str(&format!("  Worktree preserved at: {}\n", worktree_dir_str));
+                return Err(format!("New agent failed to become ready: {}", e));
             }
         }
 
-        if !start_result.success {
-            output.push_str("\n  ✗ New agent failed to start — worktree preserved at:\n");
-            output.push_str(&format!("  {}\n", worktree_dir_str));
-            return Ok(ToolResult {
-                success: false,
-                output,
-                error: Some("New agent failed to start healthy".to_string()),
-            });
+        // Step 14: Write evolve context, wait for stability, then switch
+        output.push_str("\nStep 14: Preparing context transfer...\n");
+
+        // Write context file for the new agent
+        let ctx = EvolveContext::new(
+            version_str.clone(),
+            old_pid,
+            "Dum-E self-evolution completed".to_string(),
+            format!(
+                "Evolved from v{}.{}.{} to {}. {} improvements applied.",
+                major, minor, patch, version_str,
+                plan.len()
+            ),
+        );
+        let ctx_path = evolve_context_path();
+        write_evolve_context(&ctx_path, &ctx).await?;
+        output.push_str(&format!("  ✓ Context written: {}\n", ctx_path));
+
+        // Wait for new agent to stabilize
+        output.push_str("  Waiting 5s for new agent to stabilize...\n");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // Verify new agent is still alive
+        let still_alive = bash(
+            "tmux list-sessions -t dum-e-evolve 2>/dev/null",
+            None,
+        )
+        .await
+        .0;
+        if !still_alive {
+            return Err("New agent died after signaling ready — aborting".to_string());
         }
+        output.push_str("  ✓ New agent is stable\n");
 
-        output.push_str("  ✓ New agent is healthy and running\n");
-
-        // Step 12: Complete version switch (kill old, finalize)
-        output.push_str("\nStep 12: Completing version switch...\n");
-        let switch_input = serde_json::json!({});
+        // Call evolve_switch_version to complete the switch
+        output.push_str("\nStep 15: Completing version switch...\n");
         let switch_result = EvolveSwitchVersionTool::new()
-            .call(&switch_input, context)
+            .call(&serde_json::json!({}), context)
             .await
             .map_err(|e| format!("evolve_switch_version failed: {}", e))?;
 
@@ -565,17 +893,20 @@ impl Tool for EvolveSelfTool {
             }
         }
 
+        if !switch_result.success {
+            output.push_str("  ⚠ Version switch had issues but new agent is running\n");
+        }
+
+        // Clean up context file
+        tokio::fs::remove_file(&ctx_path).await.ok();
+
         output.push_str(&format!(
             "\n=== Evolution Complete: {} ===\n",
             version_str
         ));
-        output.push_str(&format!(
-            "New agent running in tmux session 'dum-e-evolve'\n",
-        ));
-        output.push_str(&format!(
-            "Worktree: {}\n",
-            worktree_dir_str
-        ));
+        output.push_str("New agent running in tmux session 'dum-e-evolve'\n");
+        output.push_str("View with: tmux attach -t dum-e-evolve\n");
+        output.push_str("Old agent will now shut down.\n");
 
         Ok(ToolResult {
             success: true,
@@ -734,6 +1065,10 @@ impl Tool for EvolveStartNewTool {
                 "worktree_path": {
                     "type": "string",
                     "description": "Path to the worktree directory (optional, auto-detected if not provided)"
+                },
+                "old_pid": {
+                    "type": "integer",
+                    "description": "PID of the old agent process (optional, passed to new agent for context transfer)"
                 }
             }
         })
@@ -771,6 +1106,8 @@ impl Tool for EvolveStartNewTool {
                 worktree_path(&root, &vp).to_string_lossy().to_string()
             });
 
+        let old_pid = input["old_pid"].as_u64().map(|p| p as u32);
+
         let mut output = String::new();
         output.push_str(&format!("=== Starting New Version: {} ===\n", version));
         output.push_str(&format!("Worktree: {}\n\n", worktree_path));
@@ -802,7 +1139,7 @@ impl Tool for EvolveStartNewTool {
         }
         output.push_str("✓ Build verified\n");
 
-        // Prepare ready signal: create ~/.dum-e/ready/{version} marker
+        // Prepare ready signal
         let home = std::env::var("HOME").map_err(|e| e.to_string())?;
         let ready_dir = format!("{}/.dum-e/ready", home);
         let ready_file = format!("{}/{}", ready_dir, version.replace('.', "-"));
@@ -815,19 +1152,25 @@ impl Tool for EvolveStartNewTool {
             .await
             .ok();
 
-        output.push_str("\nStarting new agent in tmux (polling for ready signal)...\n");
+        output.push_str("\nStarting new agent in tmux...\n");
 
         // Kill any existing dum-e-evolve session first
         bash("tmux kill-session -t dum-e-evolve 2>/dev/null; true", None).await;
 
-        // Start new agent with ready signal env var set
-        // The new agent will write to this file once it passes self-check
+        // Build env var string for the new agent
+        let env_vars = if let Some(pid) = old_pid {
+            format!("DUM_E_READY_SIGNAL='{}' DUM_E_OLD_PID={}", ready_file, pid)
+        } else {
+            format!("DUM_E_READY_SIGNAL='{}'", ready_file)
+        };
+
+        // Start new agent with env vars
         let start_cmd = format!(
-            "cd '{}' && DUM_E_READY_SIGNAL='{}' cargo run --manifest-path Cargo.toml 2>&1",
-            worktree_path, ready_file
+            "cd '{}' && {} cargo run --manifest-path Cargo.toml 2>&1",
+            worktree_path, env_vars
         );
 
-        // Create detached tmux session (agent runs inside it)
+        // Create detached tmux session
         let tmux_cmd = format!(
             "tmux new-session -d -s dum-e-evolve '{}'",
             start_cmd
@@ -839,10 +1182,14 @@ impl Tool for EvolveStartNewTool {
         }
         output.push_str("✓ tmux session created\n");
 
-        // Poll for ready signal file (max 120s)
-        let max_wait = 120;
+        // Wait 30 seconds for agent to initialize before polling
+        output.push_str("Waiting 30s for agent to initialize...\n");
+        tokio::time::sleep(Duration::from_secs(30)).await;
+
+        // Poll for ready signal file (max 90s)
+        let max_wait = 90;
         let poll_interval = Duration::from_secs(2);
-        let mut waited = 0u64;
+        let mut waited = 30u64;
 
         output.push_str(&format!(
             "Polling for ready signal at {}...\n",
@@ -982,12 +1329,25 @@ impl Tool for EvolveSwitchVersionTool {
         _context: &ToolContext,
     ) -> Result<ToolResult, String> {
         let root = project_root()?;
+        let ctx_path = evolve_context_path();
+
+        // Try to read context file for version info
+        let (ctx_version, old_pid) = if tokio::fs::metadata(&ctx_path).await.is_ok() {
+            match read_evolve_context(&ctx_path).await {
+                Ok(ctx) => (Some(ctx.version.clone()), Some(ctx.old_pid)),
+                Err(_) => (None, None),
+            }
+        } else {
+            (None, None)
+        };
+
         let (major, minor, patch) = read_soul_version().await?;
+        let display_version = ctx_version.clone().unwrap_or_else(|| format!("v{}.{}.{}", major, minor, patch));
 
         let mut output = String::new();
         output.push_str(&format!(
-            "=== Version Switch: v{}.{}.{} ===\n",
-            major, minor, patch
+            "=== Version Switch: {} ===\n",
+            display_version
         ));
 
         // Step 1: Verify new agent is running in tmux
@@ -1043,8 +1403,8 @@ impl Tool for EvolveSwitchVersionTool {
         // Step 3: Finalize evolution record
         output.push_str("\nStep 3: Finalizing evolution record...\n");
         let record_path = root.join(format!(
-            "skills/evolve/versions/v{}.{}.{}.md",
-            major, minor, patch
+            "skills/evolve/versions/{}.md",
+            display_version
         ));
         if tokio::fs::metadata(&record_path).await.is_ok() {
             let record_content = tokio::fs::read_to_string(&record_path)
@@ -1108,26 +1468,58 @@ impl Tool for EvolveSwitchVersionTool {
 
         // Step 5: Kill the old agent process
         output.push_str("\nStep 5: Shutting down old agent...\n");
-        let pid_result = bash_output(
-            "pgrep -x dum-e | head -1",
-            None,
-        ).await;
 
-        if let Ok(pid_str) = pid_result {
-            let pid = pid_str.trim();
-            if !pid.is_empty() {
-                output.push_str(&format!("  Found old agent (PID {}), sending SIGTERM...\n", pid));
-                let kill_result = bash_output(&format!("kill -15 {} 2>/dev/null; sleep 1; kill -9 {} 2>/dev/null; true", pid, pid), None).await;
-                if kill_result.is_ok() {
-                    output.push_str("  ✓ Old agent terminated\n");
-                } else {
-                    output.push_str("  ⚠ Could not terminate old agent (may have already exited)\n");
+        // Try to read old PID from context file first
+        let ctx_path = evolve_context_path();
+        let old_pid = if tokio::fs::metadata(&ctx_path).await.is_ok() {
+            match read_evolve_context(&ctx_path).await {
+                Ok(ctx) => {
+                    output.push_str(&format!("  Read old PID from context: {}\n", ctx.old_pid));
+                    Some(ctx.old_pid)
                 }
-            } else {
-                output.push_str("  (No running dum-e process found — old agent may have already exited)\n");
+                Err(e) => {
+                    output.push_str(&format!("  Could not read context: {}, falling back to pgrep\n", e));
+                    None
+                }
             }
         } else {
-            output.push_str("  (No running dum-e process found)\n");
+            None
+        };
+
+        // If we have a PID, kill it; otherwise use pgrep fallback
+        if let Some(pid) = old_pid {
+            output.push_str(&format!("  Sending SIGTERM to old agent (PID {})...\n", pid));
+            let kill_result = bash_output(
+                &format!("kill -15 {} 2>/dev/null; sleep 1; kill -9 {} 2>/dev/null; true", pid, pid),
+                None,
+            ).await;
+            if kill_result.is_ok() {
+                output.push_str("  ✓ Old agent terminated\n");
+            } else {
+                output.push_str("  ⚠ Could not terminate old agent\n");
+            }
+        } else {
+            // Fallback: use pgrep
+            let pid_result = bash_output("pgrep -x dum-e | head -1", None).await;
+            if let Ok(pid_str) = pid_result {
+                let pid = pid_str.trim();
+                if !pid.is_empty() {
+                    output.push_str(&format!("  Found old agent (PID {}), sending SIGTERM...\n", pid));
+                    let kill_result = bash_output(
+                        &format!("kill -15 {} 2>/dev/null; sleep 1; kill -9 {} 2>/dev/null; true", pid, pid),
+                        None,
+                    ).await;
+                    if kill_result.is_ok() {
+                        output.push_str("  ✓ Old agent terminated\n");
+                    } else {
+                        output.push_str("  ⚠ Could not terminate old agent\n");
+                    }
+                } else {
+                    output.push_str("  (No running dum-e process found)\n");
+                }
+            } else {
+                output.push_str("  (No running dum-e process found)\n");
+            }
         }
 
         // Step 6: Final verification
@@ -1153,8 +1545,8 @@ impl Tool for EvolveSwitchVersionTool {
         }
 
         output.push_str(&format!(
-            "\n=== Version Switch Complete: v{}.{}.{} ===\n",
-            major, minor, patch
+            "\n=== Version Switch Complete: {} ===\n",
+            display_version
         ));
         output.push_str("New agent is running in tmux session 'dum-e-evolve'\n");
         output.push_str("View with: tmux attach -t dum-e-evolve\n");

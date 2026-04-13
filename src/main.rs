@@ -80,6 +80,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     soul_manager.load()?;
     info!("SOUL loaded");
 
+    // Get version string early (needed for evolution banner)
+    let version_string = soul_manager.version_string();
+
+    // Handle evolution startup: if started by evolve_start_new with DUM_E_OLD_PID,
+    // read context, print banner, write ready signal, and wait for old agent shutdown
+    let old_pid: Option<u32> = std::env::var("DUM_E_OLD_PID")
+        .ok()
+        .and_then(|s| s.parse().ok());
+
+    if let Some(_pid) = old_pid {
+        // Read evolution context
+        let home = std::env::var("HOME").unwrap_or_default();
+        let ctx_path = format!("{}/.dum-e/evolve_context.json", home);
+
+        let ctx_info = if std::path::Path::new(&ctx_path).exists() {
+            std::fs::read_to_string(&ctx_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .map(|v| {
+                    format!(
+                        " from v{} — {}",
+                        v.get("version").and_then(|x| x.as_str()).unwrap_or("?"),
+                        v.get("task").and_then(|x| x.as_str()).unwrap_or("continuing task"),
+                    )
+                })
+        } else {
+            None
+        };
+
+        // Print evolution banner
+        println!();
+        println!("╔══════════════════════════════════════════════════════╗");
+        println!("║         🤖 DUM-E EVOLVED VERSION STARTED           ║");
+        println!("║          {}", version_string);
+        if let Some(ref info) = ctx_info {
+            println!("║  Evolved{}", info);
+        }
+        println!("║                                                      ║");
+        println!("║  This is an evolved instance of Dum-E, started by   ║");
+        println!("║  the self-evolution process. The previous instance   ║");
+        println!("║  is shutting down.                                   ║");
+        println!("║                                                      ║");
+        println!("║  Type your request to continue.                      ║");
+        println!("╚══════════════════════════════════════════════════════╝");
+        println!();
+
+        // Write ready signal
+        if let Some(signal_path) = std::env::var_os("DUM_E_READY_SIGNAL") {
+            let signal_path = signal_path.to_string_lossy().to_string();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let ready_content = format!("ready|{}|{}", version_string, now);
+            if let Err(e) = std::fs::write(&signal_path, &ready_content) {
+                eprintln!("Warning: failed to write ready signal: {}", e);
+            } else {
+                info!("Wrote ready signal: {}", signal_path);
+            }
+        }
+
+        // Wait for old agent to shut down
+        let max_wait = 60;
+        for i in 0..max_wait {
+            if i % 10 == 0 && i > 0 {
+                println!("  Waiting for old agent to shut down... {}/{}s", i, max_wait);
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+
+        // Remove context and ready files
+        std::fs::remove_file(&ctx_path).ok();
+        if let Some(signal_path) = std::env::var_os("DUM_E_READY_SIGNAL") {
+            std::fs::remove_file(signal_path).ok();
+        }
+    }
+
     // Create tool registry
     let mut registry = ToolRegistry::new();
     register_tools(&mut registry);
@@ -101,27 +178,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-    // Get version string before soul_manager is moved into agent
-    let version_string = soul_manager.version_string();
-
     // Create agent with LLM
     let mut agent = Agent::new(registry, config, soul_manager, event_bus).with_llm(llm);
     info!("Agent created");
-
-    // Signal ready if started by evolve_start_new (via DUM_E_READY_SIGNAL env var)
-    if let Some(signal_path) = std::env::var_os("DUM_E_READY_SIGNAL") {
-        let signal_path = signal_path.to_string_lossy().to_string();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let ready_content = format!("ready|{}|{}", version_string, now);
-        if let Err(e) = std::fs::write(&signal_path, &ready_content) {
-            eprintln!("Warning: failed to write ready signal {}: {}", signal_path, e);
-        } else {
-            info!("Wrote ready signal: {} -> {}", signal_path, ready_content);
-        }
-    }
 
     // Run harness if requested
     if args.harness {
