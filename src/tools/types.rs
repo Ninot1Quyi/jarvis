@@ -45,6 +45,8 @@ pub struct ToolContext {
     pub config: Option<crate::config::Config>,
     /// Soul version, if available
     pub soul_version: Option<String>,
+    /// Path to conversation history file (written by TUI before tool execution)
+    pub history_file: Option<String>,
 }
 
 impl ToolContext {
@@ -55,6 +57,7 @@ impl ToolContext {
             llm: None,
             config: None,
             soul_version: None,
+            history_file: None,
         }
     }
 }

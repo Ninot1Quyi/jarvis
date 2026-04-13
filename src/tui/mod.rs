@@ -20,6 +20,84 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Duration};
 
+/// Write conversation history to a JSON file for evolve context
+fn write_conversation_history(messages: &VecDeque<Message>, path: &str) -> std::io::Result<()> {
+    #[derive(serde::Serialize)]
+    struct SerializableBlock {
+        block_type: String,
+        text: Option<String>,
+        tool_name: Option<String>,
+        params: Option<String>,
+        tool_use_id: Option<String>,
+        is_error: Option<bool>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct SerializableMessage {
+        blocks: Vec<SerializableBlock>,
+    }
+
+    let serializable: Vec<SerializableMessage> = messages.iter().map(|m| {
+        SerializableMessage {
+            blocks: m.blocks.iter().map(|b| {
+                match b {
+                    MessageBlock::UserText(t) => SerializableBlock {
+                        block_type: "user".to_string(),
+                        text: Some(t.clone()),
+                        tool_name: None,
+                        params: None,
+                        tool_use_id: None,
+                        is_error: None,
+                    },
+                    MessageBlock::AssistantText(t) => SerializableBlock {
+                        block_type: "assistant".to_string(),
+                        text: Some(t.clone()),
+                        tool_name: None,
+                        params: None,
+                        tool_use_id: None,
+                        is_error: None,
+                    },
+                    MessageBlock::AssistantThinking(t) => SerializableBlock {
+                        block_type: "thinking".to_string(),
+                        text: Some(t.clone()),
+                        tool_name: None,
+                        params: None,
+                        tool_use_id: None,
+                        is_error: None,
+                    },
+                    MessageBlock::ToolCall { name, params, tool_use_id } => SerializableBlock {
+                        block_type: "tool_call".to_string(),
+                        text: None,
+                        tool_name: Some(name.clone()),
+                        params: Some(params.clone()),
+                        tool_use_id: tool_use_id.clone(),
+                        is_error: None,
+                    },
+                    MessageBlock::ToolResult { tool_name, output, is_error } => SerializableBlock {
+                        block_type: "tool_result".to_string(),
+                        text: Some(output.clone()),
+                        tool_name: Some(tool_name.clone()),
+                        params: None,
+                        tool_use_id: None,
+                        is_error: Some(*is_error),
+                    },
+                }
+            }).collect(),
+        }
+    }).collect();
+
+    let json = serde_json::to_string_pretty(&serializable).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    })?;
+
+    // Ensure directory exists
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    std::fs::write(path, json)
+}
+
 const DEFAULT_COLUMNS: usize = 100;
 const MAX_MESSAGES: usize = 100;
 
@@ -66,8 +144,8 @@ struct TuiState {
     last_activity: Instant,
     /// Evolve configuration
     evolve_config: Option<EvolveConfig>,
-    /// Whether auto-evolve has been triggered this session
-    auto_evolve_triggered: bool,
+    /// Name of the evolve command that triggered this run (if any)
+    pending_evolve: Option<String>,
 }
 
 impl TuiState {
@@ -81,7 +159,7 @@ impl TuiState {
             model_name: None,
             last_activity: Instant::now(),
             evolve_config,
-            auto_evolve_triggered: false,
+            pending_evolve: None,
         }
     }
 
@@ -91,7 +169,7 @@ impl TuiState {
 
     fn check_auto_evolve(&self) -> bool {
         let Some(ref config) = self.evolve_config else { return false; };
-        if !config.enabled || self.auto_evolve_triggered {
+        if !config.enabled {
             return false;
         }
         let idle_secs = self.last_activity.elapsed().as_secs();
@@ -572,8 +650,9 @@ pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             // Periodic idle check (every 30 seconds)
             _ = idle_checker.tick(), if !state.is_running => {
-                if state.check_auto_evolve() && !state.auto_evolve_triggered {
-                    state.auto_evolve_triggered = true;
+                if state.check_auto_evolve() {
+                    state.pending_evolve = Some("evolve_self".to_string());
+                    state.reset_idle_timer(); // Reset timer for next cycle
                     let input = "evolve_self".to_string();
                     state.messages.push_back(Message {
                         blocks: vec![MessageBlock::UserText(
@@ -583,11 +662,22 @@ pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
                     state.is_running = true;
                     render(&state)?;
 
+                    // Write conversation history to file for evolve context
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    let history_path = format!("{}/.dum-e/evolve_history.json", home);
+                    if let Err(e) = write_conversation_history(&state.messages, &history_path) {
+                        eprintln!("Warning: failed to write history: {}", e);
+                    }
+                    // Set env var so agent knows where to read history
+                    std::env::set_var("DUM_E_HISTORY_FILE", &history_path);
+
                     let agent = Arc::clone(&agent);
                     let result_tx = result_tx.clone();
                     tokio::spawn(async move {
                         let mut guard = agent.lock().await;
                         let result = guard.run(&input).await;
+                        // Clear history file env var after evolve completes
+                        std::env::remove_var("DUM_E_HISTORY_FILE");
                         let _ = result_tx.send(result);
                     });
                 }
@@ -601,6 +691,12 @@ pub async fn run_tui(agent: Agent) -> Result<(), Box<dyn std::error::Error>> {
             maybe_result = result_rx.recv() => {
                 if let Some(result) = maybe_result {
                     state.push_message(); // Finalize any pending message
+                    let was_evolve = state.pending_evolve.is_some();
+                    state.pending_evolve = None;
+                    if was_evolve {
+                        // After evolve completes, reset idle timer so next cycle can trigger
+                        state.reset_idle_timer();
+                    }
                     state.is_running = false;
                     match result {
                         Ok(agent_result) => {

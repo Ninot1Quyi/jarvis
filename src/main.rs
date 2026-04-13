@@ -90,9 +90,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok());
 
     if let Some(_pid) = old_pid {
-        // Read evolution context
+        // Read evolution context from DUM_E_CTX env var, falling back to default path
         let home = std::env::var("HOME").unwrap_or_default();
-        let ctx_path = format!("{}/.dum-e/evolve_context.json", home);
+        let ctx_path = std::env::var("DUM_E_CTX")
+            .unwrap_or_else(|_| format!("{}/.dum-e/evolve_context.json", home));
 
         let ctx_info = if std::path::Path::new(&ctx_path).exists() {
             std::fs::read_to_string(&ctx_path)
@@ -181,6 +182,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create agent with LLM
     let mut agent = Agent::new(registry, config, soul_manager, event_bus).with_llm(llm);
     info!("Agent created");
+
+    // Load evolve context if this agent was started by the evolution process
+    agent.load_evolve_context();
 
     // Run harness if requested
     if args.harness {
@@ -285,6 +289,7 @@ fn register_tools(registry: &mut ToolRegistry) {
     registry.register(CompareAgentsTool::new());
     registry.register(EvolveStartNewTool::new());
     registry.register(EvolveSwitchVersionTool::new());
+    registry.register(LaunchSubagentTool::new());
 }
 
 /// No-op LLM for when no API key is available

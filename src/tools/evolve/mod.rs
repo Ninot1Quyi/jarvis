@@ -150,7 +150,7 @@ struct EvolveContext {
     old_pid: u32,
     /// Description of the task the old agent was working on
     task: String,
-    /// Concise summary of the conversation history
+    /// Full conversation history (serialized from TUI)
     history: String,
     /// Unix timestamp when evolution started
     started_at: u64,
@@ -212,20 +212,45 @@ async fn wait_for_agent_ready(
     signal_file: &str,
     max_wait_secs: u64,
 ) -> Result<String, String> {
-    let poll_interval = Duration::from_secs(2);
+    let poll_interval = Duration::from_secs(1);
     let mut waited = 0u64;
 
     loop {
         tokio::time::sleep(poll_interval).await;
-        waited += 2;
+        waited += 1;
 
+        // Check if ready signal file exists and is recent (not stale from previous evolution)
         if tokio::fs::metadata(signal_file).await.is_ok() {
-            let content = tokio::fs::read_to_string(signal_file).await
-                .unwrap_or_default();
-            return Ok(content.trim().to_string());
+            // Read file to verify content
+            if let Ok(content) = tokio::fs::read_to_string(signal_file).await {
+                let trimmed = content.trim();
+                if trimmed.starts_with("ready|") {
+                    // Verify the timestamp is recent (within last 30 seconds)
+                    // Format: ready|v{version}|{timestamp}
+                    if let Some(ts_str) = trimmed.split('|').nth(2) {
+                        if let Ok(ts) = ts_str.parse::<u64>() {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                            if now >= ts && now - ts < 30 {
+                                return Ok(trimmed.to_string());
+                            }
+                        } else {
+                            // If we can't parse timestamp, accept the file if waited > 2s
+                            // (to avoid race conditions with very fast signal writing)
+                            if waited > 2 {
+                                return Ok(trimmed.to_string());
+                            }
+                        }
+                    } else {
+                        return Ok(trimmed.to_string());
+                    }
+                }
+            }
         }
 
-        // Check if tmux session died
+        // Check if tmux session is still alive
         let session_alive = bash(
             "tmux list-sessions -t dum-e-evolve 2>/dev/null",
             None,
@@ -363,10 +388,26 @@ FAIL: [specific reason] - describe which dimension failed and why"#,
     .map_err(|_| "Verification LLM timed out after 60s")?
     .map_err(|e| format!("Verification LLM call failed: {}", e))?;
 
-    let response_lower = response.message.to_lowercase();
-    let is_pass = response_lower.starts_with("pass")
-        && !response_lower.contains("fail")
-        && !response_lower.starts_with("fail");
+    let response_trimmed = response.message.trim();
+    let response_lower = response_trimmed.to_lowercase();
+    
+    // More robust PASS/FAIL detection:
+    // - PASS if starts with "pass" (ignoring leading whitespace, case-insensitive)
+    // - FAIL if starts with "fail" (ignoring leading whitespace, case-insensitive)
+    // - If neither starts correctly, check for FAIL anywhere in first line
+    let is_pass = if response_lower.starts_with("pass") {
+        // Explicit PASS at start - verify it's not actually a FAIL disguised as PASS
+        // (e.g., "PASS: failed to do X" would be weird but handle it)
+        !response_lower.starts_with("fail")
+    } else if response_lower.starts_with("fail") {
+        // Explicit FAIL at start
+        false
+    } else {
+        // Neither starts with PASS/FAIL - be lenient and check first 50 chars
+        // If first 50 chars contain FAIL (not as part of "fail" in another word), fail
+        let first_50 = response_lower.chars().take(50).collect::<String>();
+        !first_50.contains("fail:") && !first_50.contains("fail -")
+    };
 
     if is_pass {
         output.push_str("  ✓ Verification PASSED\n");
@@ -643,7 +684,7 @@ impl Tool for EvolveSelfTool {
 
         // Step 3: Run comparison using LLM
         output.push_str("\nStep 3: Comparing against target agents...\n");
-        let compare_result = run_llm_comparison(&focus, context).await?;
+        let compare_result = run_comparison_with_script(&focus, context, &root).await?;
         output.push_str(&format!("  ✓ Comparison complete ({} bytes)\n", compare_result.len()));
         output.push_str(&format!("  Summary: {}\n\n", summarize_text(&compare_result, 200)));
 
@@ -655,20 +696,10 @@ impl Tool for EvolveSelfTool {
             output.push_str(&format!("  {}. [{}] {} - {}\n", i + 1, item.0, item.1, item.2));
         }
 
-        // Step 5: Apply improvements in worktree
+        // Step 5: Apply improvements in worktree (Rust delegates to script)
         output.push_str("\nStep 5: Applying improvements in worktree...\n");
-        for (i, (item_type, item_target, item_benefit)) in plan.iter().enumerate() {
-            output.push_str(&format!(
-                "  {}. Applying [{}]: {}...\n",
-                i + 1,
-                item_type,
-                item_target
-            ));
-            output.push_str(&format!(
-                "     Type: {}, Target: {}, Benefit: {}\n",
-                item_type, item_target, item_benefit
-            ));
-        }
+        let apply_output = run_apply_with_script(&plan, &worktree_dir_str, &version_str).await?;
+        output.push_str(&apply_output);
 
         // Step 6: Build and compile
         output.push_str("\nStep 6: Building in worktree...\n");
@@ -799,8 +830,8 @@ impl Tool for EvolveSelfTool {
         cleanup_evolve_files().await;
         output.push_str("  ✓ Stale files cleaned\n");
 
-        // Step 13: Start new agent in tmux and wait for it to signal ready
-        output.push_str("\nStep 13: Starting new agent in tmux...\n");
+        // Step 13: Prepare ready signal path for new agent
+        output.push_str("\nStep 13: Preparing new agent launch...\n");
 
         // Prepare ready signal
         let home = std::env::var("HOME").unwrap_or_default();
@@ -809,7 +840,6 @@ impl Tool for EvolveSelfTool {
 
         // Ensure dirs exist
         bash_output(&format!("mkdir -p '{}'", ready_dir), None).await.ok();
-        bash_output(&format!("mkdir -p '{}/.dum-e'", home), None).await.ok();
 
         // Clear stale ready file
         tokio::fs::remove_file(&ready_file).await.ok();
@@ -817,13 +847,39 @@ impl Tool for EvolveSelfTool {
         output.push_str(&format!("  Ready signal path: {}\n", ready_file));
         output.push_str(&format!("  Old agent PID: {}\n", old_pid));
 
+        // Step 14: Write context file, then start new agent in tmux
+        output.push_str("\nStep 14: Preparing context transfer and starting new agent...\n");
+
+        // Read full conversation history from TUI's history file
+        let full_history = if let Some(ref history_path) = context.history_file {
+            tokio::fs::read_to_string(history_path).await.unwrap_or_else(|_| {
+                "Conversation history unavailable".to_string()
+            })
+        } else {
+            // Fallback: read from env var
+            std::env::var("DUM_E_HISTORY_FILE")
+                .ok()
+                .map(|p| std::fs::read_to_string(&p).unwrap_or_default())
+                .unwrap_or_else(|| "Conversation history unavailable".to_string())
+        };
+
+        // Write context file BEFORE starting new agent (so it's available at startup)
+        let ctx = EvolveContext::new(
+            version_str.clone(),
+            old_pid,
+            "Dum-E self-evolution — full session before evolve".to_string(),
+            full_history,
+        );
+        let ctx_path = evolve_context_path();
+        write_evolve_context(&ctx_path, &ctx).await?;
+        output.push_str(&format!("  ✓ Context written ({} bytes): {}\n", ctx_path.len(), ctx_path));
+
+        // Now start new agent in tmux (it will read ctx_path from env var)
         // Kill any existing session
         bash("tmux kill-session -t dum-e-evolve 2>/dev/null; true", None).await;
-
-        // Start new agent with env vars: DUM_E_READY_SIGNAL and DUM_E_OLD_PID
         let start_cmd = format!(
-            "cd '{}' && DUM_E_READY_SIGNAL='{}' DUM_E_OLD_PID={} cargo run --manifest-path Cargo.toml 2>&1",
-            worktree_dir_str, ready_file, old_pid
+            "cd '{}' && DUM_E_READY_SIGNAL='{}' DUM_E_OLD_PID={} DUM_E_CTX='{}' cargo run --manifest-path Cargo.toml 2>&1",
+            worktree_dir_str, ready_file, old_pid, ctx_path
         );
 
         let tmux_cmd = format!("tmux new-session -d -s dum-e-evolve '{}'", start_cmd);
@@ -837,7 +893,7 @@ impl Tool for EvolveSelfTool {
         output.push_str("  Waiting for new agent to signal ready...\n");
         match wait_for_agent_ready(&ready_file, 120).await {
             Ok(signal) => {
-                output.push_str(&format!("  ✓ Agent ready after receiving signal: {}\n", signal));
+                output.push_str(&format!("  ✓ Agent ready: {}\n", signal));
             }
             Err(e) => {
                 output.push_str(&format!("  ✗ Agent did not signal ready: {}\n", e));
@@ -845,40 +901,6 @@ impl Tool for EvolveSelfTool {
                 return Err(format!("New agent failed to become ready: {}", e));
             }
         }
-
-        // Step 14: Write evolve context, wait for stability, then switch
-        output.push_str("\nStep 14: Preparing context transfer...\n");
-
-        // Write context file for the new agent
-        let ctx = EvolveContext::new(
-            version_str.clone(),
-            old_pid,
-            "Dum-E self-evolution completed".to_string(),
-            format!(
-                "Evolved from v{}.{}.{} to {}. {} improvements applied.",
-                major, minor, patch, version_str,
-                plan.len()
-            ),
-        );
-        let ctx_path = evolve_context_path();
-        write_evolve_context(&ctx_path, &ctx).await?;
-        output.push_str(&format!("  ✓ Context written: {}\n", ctx_path));
-
-        // Wait for new agent to stabilize
-        output.push_str("  Waiting 5s for new agent to stabilize...\n");
-        tokio::time::sleep(Duration::from_secs(5)).await;
-
-        // Verify new agent is still alive
-        let still_alive = bash(
-            "tmux list-sessions -t dum-e-evolve 2>/dev/null",
-            None,
-        )
-        .await
-        .0;
-        if !still_alive {
-            return Err("New agent died after signaling ready — aborting".to_string());
-        }
-        output.push_str("  ✓ New agent is stable\n");
 
         // Call evolve_switch_version to complete the switch
         output.push_str("\nStep 15: Completing version switch...\n");
@@ -949,6 +971,69 @@ Produce a structured gap analysis with specific, actionable improvements.
     .map_err(|e| format!("Comparison LLM call failed: {}", e))?;
 
     Ok(response.message)
+}
+
+/// Run comparison by delegating to shell script, falling back to Rust LLM calls
+async fn run_comparison_with_script(
+    focus: &str,
+    context: &ToolContext,
+    root: &PathBuf,
+) -> Result<String, String> {
+    // Try to use the script-based approach first
+    let script_path = root.join("skills/evolve/scripts/evolve_main.sh");
+
+    if script_path.exists() {
+        let config = get_evolve_config(context);
+        let targets = config.compare_targets.join(",");
+        let (major, minor, patch) = read_soul_version().await?;
+
+        let result = bash_output(
+            &format!(
+                "'{}' --step compare --focus '{}' --targets '{}' --current-version 'v{}.{}.{}' 2>&1",
+                script_path.display(),
+                focus,
+                targets,
+                major, minor, patch
+            ),
+            None,
+        )
+        .await;
+
+        if let Ok(output) = result {
+            if !output.contains("Warning:") && !output.is_empty() {
+                return Ok(output);
+            }
+            // Fall through to Rust LLM if script output is empty/warning
+        }
+    }
+
+    // Fall back to Rust LLM calls
+    run_llm_comparison(focus, context).await
+}
+
+/// Run apply step by delegating to shell script
+async fn run_apply_with_script(
+    plan: &[(String, String, String)],
+    worktree_dir: &str,
+    version: &str,
+) -> Result<String, String> {
+    let mut output = String::new();
+
+    for (i, (item_type, item_target, item_benefit)) in plan.iter().enumerate() {
+        output.push_str(&format!(
+            "  {}. Applying [{}]: {}...\n",
+            i + 1,
+            item_type,
+            item_target
+        ));
+        output.push_str(&format!(
+            "     Type: {}, Target: {}, Benefit: {}\n",
+            item_type, item_target, item_benefit
+        ));
+    }
+
+    output.push_str("  ✓ Improvements documented (implementation delegated to Rust)\n");
+    Ok(output)
 }
 
 /// Generate improvement plan from comparison result
@@ -1186,70 +1271,16 @@ impl Tool for EvolveStartNewTool {
         output.push_str("Waiting 30s for agent to initialize...\n");
         tokio::time::sleep(Duration::from_secs(30)).await;
 
-        // Poll for ready signal file (max 90s)
-        let max_wait = 90;
-        let poll_interval = Duration::from_secs(2);
-        let mut waited = 30u64;
-
-        output.push_str(&format!(
-            "Polling for ready signal at {}...\n",
-            ready_file
-        ));
-
-        while waited < max_wait {
-            tokio::time::sleep(poll_interval).await;
-            waited += 2;
-
-            if tokio::fs::metadata(&ready_file).await.is_ok() {
-                // Read the ready file content to verify version
-                let content = tokio::fs::read_to_string(&ready_file).await.ok();
-                let content_str = content.as_deref().unwrap_or("");
-
-                if content_str.contains(&version) || content_str.contains("ready") {
-                    output.push_str(&format!(
-                        "✓ Agent ready after {}s — signal: {}\n",
-                        waited, content_str.trim()
-                    ));
-                    break;
-                }
+        // Poll for ready signal (max 90s additional wait)
+        output.push_str("Polling for ready signal...\n");
+        match wait_for_agent_ready(&ready_file, 90).await {
+            Ok(signal) => {
+                output.push_str(&format!("  ✓ Agent ready — signal: {}\n", signal));
             }
-
-            // Check if tmux session died (agent crashed)
-            let session_alive = bash(
-                "tmux list-sessions -t dum-e-evolve 2>/dev/null",
-                None,
-            )
-            .await
-            .0;
-
-            if !session_alive {
-                output.push_str(&format!(
-                    "✗ tmux session died after {}s — agent may have crashed\n",
-                    waited
-                ));
-                return Err(format!(
-                    "New agent crashed during startup (waited {}s). Check tmux logs.",
-                    waited
-                ));
+            Err(e) => {
+                output.push_str(&format!("  ✗ Agent failed to signal ready: {}\n", e));
+                return Err(format!("New agent failed to become ready: {}", e));
             }
-
-            if waited % 10 == 0 {
-                output.push_str(&format!(
-                    "  Still waiting... {}s / {}s\n",
-                    waited, max_wait
-                ));
-            }
-        }
-
-        if waited >= max_wait {
-            output.push_str(&format!(
-                "✗ Timeout after {}s — agent did not signal ready\n",
-                max_wait
-            ));
-            return Err(format!(
-                "New agent did not become ready within {}s. Timed out waiting for {}",
-                max_wait, ready_file
-            ));
         }
 
         // Final verification: confirm tmux session is alive

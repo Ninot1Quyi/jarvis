@@ -35,6 +35,28 @@ pub struct Agent {
     event_bus: Arc<EventBus>,
     llm: Option<Arc<dyn LLMProvider>>,
     current_trace_id: Option<TraceId>,
+    /// Evolve context loaded at startup (passed from old agent during evolution)
+    evolve_context: Option<EvolveContext>,
+}
+
+/// Evolve context passed from old agent to new agent during self-evolution
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EvolveContext {
+    pub version: String,
+    pub old_pid: u32,
+    pub task: String,
+    pub history: String,
+    pub started_at: u64,
+}
+
+impl EvolveContext {
+    /// Read evolve context from a file path
+    pub fn from_file(path: &str) -> Result<Self, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read evolve context: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse evolve context: {}", e))
+    }
 }
 
 #[derive(Debug)]
@@ -213,6 +235,10 @@ async fn run_tool_call(
                 }
             }
         }
+        // Read conversation history from file if set by TUI
+        if let Ok(history_path) = std::env::var("DUM_E_HISTORY_FILE") {
+            context.history_file = Some(history_path);
+        }
         match tool.call(&call.arguments, &context).await {
             Ok(result) => result,
             Err(e) => ToolResult {
@@ -251,6 +277,22 @@ impl Agent {
             event_bus,
             llm: None,
             current_trace_id: None,
+            evolve_context: None,
+        }
+    }
+
+    /// Load evolve context from file if DUM_E_CTX env var is set
+    pub fn load_evolve_context(&mut self) {
+        if let Ok(ctx_path) = std::env::var("DUM_E_CTX") {
+            match EvolveContext::from_file(&ctx_path) {
+                Ok(ctx) => {
+                    info!(version = %ctx.version, "Loaded evolve context from {}", ctx_path);
+                    self.evolve_context = Some(ctx);
+                }
+                Err(e) => {
+                    warn!("Failed to load evolve context from {}: {}", ctx_path, e);
+                }
+            }
         }
     }
 
@@ -721,7 +763,29 @@ impl Agent {
         let mut messages = vec![];
 
         // System prompt
-        let system_prompt = self.get_system_prompt();
+        let mut system_prompt = self.get_system_prompt();
+
+        // Inject evolve context: full conversation history from the previous agent
+        if let Some(ref ctx) = self.evolve_context {
+            if !ctx.history.is_empty() && ctx.history != "Conversation history unavailable" {
+                system_prompt.push_str(&format!(
+                    "\n\
+## EVOLUTION CONTEXT
+
+This is an evolved instance of Dum-E (version {}), started by the self-evolution process.
+The previous agent (PID {}) was working on: {}
+
+### Full Conversation History (from previous session):
+{}\n\
+",
+                    ctx.version,
+                    ctx.old_pid,
+                    ctx.task,
+                    ctx.history
+                ));
+            }
+        }
+
         messages.push(Message::new(MessageRole::System, &system_prompt));
 
         // User task

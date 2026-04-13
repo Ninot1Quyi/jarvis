@@ -12,6 +12,7 @@ pub mod mouse;
 mod registry;
 pub mod sessions_send;
 pub mod skill;
+pub mod subagent;
 pub mod system;
 pub mod todo;
 mod types;
@@ -33,6 +34,7 @@ pub use evolve::{
 };
 pub use sessions_send::SessionsSendTool;
 pub use skill::{ActivateSkillTool, ListSkillsTool, SaveSkillTool};
+pub use subagent::{register_basic_tools, LaunchSubagentTool};
 pub use system::{
     CallUserTool, RecordTaskTool, ScreenTool, ScreenshotTool, SetMaxStepsTool, WaitTool,
 };

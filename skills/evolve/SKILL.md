@@ -224,3 +224,43 @@ skills/evolve/versions/
 - [ ] 新版 agent 已启动并通过自检
 - [ ] 旧版 agent 已关闭
 - [ ] 进化记录已写入 `skills/evolve/versions/`
+
+## Sub-Agent 支持
+
+Dum-E 支持通过 `launch_subagent` 工具启动子 agent 并行处理任务。
+
+### launch_subagent 工具
+
+```
+launch_subagent({
+  task: "具体的子任务描述",
+  mode: "in_process" | "tmux",     // 执行模式
+  context_depth: 10,                 // 传递多少轮对话上下文
+  wait_for_result: true,             // 是否等待结果
+  max_wait_secs: 300,               // 最大等待秒数
+  subagent_name: "worker-1"         // 子 agent 名称（可选）
+})
+```
+
+**模式说明**：
+- `in_process`: 快速执行，共享 LLM 连接，在当前进程内运行
+- `tmux`: 隔离执行，在 tmux 会话中运行，继承父 agent 崩溃
+
+**使用场景**：
+- 并行研究多个方向
+- 独立子任务委托
+- 不阻塞主 agent 的后台工作
+
+**实现参考**：Claude Code Agent SDK 的 fork subagent 和 swarm teammate 模式
+
+## 脚本化实现
+
+核心进化逻辑已脚本化，位于 `skills/evolve/scripts/`：
+
+- `evolve_main.sh` — 主脚本，实现 Step 3-5：
+  - `--step compare`: 运行 LLM 对比分析
+  - `--step plan`: 生成改进计划
+  - `--step apply`: 应用改进
+  - `--step all`: 执行完整流程
+
+Rust evolve_self 工具优先调用脚本，脚本不可用时回退到 Rust LLM 调用。
