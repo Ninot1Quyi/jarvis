@@ -101,9 +101,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+    // Get version string before soul_manager is moved into agent
+    let version_string = soul_manager.version_string();
+
     // Create agent with LLM
     let mut agent = Agent::new(registry, config, soul_manager, event_bus).with_llm(llm);
     info!("Agent created");
+
+    // Signal ready if started by evolve_start_new (via DUM_E_READY_SIGNAL env var)
+    if let Some(signal_path) = std::env::var_os("DUM_E_READY_SIGNAL") {
+        let signal_path = signal_path.to_string_lossy().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let ready_content = format!("ready|{}|{}", version_string, now);
+        if let Err(e) = std::fs::write(&signal_path, &ready_content) {
+            eprintln!("Warning: failed to write ready signal {}: {}", signal_path, e);
+        } else {
+            info!("Wrote ready signal: {} -> {}", signal_path, ready_content);
+        }
+    }
 
     // Run harness if requested
     if args.harness {

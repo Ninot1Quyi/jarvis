@@ -145,6 +145,14 @@ impl SoulManager {
         &self.soul
     }
 
+    /// Get version string "v{major}.{minor}.{patch}"
+    pub fn version_string(&self) -> String {
+        format!(
+            "v{}.{}.{}",
+            self.soul.version.major, self.soul.version.minor, self.soul.version.patch
+        )
+    }
+
     /// Update a preference
     pub fn update_preference(&mut self, key: String, value: serde_json::Value) {
         self.soul.preferences.preferences.insert(key, value);

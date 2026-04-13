@@ -503,7 +503,7 @@ impl Tool for EvolveSelfTool {
             version_str
         ));
         let record_content = format!(
-            "# Evolve {}\n\n## Time\n{}\n\n## From Version\nv{}.{}.{}\n\n## To Version\n{}\n\n## Comparison Summary\n{}\n\n## Improvement Plan\n{}\n\n## Status\npending_verification\n",
+            "# Evolve {}\n\n## Time\n{}\n\n## From Version\nv{}.{}.{}\n\n## To Version\n{}\n\n## Comparison Summary\n{}\n\n## Improvement Plan\n{}\n\n## Status\nactive\n",
             version_str,
             chrono_now(),
             major,
@@ -522,13 +522,58 @@ impl Tool for EvolveSelfTool {
             .map_err(|e| format!("Failed to write record: {}", e))?;
         output.push_str(&format!("  ✓ Record written: {}\n", record_path.display()));
 
+        // Step 11: Start new version (auto-chain, don't ask user)
+        output.push_str("\nStep 11: Starting new version in tmux...\n");
+        let start_input = serde_json::json!({
+            "version": version_str,
+            "worktree_path": worktree_dir_str,
+        });
+        let start_result = EvolveStartNewTool::new()
+            .call(&start_input, context)
+            .await
+            .map_err(|e| format!("evolve_start_new failed: {}", e))?;
+
+        for line in start_result.output.lines() {
+            if !line.trim().is_empty() {
+                output.push_str(&format!("  {}\n", line));
+            }
+        }
+
+        if !start_result.success {
+            output.push_str("\n  ✗ New agent failed to start — worktree preserved at:\n");
+            output.push_str(&format!("  {}\n", worktree_dir_str));
+            return Ok(ToolResult {
+                success: false,
+                output,
+                error: Some("New agent failed to start healthy".to_string()),
+            });
+        }
+
+        output.push_str("  ✓ New agent is healthy and running\n");
+
+        // Step 12: Complete version switch (kill old, finalize)
+        output.push_str("\nStep 12: Completing version switch...\n");
+        let switch_input = serde_json::json!({});
+        let switch_result = EvolveSwitchVersionTool::new()
+            .call(&switch_input, context)
+            .await
+            .map_err(|e| format!("evolve_switch_version failed: {}", e))?;
+
+        for line in switch_result.output.lines() {
+            if !line.trim().is_empty() {
+                output.push_str(&format!("  {}\n", line));
+            }
+        }
+
         output.push_str(&format!(
             "\n=== Evolution Complete: {} ===\n",
             version_str
         ));
-        output.push_str("Run 'evolve_start_new' to launch the new version in tmux.\n");
         output.push_str(&format!(
-            "Worktree path: {}\n",
+            "New agent running in tmux session 'dum-e-evolve'\n",
+        ));
+        output.push_str(&format!(
+            "Worktree: {}\n",
             worktree_dir_str
         ));
 
@@ -705,7 +750,7 @@ impl Tool for EvolveStartNewTool {
     async fn call(
         &self,
         input: &serde_json::Value,
-        context: &ToolContext,
+        _context: &ToolContext,
     ) -> Result<ToolResult, String> {
         let root = project_root()?;
 
@@ -747,34 +792,44 @@ impl Tool for EvolveStartNewTool {
         }
         output.push_str(&format!("✓ Worktree exists: {}\n", worktree_path));
 
-        // Check if it compiles
+        // Check if it compiles first
         output.push_str("Checking build...\n");
         let build_ok = bash("cargo build 2>&1 | tail -3", Some(&worktree_path))
             .await
             .0;
         if !build_ok {
-            output.push_str("⚠ Build not verified in worktree\n");
-        } else {
-            output.push_str("✓ Build verified\n");
+            return Err("Build failed in worktree — cannot start new version".to_string());
         }
+        output.push_str("✓ Build verified\n");
 
-        // Start new agent in tmux side pane
-        output.push_str("\nStarting new agent in tmux side pane...\n");
+        // Prepare ready signal: create ~/.dum-e/ready/{version} marker
+        let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+        let ready_dir = format!("{}/.dum-e/ready", home);
+        let ready_file = format!("{}/{}", ready_dir, version.replace('.', "-"));
+
+        // Clean up any stale ready files for this version
+        tokio::fs::remove_file(&ready_file).await.ok();
+
+        // Ensure ready dir exists
+        bash_output(&format!("mkdir -p '{}'", ready_dir), None)
+            .await
+            .ok();
+
+        output.push_str("\nStarting new agent in tmux (polling for ready signal)...\n");
 
         // Kill any existing dum-e-evolve session first
         bash("tmux kill-session -t dum-e-evolve 2>/dev/null; true", None).await;
 
-        // Create new tmux session with the new version
-        // Using -v for vertical split (right side), -d for detach (don't switch to it)
+        // Start new agent with ready signal env var set
+        // The new agent will write to this file once it passes self-check
         let start_cmd = format!(
-            "cd '{}' && cargo run --manifest-path Cargo.toml 2>&1",
-            worktree_path
+            "cd '{}' && DUM_E_READY_SIGNAL='{}' cargo run --manifest-path Cargo.toml 2>&1",
+            worktree_path, ready_file
         );
 
-        // Create a new tmux session named dum-e-evolve
-        // We'll use a horizontal split on the right side
+        // Create detached tmux session (agent runs inside it)
         let tmux_cmd = format!(
-            "tmux new-session -d -s dum-e-evolve -x 200 -y 50 '{}' ; split-window -h -t dum-e-evolve -d ; select-layout -t dum-e-evolve tiled",
+            "tmux new-session -d -s dum-e-evolve '{}'",
             start_cmd
         );
 
@@ -782,22 +837,92 @@ impl Tool for EvolveStartNewTool {
         if !ok {
             return Err(format!("Failed to start tmux session: {}", out));
         }
+        output.push_str("✓ tmux session created\n");
 
-        output.push_str("✓ New agent started in tmux session 'dum-e-evolve'\n");
-        output.push_str("  - Use 'tmux attach -t dum-e-evolve' to view\n");
-        output.push_str("  - Right pane: new evolved agent\n");
-        output.push_str("  - Left pane: current agent\n\n");
+        // Poll for ready signal file (max 120s)
+        let max_wait = 120;
+        let poll_interval = Duration::from_secs(2);
+        let mut waited = 0u64;
 
-        // Wait briefly and check if it's running
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let running_check = bash("tmux list-windows -t dum-e-evolve 2>/dev/null", None).await;
-        if running_check.0 {
-            output.push_str("✓ New agent is running\n");
-        } else {
-            output.push_str("⚠ Could not verify new agent is running\n");
+        output.push_str(&format!(
+            "Polling for ready signal at {}...\n",
+            ready_file
+        ));
+
+        while waited < max_wait {
+            tokio::time::sleep(poll_interval).await;
+            waited += 2;
+
+            if tokio::fs::metadata(&ready_file).await.is_ok() {
+                // Read the ready file content to verify version
+                let content = tokio::fs::read_to_string(&ready_file).await.ok();
+                let content_str = content.as_deref().unwrap_or("");
+
+                if content_str.contains(&version) || content_str.contains("ready") {
+                    output.push_str(&format!(
+                        "✓ Agent ready after {}s — signal: {}\n",
+                        waited, content_str.trim()
+                    ));
+                    break;
+                }
+            }
+
+            // Check if tmux session died (agent crashed)
+            let session_alive = bash(
+                "tmux list-sessions -t dum-e-evolve 2>/dev/null",
+                None,
+            )
+            .await
+            .0;
+
+            if !session_alive {
+                output.push_str(&format!(
+                    "✗ tmux session died after {}s — agent may have crashed\n",
+                    waited
+                ));
+                return Err(format!(
+                    "New agent crashed during startup (waited {}s). Check tmux logs.",
+                    waited
+                ));
+            }
+
+            if waited % 10 == 0 {
+                output.push_str(&format!(
+                    "  Still waiting... {}s / {}s\n",
+                    waited, max_wait
+                ));
+            }
         }
 
-        output.push_str("\nNext: Run 'evolve_switch_version' after new agent passes self-check.\n");
+        if waited >= max_wait {
+            output.push_str(&format!(
+                "✗ Timeout after {}s — agent did not signal ready\n",
+                max_wait
+            ));
+            return Err(format!(
+                "New agent did not become ready within {}s. Timed out waiting for {}",
+                max_wait, ready_file
+            ));
+        }
+
+        // Final verification: confirm tmux session is alive
+        let final_check = bash(
+            "tmux list-sessions -t dum-e-evolve 2>/dev/null",
+            None,
+        )
+        .await
+        .0;
+
+        if !final_check {
+            return Err("Agent crashed after signaling ready".to_string());
+        }
+
+        output.push_str(&format!(
+            "\n=== New Version Running: {} ===\n",
+            version
+        ));
+        output.push_str("View with: tmux attach -t dum-e-evolve\n");
+        output.push_str("Left pane: old agent | Right pane: new agent\n");
 
         Ok(ToolResult {
             success: true,
@@ -839,12 +964,7 @@ impl Tool for EvolveSwitchVersionTool {
     fn input_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "properties": {
-                "confirm": {
-                    "type": "boolean",
-                    "description": "Must be true to confirm the switch"
-                }
-            }
+            "properties": {}
         })
     }
 
@@ -858,14 +978,9 @@ impl Tool for EvolveSwitchVersionTool {
 
     async fn call(
         &self,
-        input: &serde_json::Value,
+        _input: &serde_json::Value,
         _context: &ToolContext,
     ) -> Result<ToolResult, String> {
-        let confirm = input["confirm"].as_bool().unwrap_or(false);
-        if !confirm {
-            return Err("Must set confirm: true to proceed with version switch".to_string());
-        }
-
         let root = project_root()?;
         let (major, minor, patch) = read_soul_version().await?;
 
@@ -875,22 +990,58 @@ impl Tool for EvolveSwitchVersionTool {
             major, minor, patch
         ));
 
-        // Step 1: Update soul version with running_from
-        output.push_str("\nStep 1: Updating SOUL.md...\n");
+        // Step 1: Verify new agent is running in tmux
+        output.push_str("\nStep 1: Verifying new agent is healthy...\n");
+        let new_agent_alive = bash(
+            "tmux list-sessions -t dum-e-evolve 2>/dev/null",
+            None,
+        )
+        .await
+        .0;
+        if !new_agent_alive {
+            return Err("New agent is not running in tmux — aborting switch".to_string());
+        }
+        output.push_str("  ✓ New agent is alive in tmux session 'dum-e-evolve'\n");
+
+        // Step 2: Update soul version with running_from
+        output.push_str("\nStep 2: Updating SOUL.md...\n");
         let content = tokio::fs::read_to_string("data/soul.md")
             .await
             .map_err(|e| e.to_string())?;
-        let updated = content.replace(
-            "running_from: null",
-            &format!("running_from: \"{}\"", format!("v{}.{}.{}", major, minor, patch)),
-        );
-        tokio::fs::write("data/soul.md", updated)
+
+        // Update running_from to the new version
+        let updated = if content.contains("running_from:") {
+            content.lines()
+                .map(|line| {
+                    if line.trim().starts_with("running_from:") {
+                        format!("  running_from: \"v{}.{}.{}\"", major, minor, patch)
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            // Insert running_from after the patch line
+            content.lines()
+                .map(|line| {
+                    let mut s = line.to_string();
+                    if line.trim().starts_with("patch:") {
+                        s.push_str(&format!("\n  running_from: \"v{}.{}.{}\"", major, minor, patch));
+                    }
+                    s
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        tokio::fs::write("data/soul.md", &updated)
             .await
             .map_err(|e| e.to_string())?;
-        output.push_str("  ✓ SOUL.md updated\n");
+        output.push_str("  ✓ SOUL.md updated with running_from\n");
 
-        // Step 2: Write evolution record
-        output.push_str("\nStep 2: Finalizing evolution record...\n");
+        // Step 3: Finalize evolution record
+        output.push_str("\nStep 3: Finalizing evolution record...\n");
         let record_path = root.join(format!(
             "skills/evolve/versions/v{}.{}.{}.md",
             major, minor, patch
@@ -905,10 +1056,12 @@ impl Tool for EvolveSwitchVersionTool {
                 .await
                 .map_err(|e| e.to_string())?;
             output.push_str(&format!("  ✓ Record updated: {}\n", record_path.display()));
+        } else {
+            output.push_str("  (No pending record found)\n");
         }
 
-        // Step 3: Clean up old worktrees (keep current and main)
-        output.push_str("\nStep 3: Cleaning up old worktrees...\n");
+        // Step 4: Clean up old worktrees (keep current and main)
+        output.push_str("\nStep 4: Cleaning up old worktrees...\n");
         let worktree_list = bash_output(
             "git worktree list --porcelain",
             Some(root.to_str().unwrap()),
@@ -916,30 +1069,96 @@ impl Tool for EvolveSwitchVersionTool {
         .await
         .unwrap_or_default();
 
-        let current_version = format!("dum-e-evolve-{}-{}-{}", major, minor, patch);
+        let current_version_pattern = format!("dum-e-evolve-{}-{}-{}", major, minor, patch);
+        let mut cleaned = 0;
+        let mut errors = Vec::new();
+
         for line in worktree_list.lines() {
             if line.starts_with("worktree ") {
-                let path = line.strip_prefix("worktree ").unwrap_or("").trim();
-                if !path.contains(&current_version) && path != root.to_string_lossy() {
-                    output.push_str(&format!("  Cleaning: {}\n", path));
-                    // Don't actually remove - just report for safety
+                let path = line.strip_prefix("worktree ").unwrap_or("").trim().to_string();
+                if !path.contains(&current_version_pattern)
+                    && path != root.to_string_lossy()
+                    && !path.contains(".claude/worktrees")
+                {
+                    output.push_str(&format!("  Removing: {}\n", path));
+                    let remove_result = bash_output(
+                        &format!("git worktree remove '{}' --force", path),
+                        Some(root.to_str().unwrap()),
+                    )
+                    .await;
+                    match remove_result {
+                        Ok(_) => {
+                            output.push_str(&format!("    ✓ Removed\n"));
+                            cleaned += 1;
+                        }
+                        Err(e) => {
+                            output.push_str(&format!("    ✗ Failed: {}\n", e));
+                            errors.push(format!("{}: {}", path, e));
+                        }
+                    }
                 }
             }
         }
-        output.push_str("  (Worktree cleanup skipped for safety - run manually if needed)\n");
+        if cleaned == 0 && errors.is_empty() {
+            output.push_str("  (No old worktrees to clean)\n");
+        }
+        if !errors.is_empty() {
+            output.push_str(&format!("  ⚠ {} worktree(s) could not be removed (manual cleanup may be needed)\n", errors.len()));
+        }
 
-        // Step 4: Kill the old agent (current session)
-        output.push_str("\nStep 4: Old agent status...\n");
-        output.push_str(
-            "  Current agent should shut down after completing current task.\n",
-        );
-        output.push_str("  Use Ctrl+C or send SIGTERM to terminate.\n");
+        // Step 5: Kill the old agent process
+        output.push_str("\nStep 5: Shutting down old agent...\n");
+        let pid_result = bash_output(
+            "pgrep -x dum-e | head -1",
+            None,
+        ).await;
+
+        if let Ok(pid_str) = pid_result {
+            let pid = pid_str.trim();
+            if !pid.is_empty() {
+                output.push_str(&format!("  Found old agent (PID {}), sending SIGTERM...\n", pid));
+                let kill_result = bash_output(&format!("kill -15 {} 2>/dev/null; sleep 1; kill -9 {} 2>/dev/null; true", pid, pid), None).await;
+                if kill_result.is_ok() {
+                    output.push_str("  ✓ Old agent terminated\n");
+                } else {
+                    output.push_str("  ⚠ Could not terminate old agent (may have already exited)\n");
+                }
+            } else {
+                output.push_str("  (No running dum-e process found — old agent may have already exited)\n");
+            }
+        } else {
+            output.push_str("  (No running dum-e process found)\n");
+        }
+
+        // Step 6: Final verification
+        output.push_str("\nStep 6: Final verification...\n");
+        let still_alive = bash("pkill -x dum-e 2>/dev/null", None).await.0;
+        if still_alive {
+            output.push_str("  ⚠ Warning: old dum-e process still running\n");
+        } else {
+            output.push_str("  ✓ Old agent fully shut down\n");
+        }
+
+        // Confirm new agent is still running
+        let new_still_alive = bash(
+            "tmux list-sessions -t dum-e-evolve 2>/dev/null",
+            None,
+        )
+        .await
+        .0;
+        if new_still_alive {
+            output.push_str("  ✓ New agent still running in tmux\n");
+        } else {
+            output.push_str("  ✗ New agent died!\n");
+        }
 
         output.push_str(&format!(
             "\n=== Version Switch Complete: v{}.{}.{} ===\n",
             major, minor, patch
         ));
-        output.push_str("New agent is running in tmux session 'dum-e-evolve' (right pane).\n");
+        output.push_str("New agent is running in tmux session 'dum-e-evolve'\n");
+        output.push_str("View with: tmux attach -t dum-e-evolve\n");
+        output.push_str(&format!("Cleaned {} old worktree(s)\n", cleaned));
 
         Ok(ToolResult {
             success: true,
