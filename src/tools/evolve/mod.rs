@@ -665,9 +665,19 @@ impl Tool for EvolveSelfTool {
             Err(e) => {
                 if e.contains("already exists") {
                     output.push_str(&format!(
-                        "  ✓ Worktree already exists: {}, checking out\n",
+                        "  ✓ Worktree already exists: {}, updating to latest master\n",
                         worktree_dir_str
                     ));
+                    // Update existing worktree to latest master to get recent fixes
+                    let (update_ok, update_out) = bash(
+                        &format!("git fetch origin && git reset --hard origin/master"),
+                        Some(&worktree_dir_str),
+                    ).await;
+                    if update_ok {
+                        output.push_str("  ✓ Worktree updated to latest master\n");
+                    } else {
+                        output.push_str(&format!("  ⚠ Update warning: {}\n", update_out));
+                    }
                 } else {
                     return Err(format!("Failed to create worktree: {}", e));
                 }
