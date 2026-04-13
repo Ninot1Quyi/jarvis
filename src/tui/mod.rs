@@ -569,6 +569,8 @@ mod tests {
     #[test]
     fn state_tracks_messages_and_tool_calls() {
         let mut state = TuiState::new();
+        
+        // First event: LLM generates some text
         state.apply_event(Event::new_in_trace(
             TraceId::from_str("trace-1"),
             Component::Llm,
@@ -577,6 +579,9 @@ mod tests {
                 text: "I'll help you".to_string(),
             },
         ));
+        assert_eq!(state.streaming_text, "I'll help you", "streaming_text should be set after LlmChunk");
+        
+        // Second event: LLM calls a tool
         state.apply_event(Event::new_in_trace(
             TraceId::from_str("trace-1"),
             Component::Llm,
@@ -586,8 +591,25 @@ mod tests {
                 tool_use_id: Some("tool-1".to_string()),
                 input: serde_json::json!({"command": "ls"}),
                 correlation_id: None,
+                is_concurrency_safe: None,
             },
         ));
+        
+        // Third event: Tool execution starts (this adds the ToolCall to blocks)
+        state.apply_event(Event::new_in_trace(
+            TraceId::from_str("trace-1"),
+            Component::Tool,
+            EventType::ToolCall,
+            EventData::ToolCall {
+                tool: "bash".to_string(),
+                tool_use_id: Some("tool-1".to_string()),
+                input: serde_json::json!({"command": "ls"}),
+                correlation_id: None,
+                is_concurrency_safe: None,
+            },
+        ));
+        
+        // Fourth event: Tool completes
         state.apply_event(Event::new_in_trace(
             TraceId::from_str("trace-1"),
             Component::Tool,
@@ -601,12 +623,18 @@ mod tests {
                 is_concurrency_safe: Some(false),
             },
         ));
-
-        // Check that streaming text was captured
-        assert_eq!(state.streaming_text, "I'll help you");
         
         // Check that tool call was rendered inline with result
         let msg = &state.current_message;
-        assert!(msg.blocks.iter().any(|b| matches!(b, MessageBlock::ToolCall { name, .. } if name == "bash")));
+        // After LlmToolCall: text is pushed, then tool call is stored in streaming_tool_call
+        // After ToolCall (Component::Tool): the tool call is added to blocks
+        // After ToolComplete: the tool result is added
+        // So we should have: [AssistantText("I'll help you"), ToolCall(bash), ToolResult(bash)]
+        assert!(msg.blocks.len() >= 2, "Should have at least 2 blocks");
+        let has_assistant_text = msg.blocks.iter().any(|b| matches!(b, MessageBlock::AssistantText(_)));
+        let has_tool_call = msg.blocks.iter().any(|b| matches!(b, MessageBlock::ToolCall { name, .. } if name == "bash"));
+        assert!(has_assistant_text, "Should have assistant text from LlmChunk");
+        assert!(has_tool_call, "Should have a bash tool call");
     }
 }
+
