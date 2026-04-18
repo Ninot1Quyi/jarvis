@@ -1,0 +1,58 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-size: var(--text-base);
+    color: var(--color-token-foreground);
+    background: var(--color-token-bg-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .draggable {
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+
+  .draggable button,
+  .draggable input,
+  .draggable textarea,
+  .draggable select,
+  .draggable a,
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-token-scrollbar-thumb);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-token-scrollbar-thumb-hover);
+  }
+}

@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/* Global theme application */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* === Codex/VSCode Color Tokens - Dark Theme === */
+:root {
+  /* Background layers - VSCode dark */
+  --color-token-bg-primary:        #252526;  /* sidebar */
+  --color-token-bg-secondary:     #1e1e1e;  /* main surface / editor */
+  --color-token-bg-fog:          #2d2d2d;  /* panels / cards */
+  --color-token-bg-tertiary:     #333333;  /* deeper elements */
+  --color-token-main-surface-primary: #1e1e1e; /* content area */
+
+  /* Text */
+  --color-token-foreground:       #cccccc;
+  --color-token-text-primary:     #ffffff;
+  --color-token-text-secondary:    #cccccc;
+  --color-token-text-tertiary:    #858585;
+
+  /* Borders */
+  --color-token-border:          #3c3c3c;
+  --color-token-border-light:     #454545;
+
+  /* Interactive */
+  --color-token-list-hover-background:     #2a2d2e;
+  --color-token-toolbar-hover-background: #3c3c3c;
+  --color-token-list-active-selection-background:   #094771;
+  --color-token-list-active-selection-foreground:   #ffffff;
+
+  /* Input */
+  --color-token-input-background: #3c3c3c;
+  --color-token-input-border:     #3c3c3c;
+  --color-token-input-placeholder-foreground: #858585;
+
+  /* Buttons - Codex VSCode blue */
+  --color-token-button-background:     #0c7dca;
+  --color-token-button-foreground:     #ffffff;
+  --color-token-button-secondary-background: #3c3c3c;
+  --color-token-button-secondary-foreground: #cccccc;
+  --color-token-button-ghost-hover:   #2a2d2e;
+
+  /* Semantic */
+  --color-token-success:        #4ec9b0;
+  --color-token-danger:         #f14c4c;
+  --color-token-warning:        #cca700;
+  --color-token-link:          #3794ff;
+  --color-token-charts-green:   #4ec9b4;
+  --color-token-charts-blue:    #569cd6;
+  --color-token-charts-red:     #f14c4c;
+  --color-token-charts-yellow:  #dcdcaa;
+  --color-token-charts-purple:  #c586c0;
+
+  /* Toolbar */
+  --color-token-toolbar-background: #252526;
+
+  /* Scrollbar */
+  --color-token-scrollbar-thumb:       #424242;
+  --color-token-scrollbar-thumb-hover:  #555555;
+
+  /* Focus */
+  --color-token-focus-border: #0c7dca;
+
+  /* Shadows */
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md:  0 2px 8px rgba(0,0,0,0.4);
+  --shadow-lg:  0 4px 16px rgba(0,0,0,0.5);
+
+  /* Heights */
+  --height-toolbar:    56px;
+  --height-toolbar-sm: 32px;
+
+  /* Radius tokens */
+  --radius-xs:   0.25rem;
+  --radius-sm:   0.375rem;
+  --radius-md:   0.5rem;
+  --radius-lg:   0.625rem;
+  --radius-xl:   0.75rem;
+  --radius-2xl:  1rem;
+  --radius-3xl:  1.25rem;
+  --radius-full:  9999px;
+
+  /* Text sizes */
+  --text-xs:   11px;
+  --text-sm:   12px;
+  --text-base: 13px;
+  --text-lg:   16px;
+  --text-xl:   20px;
+}
+
+/* === Codex/VSCode Color Tokens - Light Theme === */
+[data-theme="light"] {
+  --color-token-bg-primary:        #f3f3f3;
+  --color-token-bg-secondary:       #ffffff;
+  --color-token-bg-fog:           #f8f8f8;
+  --color-token-bg-tertiary:      #e8e8e8;
+  --color-token-main-surface-primary: #ffffff;
+
+  --color-token-foreground:       #333333;
+  --color-token-text-primary:     #333333;
+  --color-token-text-secondary:    #616161;
+  --color-token-text-tertiary:    #858585;
+
+  --color-token-border:          #e0e0e0;
+  --color-token-border-light:     #f0f0f0;
+
+  --color-token-list-hover-background:     #e8e8e8;
+  --color-token-toolbar-hover-background: #e0e0e0;
+  --color-token-list-active-selection-background:   #007acc;
+  --color-token-list-active-selection-foreground:   #ffffff;
+
+  --color-token-input-background: #ffffff;
+  --color-token-input-border:     #cccccc;
+  --color-token-input-placeholder-foreground: #858585;
+
+  --color-token-button-background:     #007acc;
+  --color-token-button-foreground:     #ffffff;
+  --color-token-button-secondary-background: #e8e8e8;
+  --color-token-button-secondary-foreground: #333333;
+  --color-token-button-ghost-hover:   #e8e8e8;
+
+  --color-token-success:        #16825d;
+  --color-token-danger:         #a31515;
+  --color-token-warning:        #b09000;
+  --color-token-link:          #0066cc;
+  --color-token-charts-green:   #16825d;
+  --color-token-charts-blue:    #0000ff;
+  --color-token-charts-red:     #a31515;
+  --color-token-charts-yellow:  #795e26;
+  --color-token-charts-purple:  #af00db;
+
+  --color-token-toolbar-background: #f3f3f3;
+  --color-token-scrollbar-thumb:       #c1c1c1;
+  --color-token-scrollbar-thumb-hover: #a8a8a8;
+
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.1);
+  --shadow-md:  0 2px 8px rgba(0,0,0,0.15);
+  --shadow-lg:  0 4px 16px rgba(0,0,0,0.2);
+}
