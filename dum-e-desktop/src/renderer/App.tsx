@@ -126,6 +126,9 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             ...(isSettingsPage
               ? {}
               : {
+                  marginLeft: -MAC_PANEL_RADIUS,
+                  paddingLeft: MAC_PANEL_RADIUS,
+                  zIndex: 1,
                   borderTopLeftRadius: MAC_PANEL_RADIUS,
                   borderBottomLeftRadius: MAC_PANEL_RADIUS,
                   boxShadow: sidebarSeamActive

@@ -83,6 +83,7 @@ export default function Sidebar({
         borderRight: '1px solid color-mix(in srgb, var(--color-token-border) 38%, transparent)',
         borderTopLeftRadius: 'inherit',
         borderBottomLeftRadius: 'inherit',
+        overflow: 'hidden',
         cursor: isResizing ? 'col-resize' : 'default',
         userSelect: isResizing ? 'none' : 'auto',
       }}
