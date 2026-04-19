@@ -13,6 +13,7 @@ interface SidebarProps {
   onSelectThread: (id: string) => void;
   onOpenSearch: () => void;
   activeThreadId?: string;
+  onResizeIntentChange?: (active: boolean) => void;
 }
 
 export default function Sidebar({
@@ -20,6 +21,7 @@ export default function Sidebar({
   onSelectThread,
   onOpenSearch,
   activeThreadId,
+  onResizeIntentChange,
 }: SidebarProps) {
   const SIDEBAR_SAFE_TOP = 38;
   const navigate = useNavigate();
@@ -42,6 +44,7 @@ export default function Sidebar({
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
+    onResizeIntentChange?.(true);
     const startX = e.clientX;
     const startWidth = sidebarWidth;
     let latestWidth = startWidth;
@@ -53,6 +56,7 @@ export default function Sidebar({
     };
     const handleMouseUp = () => {
       setIsResizing(false);
+      onResizeIntentChange?.(false);
       saveDesktopPreferences({
         ...preferences,
         settingsNavWidth: latestWidth,
@@ -62,7 +66,7 @@ export default function Sidebar({
     };
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [preferences, sidebarWidth]);
+  }, [onResizeIntentChange, preferences, sidebarWidth]);
 
   const visibleThreads = threads;
 
@@ -125,14 +129,12 @@ export default function Sidebar({
 
       <div
         onMouseDown={handleMouseDown}
-        className="absolute top-0 right-0 w-1 h-full cursor-col-resize transition-colors"
+        onMouseEnter={() => onResizeIntentChange?.(true)}
+        onMouseLeave={() => {
+          if (!isResizing) onResizeIntentChange?.(false);
+        }}
+        className="absolute top-0 right-[-3px] w-[7px] h-full cursor-col-resize"
         style={{ backgroundColor: 'transparent' }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.backgroundColor = 'var(--color-token-border)';
-        }}
-        onMouseLeave={(e) => {
-          if (!isResizing) e.currentTarget.style.backgroundColor = 'transparent';
-        }}
       />
     </div>
   );

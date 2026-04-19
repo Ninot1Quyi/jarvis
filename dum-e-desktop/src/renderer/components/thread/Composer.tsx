@@ -90,7 +90,7 @@ export default function Composer({
   const currentModelConfig = availableModels.find((m) => m.id === currentModel);
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col">
       {/* Outer container */}
       <div className="rounded-3xl border border-[var(--color-token-input-border)] bg-[var(--color-token-input-background)] overflow-hidden">
         {/* Textarea */}
@@ -212,15 +212,6 @@ export default function Composer({
         </div>
       </div>
 
-      {/* Keyboard shortcut hint */}
-      <div className="text-center">
-        <span className="text-xs text-[var(--color-token-text-tertiary)]">
-          <kbd className="px-1 py-0.5 rounded bg-[var(--color-token-bg-tertiary)] text-[10px] font-mono">⌘</kbd>
-          {' + '}
-          <kbd className="px-1 py-0.5 rounded bg-[var(--color-token-bg-tertiary)] text-[10px] font-mono">Enter</kbd>
-          {' to send'}
-        </span>
-      </div>
     </div>
   );
 }

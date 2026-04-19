@@ -32,6 +32,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const [threads, setThreads] = useState<ThreadType[]>(loadThreadsList);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sidebarSeamActive, setSidebarSeamActive] = useState(false);
   const isSettingsPage = location.pathname === '/settings';
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -94,6 +95,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               threads={threads}
               onSelectThread={handleSelectThread}
               onOpenSearch={handleOpenSearch}
+              onResizeIntentChange={setSidebarSeamActive}
               activeThreadId={location.pathname.startsWith('/thread/') ? location.pathname.split('/')[2] : undefined}
             />
           </div>
@@ -108,7 +110,10 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               : {
                   borderTopLeftRadius: MAC_PANEL_RADIUS,
                   borderBottomLeftRadius: MAC_PANEL_RADIUS,
-                  boxShadow: `inset 1px 0 0 var(--color-token-border)`,
+                  boxShadow: sidebarSeamActive
+                    ? 'inset 1px 0 0 color-mix(in srgb, var(--color-token-focus-border) 88%, transparent), inset 5px 0 10px -12px var(--color-token-focus-border)'
+                    : 'inset 0.5px 0 0 color-mix(in srgb, var(--color-token-border) 70%, transparent)',
+                  transition: 'box-shadow 150ms ease',
                 }),
           }}
         >
