@@ -28,11 +28,13 @@ const createWindow = () => {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#1e1e1e',
+    backgroundColor: isMac ? '#00000000' : '#1e1e1e',
     ...(isMac
       ? {
-          titleBarStyle: 'hidden' as const,
-          trafficLightPosition: { x: 14, y: 12 },
+          vibrancy: 'menu' as const,
+          visualEffectState: 'active' as const,
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 16, y: 16 },
         }
       : {
           frame: false,

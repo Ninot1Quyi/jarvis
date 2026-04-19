@@ -15,12 +15,13 @@
     height: 100%;
     width: 100%;
     overflow: hidden;
+    background: transparent;
   }
 
   body {
     font-size: var(--text-base);
     color: var(--color-token-foreground);
-    background: var(--color-token-bg-primary);
+    background: color-mix(in srgb, var(--color-token-bg-secondary) 55%, transparent);
     -webkit-font-smoothing: antialiased;
   }
 

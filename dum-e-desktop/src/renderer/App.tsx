@@ -79,17 +79,17 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div
       className="flex flex-col h-screen overflow-hidden"
-      style={{ backgroundColor: isSettingsPage ? 'var(--color-token-bg-secondary)' : 'var(--color-token-bg-primary)' }}
+      style={{ backgroundColor: isSettingsPage ? 'var(--color-token-bg-secondary)' : 'transparent' }}
     >
       {!isMac && <TitleBar />}
       <div
         className="flex flex-1 overflow-hidden"
-        style={{ backgroundColor: isSettingsPage ? 'var(--color-token-bg-secondary)' : 'var(--color-token-bg-primary)' }}
+        style={{ backgroundColor: isSettingsPage ? 'var(--color-token-bg-secondary)' : 'transparent' }}
       >
         {!isSettingsPage && (
           <div
             className="flex flex-col shrink-0 h-full min-h-0"
-            style={{ backgroundColor: 'var(--color-token-bg-primary)' }}
+            style={{ backgroundColor: 'transparent' }}
           >
             <Sidebar
               threads={threads}
