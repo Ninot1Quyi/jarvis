@@ -31,6 +31,8 @@ const createWindow = () => {
     backgroundColor: isMac ? '#00000000' : '#1e1e1e',
     ...(isMac
       ? {
+          transparent: true,
+          hasShadow: true,
           vibrancy: 'menu' as const,
           visualEffectState: 'active' as const,
           titleBarStyle: 'hiddenInset' as const,

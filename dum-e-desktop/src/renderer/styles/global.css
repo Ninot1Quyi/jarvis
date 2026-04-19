@@ -21,7 +21,7 @@
   body {
     font-size: var(--text-base);
     color: var(--color-token-foreground);
-    background: color-mix(in srgb, var(--color-token-bg-secondary) 55%, transparent);
+    background: transparent;
     -webkit-font-smoothing: antialiased;
   }
 
