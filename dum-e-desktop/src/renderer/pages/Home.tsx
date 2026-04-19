@@ -82,7 +82,7 @@ export default function Home() {
 
   return (
     <div
-      className="h-full overflow-hidden"
+      className="h-full overflow-hidden flex flex-col"
       style={{ backgroundColor: 'var(--color-token-bg-secondary)' }}
     >
       <div className="draggable h-11 flex items-center px-4">

@@ -55,4 +55,15 @@
   ::-webkit-scrollbar-thumb:hover {
     background: var(--color-token-scrollbar-thumb-hover);
   }
+
+  .scrollbar-hidden {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-hidden::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
 }

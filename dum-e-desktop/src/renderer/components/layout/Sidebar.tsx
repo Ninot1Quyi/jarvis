@@ -90,7 +90,7 @@ export default function Sidebar({
         <SidebarAction icon={<Clock3 size={14} />} label="Automations" />
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 scrollbar-hidden">
         {visibleThreads.length > 0 ? (
           <ThreadList
             threads={visibleThreads}
