@@ -31,7 +31,7 @@ const createWindow = () => {
     backgroundColor: '#1e1e1e',
     ...(isMac
       ? {
-          titleBarStyle: 'hiddenInset' as const,
+          titleBarStyle: 'hidden' as const,
           trafficLightPosition: { x: 14, y: 12 },
         }
       : {
