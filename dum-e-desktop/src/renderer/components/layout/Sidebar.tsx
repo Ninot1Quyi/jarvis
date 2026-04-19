@@ -81,6 +81,8 @@ export default function Sidebar({
         backdropFilter: 'blur(30px) saturate(1.18) brightness(0.72)',
         WebkitBackdropFilter: 'blur(30px) saturate(1.18) brightness(0.72)',
         borderRight: '1px solid color-mix(in srgb, var(--color-token-border) 38%, transparent)',
+        borderTopLeftRadius: 'inherit',
+        borderBottomLeftRadius: 'inherit',
         cursor: isResizing ? 'col-resize' : 'default',
         userSelect: isResizing ? 'none' : 'auto',
       }}

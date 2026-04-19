@@ -24,6 +24,7 @@ applyTheme(loadDesktopPreferences().theme);
 
 const queryClient = new QueryClient();
 const MAC_PANEL_RADIUS = 16;
+const MAC_WINDOW_RADIUS = 10;
 
 // Persistent layout wrapper - sidebar stays visible during all navigation
 function AppLayout({ children }: { children: React.ReactNode }) {
@@ -79,7 +80,15 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div
       className="flex flex-col h-screen overflow-hidden"
-      style={{ backgroundColor: isSettingsPage ? 'var(--color-token-bg-secondary)' : 'transparent' }}
+      style={{
+        backgroundColor: isSettingsPage ? 'var(--color-token-bg-secondary)' : 'transparent',
+        ...(isMac
+          ? {
+              borderRadius: MAC_WINDOW_RADIUS,
+              overflow: 'hidden',
+            }
+          : {}),
+      }}
     >
       {!isMac && <TitleBar />}
       <div
@@ -89,7 +98,16 @@ function AppLayout({ children }: { children: React.ReactNode }) {
         {!isSettingsPage && (
           <div
             className="flex flex-col shrink-0 h-full min-h-0"
-            style={{ backgroundColor: 'transparent' }}
+            style={{
+              backgroundColor: 'transparent',
+              ...(isMac
+                ? {
+                    borderTopLeftRadius: MAC_WINDOW_RADIUS,
+                    borderBottomLeftRadius: MAC_WINDOW_RADIUS,
+                    overflow: 'hidden',
+                  }
+                : {}),
+            }}
           >
             <Sidebar
               threads={threads}
