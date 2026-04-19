@@ -76,7 +76,13 @@ export default function Sidebar({
       className="flex flex-col shrink-0 relative flex-1 min-h-0"
       style={{
         width: sidebarWidth,
-        backgroundColor: 'var(--color-token-bg-primary)',
+        background: [
+          'linear-gradient(180deg, color-mix(in srgb, var(--color-token-bg-primary) 78%, rgba(255,255,255,0.08)), color-mix(in srgb, var(--color-token-bg-primary) 86%, rgba(255,255,255,0.03)))',
+          'radial-gradient(circle at 18% 0%, rgba(255,255,255,0.055), transparent 34%)',
+        ].join(', '),
+        backdropFilter: 'blur(26px) saturate(1.35)',
+        WebkitBackdropFilter: 'blur(26px) saturate(1.35)',
+        borderRight: '1px solid color-mix(in srgb, var(--color-token-border) 52%, transparent)',
         cursor: isResizing ? 'col-resize' : 'default',
         userSelect: isResizing ? 'none' : 'auto',
       }}
