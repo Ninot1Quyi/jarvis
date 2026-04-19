@@ -76,9 +76,9 @@ export default function Sidebar({
       className="flex flex-col shrink-0 relative flex-1 min-h-0"
       style={{
         width: sidebarWidth,
-        backgroundColor: 'color-mix(in oklab, var(--color-token-bg-primary) 88%, transparent)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
+        backgroundColor: 'color-mix(in srgb, var(--color-token-bg-primary) 46%, transparent)',
+        backdropFilter: 'blur(18px) saturate(1.45)',
+        WebkitBackdropFilter: 'blur(18px) saturate(1.45)',
         borderRight: '1px solid color-mix(in srgb, var(--color-token-border) 72%, transparent)',
         cursor: isResizing ? 'col-resize' : 'default',
         userSelect: isResizing ? 'none' : 'auto',
