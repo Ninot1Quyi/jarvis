@@ -76,11 +76,11 @@ export default function Sidebar({
       className="flex flex-col shrink-0 relative flex-1 min-h-0"
       style={{
         width: sidebarWidth,
-        backgroundColor: 'rgba(28, 30, 32, 0.88)',
-        backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.012), rgba(0,0,0,0.10))',
-        backdropFilter: 'blur(30px) saturate(1.18) brightness(0.72)',
-        WebkitBackdropFilter: 'blur(30px) saturate(1.18) brightness(0.72)',
-        borderRight: '1px solid color-mix(in srgb, var(--color-token-border) 38%, transparent)',
+        backgroundColor: 'rgba(28, 30, 32, 0.64)',
+        backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.028), rgba(0,0,0,0.16))',
+        backdropFilter: 'blur(28px) saturate(1.35) brightness(0.74)',
+        WebkitBackdropFilter: 'blur(28px) saturate(1.35) brightness(0.74)',
+        borderRight: '1px solid color-mix(in srgb, var(--color-token-border) 28%, transparent)',
         borderTopLeftRadius: 'inherit',
         borderBottomLeftRadius: 'inherit',
         overflow: 'hidden',
